@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+package electrician;
+
+option go_package = "pkg/internal/relay";
+
+message WrappedPayload {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  bytes payload = 3;
+  MessageMetadata metadata = 4;
+  ErrorInfo error_info = 5;
+}
+
+message ErrorInfo {
+  int32 code = 1;
+  string message = 2;
+  repeated string details = 3; // More detailed error descriptions.
+}
+
+message MessageMetadata {
+  map<string, string> headers = 1;
+  string content_type = 2;
+  VersionInfo version = 3;
+  PerformanceOptions performance = 4;
+  string trace_id = 5; // For distributed tracing.
+  int32 priority = 6; // Priority of the message, higher number indicates higher priority.
+}
+
+message VersionInfo {
+  int32 major = 1;
+  int32 minor = 2;
+}
+
+message PerformanceOptions {
+  bool use_compression = 1;
+  CompressionAlgorithm compression_algorithm = 2;
+  int32 compression_level = 3; // Optional field for specifying compression level.
+}
+
+enum CompressionAlgorithm {
+  COMPRESS_NONE = 0;
+  COMPRESS_DEFLATE = 1;
+  COMPRESS_SNAPPY = 2;
+  COMPRESS_ZSTD = 3;  // Zstandard, good balance of speed and compression ratio
+  COMPRESS_BROTLI = 4; // Brotli, optimized for text compression
+  COMPRESS_LZ4 = 5;    // LZ4, extremely fast compression and decompression
+}
+
+
+service RelayService {
+  rpc Receive(WrappedPayload) returns (StreamAcknowledgment);
+  rpc StreamReceive(stream WrappedPayload) returns (stream StreamAcknowledgment);
+}
+
+message StreamAcknowledgment {
+  bool success = 1;
+  string message = 2;
+  map<string, string> metadata = 3; // Additional metadata about the acknowledgment.
+}
