@@ -175,7 +175,7 @@ The examples/ directory includes real-world implementations demonstrating how th
 If you have suggestions for improving the protobuf definitions—whether by adding new fields, supporting additional compression methods, or enhancing streaming capabilities—feel free to open an issue or submit a pull request.
 
 📝 License
-Electrician Protocol Buffers are released under the MIT License.
+Electrician Protocol Buffers are released under the Apache 2.0 License.
 You are free to use, modify, and distribute them under the terms of this license.
 
 Happy wiring! ⚙️🚀 If you have any questions, feel free to open a GitHub issue or reach out.

@@ -100,7 +100,7 @@ Electrician adheres to a **strict standard-library-first** philosophy, ensuring 
 
 ## 📝 License
 
-The **Types package** is part of Electrician and is released under the [MIT License](../../../LICENSE).  
+The **Types package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
 You’re free to use, modify, and distribute it within these terms.
 
 ---

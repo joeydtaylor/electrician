@@ -99,7 +99,7 @@ By following these steps, Electrician maintains **stability, compatibility, and 
 
 ## 📝 License
 
-The **Resister package** is part of Electrician and is released under the [MIT License](../../../LICENSE).  
+The **Resister package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
 You’re free to use, modify, and distribute it within these terms.
 
 ---

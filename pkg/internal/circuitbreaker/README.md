@@ -83,7 +83,7 @@ To **customize failure handling**, follow this **structured workflow**:
 
 ## 📝 License
 
-The **Circuit Breaker package** is part of Electrician and is released under the [MIT License](../../../LICENSE).  
+The **Circuit Breaker package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
 You’re free to use, modify, and distribute it within these terms.
 
 ---
