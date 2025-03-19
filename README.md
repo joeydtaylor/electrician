@@ -274,30 +274,30 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 1️⃣ Create a Meter to track performance (tracks total items processed).
-	meter := builder.NewMeter)
+	// Create a Meter to track performance (set an arbitrary total item count).
+	meter := builder.NewMeter[Users](ctx, builder.MeterWithTotalItems[Users](7))
 
-	// Attach the Meter to a Sensor for event monitoring.
+	// Create a Sensor that attaches the Meter.
 	sensor := builder.NewSensor[Users](builder.SensorWithMeter[Users](meter))
 
-	// 2️⃣ Set up a Circuit Breaker that trips after 1 error and resets after 4 seconds.
+	// Set up a Circuit Breaker that trips after 1 error and resets after 4 seconds.
 	circuitBreaker := builder.NewCircuitBreaker[Users](
 		ctx,
-		1, // Error threshold before tripping.
-		4*time.Second, // Reset time after tripping.
+		1,
+		4*time.Second,
 		builder.CircuitBreakerWithSensor[Users](sensor),
 	)
 
-	// 3️⃣ Create an HTTP Adapter to fetch data from JSONPlaceholder.
+	// Create an HTTP Adapter to fetch data from JSONPlaceholder.
 	httpAdapter := builder.NewHTTPClientAdapter[Users](
 		ctx,
 		builder.HTTPClientAdapterWithSensor[Users](sensor),
 		builder.HTTPClientAdapterWithRequestConfig[Users]("GET", "https://jsonplaceholder.typicode.com/users", nil),
-		builder.HTTPClientAdapterWithInterval[Users](4*time.Second), // Retry every 4 seconds.
-		builder.HTTPClientAdapterWithTimeout[Users](10*time.Second), // 10s request timeout.
+		builder.HTTPClientAdapterWithInterval[Users](4*time.Second),
+		builder.HTTPClientAdapterWithTimeout[Users](10*time.Second),
 	)
 
-	// 4️⃣ Define a Transformer to convert user names to uppercase.
+	// Define a transformer that converts each user's name to uppercase.
 	transformer := func(users Users) (Users, error) {
 		for i := range users {
 			users[i].Name = strings.ToUpper(users[i].Name)
@@ -305,14 +305,14 @@ func main() {
 		return users, nil
 	}
 
-	// 5️⃣ Create a Plug that connects the HTTP Adapter to the pipeline.
+	// Create a Plug that uses the HTTP Adapter and Sensor.
 	plug := builder.NewPlug[Users](
 		ctx,
 		builder.PlugWithAdapter[Users](httpAdapter),
 		builder.PlugWithSensor[Users](sensor),
 	)
 
-	// 6️⃣ Create a Generator that pulls data from the Plug.
+	// Create a Generator that pulls data from the Plug and attaches the Sensor and Circuit Breaker.
 	generator := builder.NewGenerator[Users](
 		ctx,
 		builder.GeneratorWithPlug[Users](plug),
@@ -320,10 +320,7 @@ func main() {
 		builder.GeneratorWithCircuitBreaker[Users](circuitBreaker),
 	)
 
-	// 7️⃣ Create a Wire that:
-	//    - Uses the Sensor for monitoring.
-	//    - Applies the Transformer to modify data.
-	//    - Receives data from the Generator.
+	// Create a Wire that uses the Sensor, Transformer, and Generator.
 	wire := builder.NewWire[Users](
 		ctx,
 		builder.WireWithSensor[Users](sensor),
@@ -331,16 +328,16 @@ func main() {
 		builder.WireWithGenerator[Users](generator),
 	)
 
-	// 8️⃣ Start the pipeline.
+	// Start the pipeline.
 	wire.Start(ctx)
 
-	// 9️⃣ Start monitoring performance.
+	// Start monitoring performance.
 	meter.Monitor()
 
-	// 🔟 Stop the pipeline once processing is complete.
+	// Stop the pipeline.
 	wire.Stop()
 
-	// 1️⃣1️⃣ Load and print the processed output as JSON.
+	// Load the processed output as a JSON array.
 	output, err := wire.LoadAsJSONArray()
 	if err != nil {
 		fmt.Printf("Error converting output to JSON: %v\n", err)
