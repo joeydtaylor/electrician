@@ -47,7 +47,6 @@ const (
 //   - error: An error object detailing issues encountered during the loading of TLS credentials.
 //
 // This method logs all steps, including successful loads and errors, providing traceability and debugging insights.
-
 func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credentials.TransportCredentials, error) {
 	loadedCreds := fr.tlsCredentials.Load()
 	if loadedCreds != nil {
@@ -80,10 +79,23 @@ func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credenti
 		return nil, fmt.Errorf("failed to append CA certificate")
 	}
 
+	// Set Min and Max TLS versions (default to TLS 1.2 - 1.3 if not specified)
+	minTLSVersion := config.MinTLSVersion
+	if minTLSVersion == 0 {
+		minTLSVersion = tls.VersionTLS12
+	}
+
+	maxTLSVersion := config.MaxTLSVersion
+	if maxTLSVersion == 0 {
+		maxTLSVersion = tls.VersionTLS13
+	}
+
 	newCreds := credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      certPool,
 		ServerName:   config.SubjectAlternativeName,
+		MinVersion:   minTLSVersion,
+		MaxVersion:   maxTLSVersion,
 	})
 
 	fr.tlsCredentials.Store(newCreds)

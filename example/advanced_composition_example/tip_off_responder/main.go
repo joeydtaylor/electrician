@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -40,6 +41,8 @@ func main() {
 		"../tls/server.key",
 		"../tls/ca.crt",
 		"localhost",
+		tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13, // MaxVersion: Only allow TLS 1.3
 	)
 
 	// Sensor to monitor and react to threat detections

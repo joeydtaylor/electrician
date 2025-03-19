@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"os/signal"
@@ -54,6 +55,8 @@ func main() {
 		"../tls/server.key", // KeyFile - Update paths as needed
 		"../tls/ca.crt",     // CAFile - Update paths as needed
 		"localhost",
+		tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13, // MaxVersion: Only allow TLS 1.3
 	)
 
 	sentimentWire := builder.NewWire(

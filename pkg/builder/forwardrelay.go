@@ -64,12 +64,14 @@ func NewPerformanceOptions(useCompression bool, compressionAlgorithm relay.Compr
 	}
 }
 
-// NewTlsClientConfig creates a new TLSConfig.
-func NewTlsClientConfig(useTls bool, certFile string, keyFile string, caFile string) *types.TLSConfig {
+// NewTlsClientConfig creates a new TLSConfig with configurable TLS versioning.
+func NewTlsClientConfig(useTls bool, certFile string, keyFile string, caFile string, minTLSVersion uint16, maxTLSVersion uint16) *types.TLSConfig {
 	return &types.TLSConfig{
-		UseTLS:   useTls,
-		CertFile: certFile,
-		KeyFile:  keyFile,
-		CAFile:   caFile,
+		UseTLS:        useTls,
+		CertFile:      certFile,
+		KeyFile:       keyFile,
+		CAFile:        caFile,
+		MinTLSVersion: minTLSVersion,
+		MaxTLSVersion: maxTLSVersion,
 	}
 }

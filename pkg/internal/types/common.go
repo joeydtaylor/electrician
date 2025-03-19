@@ -11,11 +11,13 @@ type ComponentMetadata struct {
 // TLSConfig holds the configuration necessary for setting up TLS communication within the system.
 // This includes paths to certificate files and other TLS-specific settings.
 type TLSConfig struct {
-	UseTLS                 bool   // Flag indicating whether TLS should be used.
-	CertFile               string // Path to the TLS certificate file.
-	KeyFile                string // Path to the TLS private key file.
-	CAFile                 string // Path to the certificate authority file.
-	SubjectAlternativeName string // Alternative names for the subject, used in certificate validation.
+	UseTLS                 bool
+	CertFile               string
+	KeyFile                string
+	CAFile                 string
+	SubjectAlternativeName string
+	MinTLSVersion          uint16 // e.g., tls.VersionTLS12
+	MaxTLSVersion          uint16 // e.g., tls.VersionTLS13
 }
 
 // ConcurrencyConfig provides configuration details for managing concurrency within the system.

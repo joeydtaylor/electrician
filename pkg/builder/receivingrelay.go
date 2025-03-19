@@ -12,14 +12,16 @@ func NewReceivingRelay[T any](ctx context.Context, options ...types.Option[types
 	return rr.NewReceivingRelay[T](ctx, options...)
 }
 
-// NewTlsServerConfig creates a new TLS configuration.
-func NewTlsServerConfig(useTls bool, certFile string, keyFile string, caFile string, subjectAlternativeName string) *types.TLSConfig {
+// NewTlsServerConfig creates a new TLS configuration with configurable TLS versioning.
+func NewTlsServerConfig(useTls bool, certFile string, keyFile string, caFile string, subjectAlternativeName string, minTLSVersion uint16, maxTLSVersion uint16) *types.TLSConfig {
 	return &types.TLSConfig{
 		UseTLS:                 useTls,
 		CertFile:               certFile,
 		KeyFile:                keyFile,
 		CAFile:                 caFile,
 		SubjectAlternativeName: subjectAlternativeName,
+		MinTLSVersion:          minTLSVersion,
+		MaxTLSVersion:          maxTLSVersion,
 	}
 }
 

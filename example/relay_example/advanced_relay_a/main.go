@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -29,7 +30,6 @@ func errorSimulator(feedback Feedback) (Feedback, error) {
 }
 
 // generator periodically generates and submits feedback, simulating input from an external source.
-// The generator now properly handles errors returned by the submit function and randomly includes error triggers.
 func plugFunc(ctx context.Context, submitFunc func(ctx context.Context, feedback Feedback) error) {
 	ticker := time.NewTicker(1000 * time.Millisecond) // Increase rate to 10 messages per second
 	defer ticker.Stop()
@@ -55,7 +55,6 @@ func plugFunc(ctx context.Context, submitFunc func(ctx context.Context, feedback
 			}
 			if err := submitFunc(ctx, feedback); err != nil {
 				fmt.Printf("Error submitting feedback: %v\n", err)
-				// Decide to log and continue, not halting on errors
 			}
 			count++
 		}
@@ -95,11 +94,14 @@ func main() {
 		builder.WireWithGenerator(generator),
 	)
 
+	// Enforce TLS 1.3
 	tlsConfig := builder.NewTlsClientConfig(
 		true,                // UseTLS should be true to use TLS
 		"../tls/client.crt", // Path to the client's certificate
 		"../tls/client.key", // Path to the client's private key
 		"../tls/ca.crt",     // Path to the CA certificate
+		tls.VersionTLS13,    // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13,    // MaxVersion: Only allow TLS 1.3
 	)
 
 	forwardRelay := builder.NewForwardRelay(

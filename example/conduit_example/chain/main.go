@@ -117,8 +117,8 @@ func main() {
 	)
 
 	firstConduit.ConnectConduit(secondConduit)
-	firstConduit.Start(ctx)
 	secondConduit.Start(ctx)
+	firstConduit.Start(ctx)
 
 	meter.Monitor()
 

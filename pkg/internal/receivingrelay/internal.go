@@ -32,7 +32,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"os"
 
 	"github.com/andybalholm/brotli"
 	"github.com/golang/snappy"
@@ -116,8 +116,9 @@ func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (creden
 			)
 			return nil, err
 		}
+
 		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(config.CAFile)
+		ca, err := os.ReadFile(config.CAFile)
 		if err != nil {
 			rr.NotifyLoggers(
 				types.ErrorLevel,
@@ -135,10 +136,23 @@ func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (creden
 			return nil, fmt.Errorf("failed to append CA certificate")
 		}
 
+		// Set Min and Max TLS versions (defaulting to TLS 1.2 - 1.3 if unspecified)
+		minTLSVersion := config.MinTLSVersion
+		if minTLSVersion == 0 {
+			minTLSVersion = tls.VersionTLS12
+		}
+
+		maxTLSVersion := config.MaxTLSVersion
+		if maxTLSVersion == 0 {
+			maxTLSVersion = tls.VersionTLS13
+		}
+
 		return credentials.NewTLS(&tls.Config{
 			ServerName:   config.SubjectAlternativeName, // Ensure this matches the certificate name
 			Certificates: []tls.Certificate{cert},
 			RootCAs:      certPool,
+			MinVersion:   minTLSVersion,
+			MaxVersion:   maxTLSVersion,
 		}), nil
 	} else {
 		rr.NotifyLoggers(

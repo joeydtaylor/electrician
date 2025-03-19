@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -59,6 +60,8 @@ func main() {
 		"../tls/server.key", // Server private key
 		"../tls/ca.crt",     // CA certificate
 		"localhost",
+		tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13, // MaxVersion: Only allow TLS 1.3
 	)
 
 	// Create a wire for processing incoming blocks with our transformer.

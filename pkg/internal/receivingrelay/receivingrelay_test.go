@@ -2,6 +2,7 @@ package receivingrelay_test
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 	"time"
 
@@ -12,7 +13,8 @@ func TestReceivingRelayInitialization(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	tlsConfig := builder.NewTlsServerConfig(true, "../../../cmd/example/relay_example/tls/server.crt", "../../../cmd/example/relay_example/tls/server.key", "../../../cmd/example/relay_example/tls/ca.crt", "localhost")
+	tlsConfig := builder.NewTlsServerConfig(true, "../../../cmd/example/relay_example/tls/server.crt", "../../../cmd/example/relay_example/tls/server.key", "../../../cmd/example/relay_example/tls/ca.crt", "localhost", tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3
 
 	relay := builder.NewReceivingRelay[string](
 		ctx,
@@ -33,7 +35,8 @@ func TestReceivingRelayShutdown(t *testing.T) {
 
 	output := builder.NewConduit[string](ctx)
 
-	tlsConfig := builder.NewTlsServerConfig(true, "../../../cmd/example/relay_example/tls/server.crt", "../../../cmd/example/relay_example/tls/server.key", "../../../cmd/example/relay_example/tls/ca.crt", "localhost")
+	tlsConfig := builder.NewTlsServerConfig(true, "../../../cmd/example/relay_example/tls/server.crt", "../../../cmd/example/relay_example/tls/server.key", "../../../cmd/example/relay_example/tls/ca.crt", "localhost", tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3)
 	relay := builder.NewReceivingRelay[string](
 		ctx,
 		builder.ReceivingRelayWithAddress[string]("localhost:50051"),

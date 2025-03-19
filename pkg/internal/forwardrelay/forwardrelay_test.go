@@ -2,6 +2,7 @@ package forwardrelay_test
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 	"time"
 
@@ -12,7 +13,9 @@ func TestForwardRelayInitialization(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt")
+	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt",
+		tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3)
 
 	relay := builder.NewForwardRelay[string](
 		ctx,
@@ -31,7 +34,8 @@ func TestForwardRelayShutdown(t *testing.T) {
 
 	inputConduit := builder.NewConduit[string](ctx)
 
-	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt")
+	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt", tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3)
 	relay := builder.NewForwardRelay[string](
 		ctx,
 		builder.ForwardRelayWithTarget[string]("localhost:50051"),

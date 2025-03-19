@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -121,6 +122,8 @@ func main() {
 		"../tls/client.crt", // Path to the client's certificate
 		"../tls/client.key", // Path to the client's private key
 		"../tls/ca.crt",     // Path to the CA certificate
+		tls.VersionTLS13,    // MinVersion: Only allow TLS 1.3
+		tls.VersionTLS13,    // MaxVersion: Only allow TLS 1.3
 	)
 
 	// Forward relay that sends blocks to the node.
