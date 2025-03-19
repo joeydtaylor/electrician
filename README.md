@@ -359,7 +359,7 @@ func main() {
 
 ## 📝 License
 
-All internal packages fall under Electrician’s [MIT License](./LICENSE).  
+All internal packages fall under Electrician’s [Apache 2.0 License](./LICENSE).  
 You are free to use, modify, and distribute them under these terms, but note that **they are not designed for direct external use**.
 
 ---
