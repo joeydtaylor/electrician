@@ -50,21 +50,21 @@ func main() {
 	meter := builder.NewMeter[Users](ctx, builder.MeterWithTotalItems[Users](10))
 
 	// Create a Sensor and attach the Meter.
-	sensor := builder.NewSensor[Users](builder.SensorWithMeter[Users](meter))
+	sensor := builder.NewSensor(builder.SensorWithMeter[Users](meter))
 
 	// Setup a Circuit Breaker that trips after 1 error and resets after 4 seconds.
-	circuitBreaker := builder.NewCircuitBreaker[Users](
+	circuitBreaker := builder.NewCircuitBreaker(
 		ctx,
 		1,
 		4*time.Second,
-		builder.CircuitBreakerWithSensor[Users](sensor),
+		builder.CircuitBreakerWithSensor(sensor),
 	)
 
 	// Create an HTTP Adapter to fetch data from JSONPlaceholder,
 	// using certificate pinning (with a local certificate chain file "chain.crt").
-	httpAdapter := builder.NewHTTPClientAdapter[Users](
+	httpAdapter := builder.NewHTTPClientAdapter(
 		ctx,
-		builder.HTTPClientAdapterWithSensor[Users](sensor),
+		builder.HTTPClientAdapterWithSensor(sensor),
 		builder.HTTPClientAdapterWithTLSPinning[Users]("./chain.crt"),
 		builder.HTTPClientAdapterWithRequestConfig[Users]("GET", "https://jsonplaceholder.typicode.com/users", nil),
 		builder.HTTPClientAdapterWithInterval[Users](4*time.Second),
@@ -80,26 +80,26 @@ func main() {
 	}
 
 	// Create a Plug that uses the HTTP Adapter and Sensor.
-	plug := builder.NewPlug[Users](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapter[Users](httpAdapter),
-		builder.PlugWithSensor[Users](sensor),
+		builder.PlugWithAdapter(httpAdapter),
+		builder.PlugWithSensor(sensor),
 	)
 
 	// Initialize a Generator that pulls data from the Plug and attaches the Sensor and Circuit Breaker.
-	generator := builder.NewGenerator[Users](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Users](plug),
-		builder.GeneratorWithSensor[Users](sensor),
-		builder.GeneratorWithCircuitBreaker[Users](circuitBreaker),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
+		builder.GeneratorWithCircuitBreaker(circuitBreaker),
 	)
 
 	// Create a Wire that uses the Sensor, Transformer, and Generator.
-	wire := builder.NewWire[Users](
+	wire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Users](sensor),
-		builder.WireWithTransformer[Users](transformer),
-		builder.WireWithGenerator[Users](generator),
+		builder.WireWithSensor(sensor),
+		builder.WireWithTransformer(transformer),
+		builder.WireWithGenerator(generator),
 	)
 
 	// Start the pipeline.

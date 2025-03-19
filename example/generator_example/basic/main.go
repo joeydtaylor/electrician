@@ -50,21 +50,21 @@ func main() {
 
 	logger := builder.NewLogger()
 
-	plug := builder.NewPlug[Item](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](adapterFunc),
+		builder.PlugWithAdapterFunc(adapterFunc),
 	)
 
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Item](logger),
-		builder.WireWithTransformer[Item](processItem),
-		builder.WireWithGenerator[Item](generator),
+		builder.WireWithTransformer(processItem),
+		builder.WireWithGenerator(generator),
 	)
 
 	processingWire.Start(ctx)

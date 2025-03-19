@@ -16,7 +16,6 @@ type Item struct {
 
 // plug produces items continuously at random intervals
 func plugFunc(ctx context.Context, submitFunc func(ctx context.Context, item Item) error) {
-	rand.Seed(time.Now().UnixNano()) // Seed the random number generator
 
 	id := 1
 	for {
@@ -41,36 +40,36 @@ func main() {
 	defer cancel()
 
 	meter := builder.NewMeter[Item](ctx)
-	sensor := builder.NewSensor[Item](builder.SensorWithMeter[Item](meter))
+	sensor := builder.NewSensor(builder.SensorWithMeter[Item](meter))
 
-	plug := builder.NewPlug[Item](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](plugFunc),
-		builder.PlugWithSensor[Item](sensor),
+		builder.PlugWithAdapterFunc(plugFunc),
+		builder.PlugWithSensor(sensor),
 	)
 
-	backupWire := builder.NewWire[Item](
+	backupWire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Item](sensor),
+		builder.WireWithSensor(sensor),
 	)
 
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
-		builder.GeneratorWithSensor[Item](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
 
-	surgeProtector := builder.NewSurgeProtector[Item](
+	surgeProtector := builder.NewSurgeProtector(
 		ctx,
-		builder.SurgeProtectorWithBackupSystem[Item](backupWire),
-		builder.SurgeProtectorWithSensor[Item](sensor),
+		builder.SurgeProtectorWithBackupSystem(backupWire),
+		builder.SurgeProtectorWithSensor(sensor),
 	)
 
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Item](sensor),
-		builder.WireWithGenerator[Item](generator),
-		builder.WireWithSurgeProtector[Item](surgeProtector),
+		builder.WireWithSensor(sensor),
+		builder.WireWithGenerator(generator),
+		builder.WireWithSurgeProtector(surgeProtector),
 	)
 
 	backupWire.Start(ctx)

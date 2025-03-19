@@ -56,22 +56,22 @@ func main() {
 		"localhost",
 	)
 
-	sentimentWire := builder.NewWire[Feedback](
+	sentimentWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Feedback](sentimentAnalyzer),
+		builder.WireWithTransformer(sentimentAnalyzer),
 	)
-	outputConduit := builder.NewConduit[Feedback](
+	outputConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Feedback](sentimentWire),
+		builder.ConduitWithWire(sentimentWire),
 	)
 
 	// Receiving Relay that uses the second conduit
-	receivingRelay := builder.NewReceivingRelay[Feedback](
+	receivingRelay := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback]("localhost:50051"),
 		builder.ReceivingRelayWithBufferSize[Feedback](10000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput[Feedback](outputConduit),
+		builder.ReceivingRelayWithOutput(outputConduit),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsConfig),
 	)
 

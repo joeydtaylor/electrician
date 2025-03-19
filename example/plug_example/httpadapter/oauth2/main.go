@@ -48,15 +48,15 @@ func main() {
 	defer cancel()
 
 	// Set up a Sensor to log key pipeline events.
-	sensor := builder.NewSensor[Users](
+	sensor := builder.NewSensor(
 		builder.SensorWithOnStartFunc[Users](func(c builder.ComponentMetadata) { fmt.Println("Wire started") }),
-		builder.SensorWithOnElementProcessedFunc[Users](func(c builder.ComponentMetadata, elem Users) {
+		builder.SensorWithOnElementProcessedFunc(func(c builder.ComponentMetadata, elem Users) {
 			fmt.Printf("Processed API response: %+v\n", elem)
 		}),
-		builder.SensorWithOnCancelFunc[Users](func(c builder.ComponentMetadata, elem Users) {
+		builder.SensorWithOnCancelFunc(func(c builder.ComponentMetadata, elem Users) {
 			fmt.Printf("Context cancelled processing API response: %+v\n", elem)
 		}),
-		builder.SensorWithOnErrorFunc[Users](func(c builder.ComponentMetadata, err error, elem Users) {
+		builder.SensorWithOnErrorFunc(func(c builder.ComponentMetadata, err error, elem Users) {
 			fmt.Printf("Error processing API response: %+v, Error: %+v\n", elem, err)
 		}),
 		builder.SensorWithOnCompleteFunc[Users](func(c builder.ComponentMetadata) { fmt.Println("Processing complete") }),
@@ -78,19 +78,19 @@ func main() {
 
 	// Create an HTTP Adapter that fetches data from JSONPlaceholder.
 	// It uses TLS pinning via a certificate chain file ("./chain.crt") and includes OAuth2 client credentials.
-	httpAdapter := builder.NewHTTPClientAdapter[Users](
+	httpAdapter := builder.NewHTTPClientAdapter(
 		ctx,
 		builder.HTTPClientAdapterWithLogger[Users](logger),
 		builder.HTTPClientAdapterWithRequestConfig[Users]("GET", "https://jsonplaceholder.typicode.com/users", nil),
 		builder.HTTPClientAdapterWithInterval[Users](4*time.Second),
 		builder.HTTPClientAdapterWithTimeout[Users](10*time.Second),
 		builder.HTTPClientAdapterWithOAuth2ClientCredentials[Users](clientID, clientSecret, tokenURL, "https://dev-8qbukrpqlhxkb84a.us.auth0.com/api/v2/"),
-		builder.HTTPClientAdapterWithSensor[Users](sensor),
+		builder.HTTPClientAdapterWithSensor(sensor),
 		builder.HTTPClientAdapterWithTLSPinning[Users]("./chain.crt"),
 	)
 
 	// Set up a Circuit Breaker that trips after 1 error and resets after 4 seconds.
-	circuitBreaker := builder.NewCircuitBreaker[Users](
+	circuitBreaker := builder.NewCircuitBreaker(
 		context.Background(),
 		1,
 		4*time.Second,
@@ -106,27 +106,27 @@ func main() {
 	}
 
 	// Create a Plug using the HTTP Adapter.
-	plug := builder.NewPlug[Users](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapter[Users](httpAdapter),
-		builder.PlugWithSensor[Users](sensor),
+		builder.PlugWithAdapter(httpAdapter),
+		builder.PlugWithSensor(sensor),
 	)
 
 	// Initialize a Generator that uses the Plug, Logger, and Circuit Breaker.
-	generator := builder.NewGenerator[Users](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Users](plug),
+		builder.GeneratorWithPlug(plug),
 		builder.GeneratorWithLogger[Users](logger),
-		builder.GeneratorWithCircuitBreaker[Users](circuitBreaker),
+		builder.GeneratorWithCircuitBreaker(circuitBreaker),
 	)
 
 	// Create a Wire that uses the Sensor, Transformer, and Generator.
-	wire := builder.NewWire[Users](
+	wire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Users](logger),
-		builder.WireWithSensor[Users](sensor),
-		builder.WireWithTransformer[Users](transformer),
-		builder.WireWithGenerator[Users](generator),
+		builder.WireWithSensor(sensor),
+		builder.WireWithTransformer(transformer),
+		builder.WireWithGenerator(generator),
 	)
 
 	// Start the pipeline.

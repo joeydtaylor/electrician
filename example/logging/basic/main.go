@@ -19,10 +19,10 @@ func main() {
 		return strings.ToUpper(input), nil
 	}
 
-	wire := builder.NewWire[string](
+	wire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[string](logger),
-		builder.WireWithTransformer[string](transform),
+		builder.WireWithTransformer(transform),
 	)
 
 	wire.Start(ctx)

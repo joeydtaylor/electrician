@@ -56,13 +56,13 @@ func main() {
 		"localhost",
 	)
 
-	sentimentWire := builder.NewWire[Feedback](
+	sentimentWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Feedback](sentimentAnalyzer),
+		builder.WireWithTransformer(sentimentAnalyzer),
 	)
-	outputConduit := builder.NewConduit[Feedback](
+	outputConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Feedback](sentimentWire),
+		builder.ConduitWithWire(sentimentWire),
 	)
 
 	secondaryWire := builder.NewWire[Feedback](
@@ -70,28 +70,28 @@ func main() {
 	)
 
 	// Receiving Relay that uses the second conduit
-	receivingRelay := builder.NewReceivingRelay[Feedback](
+	receivingRelay := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback]("localhost:50051"),
 		builder.ReceivingRelayWithBufferSize[Feedback](10000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput[Feedback](outputConduit),
+		builder.ReceivingRelayWithOutput(outputConduit),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsConfig),
 	)
 
 	// Receiving Relay that uses the second conduit
-	secondReceievingRelay := builder.NewReceivingRelay[Feedback](
+	secondReceivingRelay := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback]("localhost:50052"),
 		builder.ReceivingRelayWithBufferSize[Feedback](10000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput[Feedback](secondaryWire),
+		builder.ReceivingRelayWithOutput(secondaryWire),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsConfig),
 	)
 
 	// Start the receiving relay
 	receivingRelay.Start(ctx)
-	secondReceievingRelay.Start(ctx)
+	secondReceivingRelay.Start(ctx)
 
 	// Block until the context is canceled
 	<-ctx.Done()

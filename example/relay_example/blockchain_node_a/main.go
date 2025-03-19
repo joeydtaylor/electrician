@@ -62,25 +62,25 @@ func main() {
 	)
 
 	// Create a wire for processing incoming blocks with our transformer.
-	blockWire := builder.NewWire[Block](
+	blockWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Block](processBlock),
+		builder.WireWithTransformer(processBlock),
 		builder.WireWithLogger[Block](logger),
 	)
 
 	// Create an output conduit from the block wire.
-	outputConduit := builder.NewConduit[Block](
+	outputConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Block](blockWire),
+		builder.ConduitWithWire(blockWire),
 	)
 
 	// Receiving relay to listen for blocks from the hub.
-	receivingRelay := builder.NewReceivingRelay[Block](
+	receivingRelay := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[Block]("localhost:50051"), // Listen on port 50051.
 		builder.ReceivingRelayWithBufferSize[Block](1000),
 		builder.ReceivingRelayWithLogger[Block](logger),
-		builder.ReceivingRelayWithOutput[Block](outputConduit),
+		builder.ReceivingRelayWithOutput(outputConduit),
 		builder.ReceivingRelayWithTLSConfig[Block](tlsConfig),
 	)
 

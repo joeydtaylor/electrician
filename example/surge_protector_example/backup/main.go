@@ -39,31 +39,31 @@ func main() {
 	defer cancel()
 
 	meter := builder.NewMeter[Item](ctx)
-	sensor := builder.NewSensor[Item](builder.SensorWithMeter[Item](meter))
-	plug := builder.NewPlug[Item](
+	sensor := builder.NewSensor(builder.SensorWithMeter[Item](meter))
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](plugFunc),
-		builder.PlugWithSensor[Item](sensor),
+		builder.PlugWithAdapterFunc(plugFunc),
+		builder.PlugWithSensor(sensor),
 	)
-	backupWire := builder.NewWire[Item](
+	backupWire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Item](sensor),
+		builder.WireWithSensor(sensor),
 	)
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
-		builder.GeneratorWithSensor[Item](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
-	surgeProtector := builder.NewSurgeProtector[Item](
+	surgeProtector := builder.NewSurgeProtector(
 		ctx,
-		builder.SurgeProtectorWithSensor[Item](sensor),
-		builder.SurgeProtectorWithBackupSystem[Item](backupWire),
+		builder.SurgeProtectorWithSensor(sensor),
+		builder.SurgeProtectorWithBackupSystem(backupWire),
 	)
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
-		builder.WireWithGenerator[Item](generator),
-		builder.WireWithSurgeProtector[Item](surgeProtector),
-		builder.WireWithSensor[Item](sensor),
+		builder.WireWithGenerator(generator),
+		builder.WireWithSurgeProtector(surgeProtector),
+		builder.WireWithSensor(sensor),
 	)
 
 	// Trip the surge protector every 10 seconds in a separate goroutine

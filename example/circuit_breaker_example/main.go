@@ -53,41 +53,41 @@ func main() {
 
 	meter := builder.NewMeter[Item](ctx)
 
-	sensor := builder.NewSensor[Item](builder.SensorWithMeter[Item](meter))
+	sensor := builder.NewSensor(builder.SensorWithMeter[Item](meter))
 
-	plug := builder.NewPlug[Item](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](plugFunc),
-		builder.PlugWithSensor[Item](sensor),
+		builder.PlugWithAdapterFunc(plugFunc),
+		builder.PlugWithSensor(sensor),
 	)
 
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
-		builder.GeneratorWithSensor[Item](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
 
-	/* 	groundWire := builder.NewWire[Item](ctx, builder.WireWithLogger[Item](logger)) */
-	circuitBreaker := builder.NewCircuitBreaker[Item](
+	/* neutralWire := builder.NewWire(ctx, builder.WireWithLogger[Item](logger)) */
+	circuitBreaker := builder.NewCircuitBreaker(
 		ctx,
 		1,             // Trip after 3 errors.
 		5*time.Second, // Reset after 5 seconds.
 		/* 		builder.CircuitBreakerWithLogger[Item](logger), */
-		/* 		builder.CircuitBreakerWithGroundWire[Item](groundWire), */
+		/*    builder.CircuitBreakerWithNeutralWire(neutralWire), */
 		builder.CircuitBreakerWithComponentMetadata[Item]("MyCircuitBreakerNameMetadata", "123456789"),
-		builder.CircuitBreakerWithSensor[Item](sensor),
+		builder.CircuitBreakerWithSensor(sensor),
 	)
 
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
 		/* 		builder.WireWithLogger[Item](logger), */
-		builder.WireWithTransformer[Item](processItem),
-		builder.WireWithCircuitBreaker[Item](circuitBreaker),
-		builder.WireWithGenerator[Item](generator),
-		builder.WireWithSensor[Item](sensor),
+		builder.WireWithTransformer(processItem),
+		builder.WireWithCircuitBreaker(circuitBreaker),
+		builder.WireWithGenerator(generator),
+		builder.WireWithSensor(sensor),
 	)
 
-	/* 	groundWire.Start(ctx) */
+	/* 	neutralWire.Start(ctx) */
 	processingWire.Start(ctx)
 
 	/* 	// Wait for processing to complete or timeout.
@@ -103,7 +103,7 @@ func main() {
 		return
 	}
 
-	fmt.Println("GroundWire Summary:")
+	fmt.Println("neutralWire Summary:")
 	fmt.Println(string(output))
 
 }

@@ -68,31 +68,31 @@ func main() {
 
 	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
 
-	plug := builder.NewPlug[Feedback](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Feedback](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
-	generator := builder.NewGenerator[Feedback](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Feedback](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
 	// Initialize components of the processing pipeline: circuit breaker, transformers, and groundWire.
 	groundWire := builder.NewWire[Feedback](ctx)
-	circuitBreaker := builder.NewCircuitBreaker[Feedback](
+	circuitBreaker := builder.NewCircuitBreaker(
 		ctx,
 		1, 10*time.Second,
-		builder.CircuitBreakerWithNeutralWire[Feedback](groundWire),
+		builder.CircuitBreakerWithNeutralWire(groundWire),
 		builder.CircuitBreakerWithLogger[Feedback](logger),
 	)
-	generatorWire := builder.NewWire[Feedback](
+	generatorWire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Feedback](logger),
 		builder.WireWithConcurrencyControl[Feedback](1000, 100),
-		builder.WireWithCircuitBreaker[Feedback](circuitBreaker),
-		builder.WireWithTransformer[Feedback](errorSimulator),
-		builder.WireWithGenerator[Feedback](generator),
+		builder.WireWithCircuitBreaker(circuitBreaker),
+		builder.WireWithTransformer(errorSimulator),
+		builder.WireWithGenerator(generator),
 	)
 
 	tlsConfig := builder.NewTlsClientConfig(
@@ -102,11 +102,11 @@ func main() {
 		"../tls/ca.crt",     // Path to the CA certificate
 	)
 
-	forwardRelay := builder.NewForwardRelay[Feedback](
+	forwardRelay := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithLogger[Feedback](logger),
 		builder.ForwardRelayWithTarget[Feedback]("localhost:50051", "localhost:50052"),
-		builder.ForwardRelayWithInput[Feedback](groundWire),
+		builder.ForwardRelayWithInput(groundWire),
 		builder.ForwardRelayWithTLSConfig[Feedback](tlsConfig),
 	)
 

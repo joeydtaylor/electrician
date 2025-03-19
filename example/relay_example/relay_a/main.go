@@ -47,19 +47,19 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 
-	plug := builder.NewPlug[Feedback](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Feedback](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
 	logger := builder.NewLogger()
 
-	generator := builder.NewGenerator[Feedback](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Feedback](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
-	generatorWire := builder.NewWire[Feedback](ctx, builder.WireWithGenerator[Feedback](generator))
+	generatorWire := builder.NewWire(ctx, builder.WireWithGenerator(generator))
 	// Attach a generator to the transformer and start the processing.
 
 	tlsConfig := builder.NewTlsClientConfig(
@@ -69,10 +69,10 @@ func main() {
 		"../tls/ca.crt",     // Path to the CA certificate
 	)
 
-	forwardRelay := builder.NewForwardRelay[Feedback](
+	forwardRelay := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithTarget[Feedback]("localhost:50051"),
-		builder.ForwardRelayWithInput[Feedback](generatorWire),
+		builder.ForwardRelayWithInput(generatorWire),
 		builder.ForwardRelayWithLogger[Feedback](logger),
 		builder.ForwardRelayWithTLSConfig[Feedback](tlsConfig),
 	)

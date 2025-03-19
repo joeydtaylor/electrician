@@ -121,24 +121,24 @@ func main() {
 
 	logger := builder.NewLogger()
 
-	plug := builder.NewPlug[builder.WaveData](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[builder.WaveData](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
-	generator := builder.NewGenerator[builder.WaveData](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[builder.WaveData](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
 	waveEncoder := builder.NewWaveEncoder[builder.WaveData]()
 
-	processingWire := builder.NewWire[builder.WaveData](
+	processingWire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[builder.WaveData](logger),
-		builder.WireWithEncoder[builder.WaveData](waveEncoder),
-		builder.WireWithTransformer[builder.WaveData](processWaveData),
-		builder.WireWithGenerator[builder.WaveData](generator),
+		builder.WireWithEncoder(waveEncoder),
+		builder.WireWithTransformer(processWaveData),
+		builder.WireWithGenerator(generator),
 	)
 
 	processingWire.Start(ctx)

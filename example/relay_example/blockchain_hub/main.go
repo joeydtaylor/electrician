@@ -97,22 +97,22 @@ func main() {
 	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
 
 	// Create a plug for generating blocks.
-	plug := builder.NewPlug[Block](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Block](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
 	// Create a generator that uses the plug.
-	generator := builder.NewGenerator[Block](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Block](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
 	// Create a wire that uses the generator.
-	generatorWire := builder.NewWire[Block](
+	generatorWire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Block](logger),
-		builder.WireWithGenerator[Block](generator),
+		builder.WireWithGenerator(generator),
 	)
 
 	// TLS configuration for secure communication.
@@ -125,11 +125,11 @@ func main() {
 
 	// Forward relay that sends blocks to the node.
 	// Using generatorWire directly as the input
-	forwardRelay := builder.NewForwardRelay[Block](
+	forwardRelay := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithLogger[Block](logger),
-		builder.ForwardRelayWithTarget[Block]("localhost:50051"), // Node address.
-		builder.ForwardRelayWithInput[Block](generatorWire),      // Connect to the generator wire
+		builder.ForwardRelayWithTarget[Block]("localhost:50051", "localhost:50052"), // Node address.
+		builder.ForwardRelayWithInput(generatorWire),                                // Connect to the generator wire
 		builder.ForwardRelayWithTLSConfig[Block](tlsConfig),
 	)
 

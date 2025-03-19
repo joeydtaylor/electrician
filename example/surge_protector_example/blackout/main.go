@@ -42,42 +42,42 @@ func main() {
 
 	meter := builder.NewMeter[Item](ctx)
 
-	plug := builder.NewPlug[Item](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
-	sensor := builder.NewSensor[Item](
+	sensor := builder.NewSensor(
 		builder.SensorWithMeter[Item](meter),
 	)
 
-	backupWire := builder.NewWire[Item](
+	backupWire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Item](sensor),
+		builder.WireWithSensor(sensor),
 	)
 
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
-		builder.GeneratorWithSensor[Item](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
 
 	// Define the blackout period
 	blackoutStart := time.Now().Add(10 * time.Second) // Start the blackout in 10 seconds
 	blackoutEnd := blackoutStart.Add(5 * time.Second) // End the blackout 5 seconds later
 
-	surgeProtector := builder.NewSurgeProtector[Item](
+	surgeProtector := builder.NewSurgeProtector(
 		ctx,
-		builder.SurgeProtectorWithBackupSystem[Item](backupWire),
+		builder.SurgeProtectorWithBackupSystem(backupWire),
 		builder.SurgeProtectorWithBlackoutPeriod[Item](blackoutStart, blackoutEnd), // Apply the blackout period
-		builder.SurgeProtectorWithSensor[Item](sensor),
+		builder.SurgeProtectorWithSensor(sensor),
 	)
 
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
-		builder.WireWithGenerator[Item](generator),
-		builder.WireWithSensor[Item](sensor),
-		builder.WireWithSurgeProtector[Item](surgeProtector),
+		builder.WireWithGenerator(generator),
+		builder.WireWithSensor(sensor),
+		builder.WireWithSurgeProtector(surgeProtector),
 	)
 
 	backupWire.Start(ctx)

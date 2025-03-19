@@ -88,48 +88,48 @@ func main() {
 	defer cancel()
 
 	meter := builder.NewMeter[Feedback](ctx)
-	sensor := builder.NewSensor[Feedback](builder.SensorWithMeter[Feedback](meter))
+	sensor := builder.NewSensor(builder.SensorWithMeter[Feedback](meter))
 
-	surgeProtector := builder.NewSurgeProtector[Feedback](
+	surgeProtector := builder.NewSurgeProtector(
 		ctx,
-		builder.SurgeProtectorWithSensor[Feedback](sensor),
+		builder.SurgeProtectorWithSensor(sensor),
 	)
 
-	plug := builder.NewPlug[Feedback](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Feedback](plugFunc),
-		builder.PlugWithSensor[Feedback](sensor),
+		builder.PlugWithAdapterFunc(plugFunc),
+		builder.PlugWithSensor(sensor),
 	)
 
-	generator := builder.NewGenerator[Feedback](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Feedback](plug),
-		builder.GeneratorWithSensor[Feedback](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
 
-	generatorWire := builder.NewWire[Feedback](
+	generatorWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Feedback](negativeFilter, classifier),
-		builder.WireWithGenerator[Feedback](generator),
+		builder.WireWithTransformer(negativeFilter, classifier),
+		builder.WireWithGenerator(generator),
 	)
 
-	firstConduit := builder.NewConduit[Feedback](
+	firstConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Feedback](generatorWire),
-		builder.ConduitWithSensor[Feedback](sensor),
-		builder.ConduitWithSurgeProtector[Feedback](surgeProtector),
+		builder.ConduitWithWire(generatorWire),
+		builder.ConduitWithSensor(sensor),
+		builder.ConduitWithSurgeProtector(surgeProtector),
 	)
 
-	sentimentWire := builder.NewWire[Feedback](
+	sentimentWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Feedback](sentimentAnalyzer),
+		builder.WireWithTransformer(sentimentAnalyzer),
 	)
 
-	secondConduit := builder.NewConduit[Feedback](
+	secondConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Feedback](sentimentWire),
-		builder.ConduitWithSensor[Feedback](sensor),
-		builder.ConduitWithSurgeProtector[Feedback](surgeProtector),
+		builder.ConduitWithWire(sentimentWire),
+		builder.ConduitWithSensor(sensor),
+		builder.ConduitWithSurgeProtector(surgeProtector),
 	)
 
 	firstConduit.ConnectConduit(secondConduit)

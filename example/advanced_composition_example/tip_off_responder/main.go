@@ -43,8 +43,8 @@ func main() {
 	)
 
 	// Sensor to monitor and react to threat detections
-	sensor := builder.NewSensor[EDRData](
-		builder.SensorWithOnElementProcessedFunc[EDRData](func(c builder.ComponentMetadata, elem EDRData) {
+	sensor := builder.NewSensor(
+		builder.SensorWithOnElementProcessedFunc(func(c builder.ComponentMetadata, elem EDRData) {
 			if elem.IsThreat {
 				fmt.Printf("Security team notified about threat from %s.\n", elem.EndpointID)
 			}
@@ -52,33 +52,33 @@ func main() {
 	)
 
 	// Wire for real-time threat analysis
-	threatWire := builder.NewWire[EDRData](
+	threatWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[EDRData](threatAnalysis),
+		builder.WireWithTransformer(threatAnalysis),
 		builder.WireWithLogger[EDRData](logger),
-		builder.WireWithSensor[EDRData](sensor),
+		builder.WireWithSensor(sensor),
 	)
 
 	// Wire for storing data in a data lake
-	dataLakeWire := builder.NewWire[EDRData](
+	dataLakeWire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[EDRData](logger),
 	)
 
 	// Receiving relays for different purposes
-	responderService := builder.NewReceivingRelay[EDRData](
+	responderService := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[EDRData]("localhost:50051"),
 		builder.ReceivingRelayWithLogger[EDRData](logger),
-		builder.ReceivingRelayWithOutput[EDRData](threatWire),
+		builder.ReceivingRelayWithOutput(threatWire),
 		builder.ReceivingRelayWithTLSConfig[EDRData](tlsConfig),
 	)
 
-	dataLakeService := builder.NewReceivingRelay[EDRData](
+	dataLakeService := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[EDRData]("localhost:50052"),
 		builder.ReceivingRelayWithLogger[EDRData](logger),
-		builder.ReceivingRelayWithOutput[EDRData](dataLakeWire),
+		builder.ReceivingRelayWithOutput(dataLakeWire),
 		builder.ReceivingRelayWithTLSConfig[EDRData](tlsConfig),
 	)
 

@@ -66,17 +66,17 @@ func main() {
 
 	logger := builder.NewLogger()
 
-	plug := builder.NewPlug[Item](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
-	circuitBreaker := builder.NewCircuitBreaker[Item](
+	circuitBreaker := builder.NewCircuitBreaker(
 		ctx,
 		1, // Trips after 1 error.
 		5*time.Second,
@@ -84,14 +84,14 @@ func main() {
 		builder.CircuitBreakerWithComponentMetadata[Item]("MyCircuitBreakerNameMetadata", "123456789"),
 	)
 
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Item](logger),
-		builder.WireWithEncoder[Item](builder.NewJSONEncoder[Item]()),
-		builder.WireWithTransformer[Item](processItem),
-		builder.WireWithCircuitBreaker[Item](circuitBreaker),
-		builder.WireWithGenerator[Item](generator),
-		builder.WireWithInsulator[Item](retryItem, 3, 1*time.Second),
+		builder.WireWithEncoder(builder.NewJSONEncoder[Item]()),
+		builder.WireWithTransformer(processItem),
+		builder.WireWithCircuitBreaker(circuitBreaker),
+		builder.WireWithGenerator(generator),
+		builder.WireWithInsulator(retryItem, 3, 1*time.Second),
 	)
 
 	processingWire.Start(ctx)

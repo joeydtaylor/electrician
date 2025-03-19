@@ -65,26 +65,26 @@ func main() {
 		builder.MeterWithTotalItems[Feedback](uint64(totalItems)),
 	)
 
-	sensor := builder.NewSensor[Feedback](
+	sensor := builder.NewSensor(
 		builder.SensorWithMeter[Feedback](meter),
 	)
 
-	plug := builder.NewPlug[Feedback](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Feedback](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
-	generator := builder.NewGenerator[Feedback](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Feedback](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
-	wire := builder.NewWire[Feedback](
+	wire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Feedback](processor, errorSimulator),
-		builder.WireWithGenerator[Feedback](generator),
+		builder.WireWithTransformer(processor, errorSimulator),
+		builder.WireWithGenerator(generator),
 		builder.WireWithConcurrencyControl[Feedback](1000000, 10000000),
-		builder.WireWithSensor[Feedback](sensor),
+		builder.WireWithSensor(sensor),
 	)
 
 	wire.Start(ctx)

@@ -50,15 +50,15 @@ func main() {
 		return
 	}
 
-	plug := builder.NewPlug[string](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[string](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
 	// Initialize the generator with one plug.
-	generator := builder.NewGenerator[string](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[string](plug), // First plug
+		builder.GeneratorWithPlug(plug), // First plug
 		builder.GeneratorWithLogger[string](logger),
 	)
 
@@ -66,11 +66,11 @@ func main() {
 		return strings.ToUpper(input), nil
 	}
 
-	wire := builder.NewWire[string](
+	wire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[string](logger),
-		builder.WireWithTransformer[string](transform),
-		builder.WireWithGenerator[string](generator),
+		builder.WireWithTransformer(transform),
+		builder.WireWithGenerator(generator),
 	)
 
 	wire.Start(ctx)

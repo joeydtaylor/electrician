@@ -62,8 +62,8 @@ func main() {
 	tipOffNotifierWire := builder.NewWire[EDRData](ctx)
 
 	// Sensor for monitoring
-	sensor := builder.NewSensor[EDRData](
-		builder.SensorWithOnElementProcessedFunc[EDRData](
+	sensor := builder.NewSensor(
+		builder.SensorWithOnElementProcessedFunc(
 			func(c builder.ComponentMetadata, elem EDRData) {
 				if elem.IsThreat {
 					tipOffNotifierWire.Submit(ctx, elem)
@@ -80,26 +80,26 @@ func main() {
 	// Set up multiple generators for each endpoint
 	endpoints := []string{"Endpoint1", "Endpoint2", "Endpoint3"}
 	for _, endpoint := range endpoints {
-		plug := builder.NewPlug[EDRData](
+		plug := builder.NewPlug(
 			ctx,
-			builder.PlugWithAdapterFunc[EDRData](func(ctx context.Context, submit func(ctx context.Context, data EDRData) error) {
+			builder.PlugWithAdapterFunc(func(ctx context.Context, submit func(ctx context.Context, data EDRData) error) {
 				generateEDRData(ctx, endpoint, submit)
 			}),
-			/* 			builder.PlugWithLogger[EDRData](logger), */
+			/* 			builder.PlugWithLogger(logger), */
 		)
 
-		generator := builder.NewGenerator[EDRData](
+		generator := builder.NewGenerator(
 			ctx,
-			builder.GeneratorWithPlug[EDRData](plug),
+			builder.GeneratorWithPlug(plug),
 			/* 			builder.GeneratorWithLogger[EDRData](logger), */
 		)
 
 		// Create wires for each generator and add them to the conduit
-		wire := builder.NewWire[EDRData](
+		wire := builder.NewWire(
 			ctx,
-			builder.WireWithTransformer[EDRData](standardizeData),
-			builder.WireWithGenerator[EDRData](generator),
-			builder.WireWithSensor[EDRData](sensor),
+			builder.WireWithTransformer(standardizeData),
+			builder.WireWithGenerator(generator),
+			builder.WireWithSensor(sensor),
 			/* 			builder.WireWithLogger[EDRData](logger), */
 		)
 
@@ -113,10 +113,10 @@ func main() {
 		"../tls/ca.crt",     // Path to the CA certificate
 	)
 
-	tipOffNotifier := builder.NewForwardRelay[EDRData](
+	tipOffNotifier := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithLogger[EDRData](logger),
-		builder.ForwardRelayWithInput[EDRData](tipOffNotifierWire),
+		builder.ForwardRelayWithInput(tipOffNotifierWire),
 		builder.ForwardRelayWithTarget[EDRData]("localhost:50051", "localhost:50052"),
 		builder.ForwardRelayWithTLSConfig[EDRData](tlsConfig),
 	)

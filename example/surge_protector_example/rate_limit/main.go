@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
@@ -16,7 +15,6 @@ type Item struct {
 
 // generator produces a fixed number of items at random intervals
 func plugFunc(ctx context.Context, submitFunc func(ctx context.Context, item Item) error) {
-	rand.Seed(time.Now().UnixNano()) // Seed the random number generator
 
 	id := 1
 	totalItems := 10 // Only generate 10 items
@@ -48,31 +46,31 @@ func main() {
 		builder.MeterWithIdleTimeout[Item](10*time.Second),
 	)
 
-	sensor := builder.NewSensor[Item](
+	sensor := builder.NewSensor(
 		builder.SensorWithMeter[Item](meter),
 	)
 
-	plug := builder.NewPlug[Item](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Item](plugFunc),
-		builder.PlugWithSensor[Item](sensor),
+		builder.PlugWithAdapterFunc(plugFunc),
+		builder.PlugWithSensor(sensor),
 	)
 
-	generator := builder.NewGenerator[Item](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Item](plug),
-		builder.GeneratorWithSensor[Item](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
 
-	resister := builder.NewResister[Item](
+	resister := builder.NewResister(
 		ctx,
-		builder.ResisterWithSensor[Item](sensor),
+		builder.ResisterWithSensor(sensor),
 	)
 
-	surgeProtector := builder.NewSurgeProtector[Item](
+	surgeProtector := builder.NewSurgeProtector(
 		ctx,
-		builder.SurgeProtectorWithSensor[Item](sensor),
-		builder.SurgeProtectorWithResister[Item](resister),
+		builder.SurgeProtectorWithSensor(sensor),
+		builder.SurgeProtectorWithResister(resister),
 		builder.SurgeProtectorWithRateLimit[Item](
 			1,
 			5000*time.Millisecond,
@@ -80,11 +78,11 @@ func main() {
 		),
 	)
 
-	processingWire := builder.NewWire[Item](
+	processingWire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Item](sensor),
-		builder.WireWithGenerator[Item](generator),
-		builder.WireWithSurgeProtector[Item](surgeProtector),
+		builder.WireWithSensor(sensor),
+		builder.WireWithGenerator(generator),
+		builder.WireWithSurgeProtector(surgeProtector),
 	)
 
 	processingWire.Start(ctx)

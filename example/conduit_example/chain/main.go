@@ -78,42 +78,42 @@ func main() {
 	defer cancel()
 
 	meter := builder.NewMeter[Feedback](ctx)
-	sensor := builder.NewSensor[Feedback](builder.SensorWithMeter[Feedback](meter))
+	sensor := builder.NewSensor(builder.SensorWithMeter[Feedback](meter))
 
-	plug := builder.NewPlug[Feedback](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[Feedback](plugFunc),
-		builder.PlugWithSensor[Feedback](sensor),
+		builder.PlugWithAdapterFunc(plugFunc),
+		builder.PlugWithSensor(sensor),
 	)
 
-	generator := builder.NewGenerator[Feedback](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[Feedback](plug),
-		builder.GeneratorWithSensor[Feedback](sensor),
+		builder.GeneratorWithPlug(plug),
+		builder.GeneratorWithSensor(sensor),
 	)
 
-	generatorWire := builder.NewWire[Feedback](
+	generatorWire := builder.NewWire(
 		ctx,
-		builder.WireWithSensor[Feedback](sensor),
-		builder.WireWithTransformer[Feedback](negativeFilter, classifier),
-		builder.WireWithGenerator[Feedback](generator),
+		builder.WireWithSensor(sensor),
+		builder.WireWithTransformer(negativeFilter, classifier),
+		builder.WireWithGenerator(generator),
 	)
 
-	firstConduit := builder.NewConduit[Feedback](
+	firstConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Feedback](generatorWire),
+		builder.ConduitWithWire(generatorWire),
 	)
 
-	sentimentWire := builder.NewWire[Feedback](
+	sentimentWire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[Feedback](sentimentAnalyzer),
-		builder.WireWithSensor[Feedback](sensor),
+		builder.WireWithTransformer(sentimentAnalyzer),
+		builder.WireWithSensor(sensor),
 	)
 
-	secondConduit := builder.NewConduit[Feedback](
+	secondConduit := builder.NewConduit(
 		ctx,
-		builder.ConduitWithWire[Feedback](sentimentWire),
-		/* 		builder.ConduitWithSensor[Feedback](sensor), */
+		builder.ConduitWithWire(sentimentWire),
+		/* 		builder.ConduitWithSensor(sensor), */
 	)
 
 	firstConduit.ConnectConduit(secondConduit)

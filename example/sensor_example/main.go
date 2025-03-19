@@ -29,19 +29,19 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	plug := builder.NewPlug[string](
+	plug := builder.NewPlug(
 		ctx,
-		builder.PlugWithAdapterFunc[string](plugFunc),
+		builder.PlugWithAdapterFunc(plugFunc),
 	)
 
 	// Set up the sensor to count elements and report on completion.
-	sensor := builder.NewSensor[string](
+	sensor := builder.NewSensor(
 		builder.SensorWithOnStartFunc[string](func(c builder.ComponentMetadata) { fmt.Printf("Wire started: %v", c) }),
-		builder.SensorWithOnElementProcessedFunc[string](func(c builder.ComponentMetadata, elem string) { fmt.Printf("%v -> Processed element: %+v\n", c, elem) }),
-		builder.SensorWithOnCancelFunc[string](func(c builder.ComponentMetadata, elem string) {
+		builder.SensorWithOnElementProcessedFunc(func(c builder.ComponentMetadata, elem string) { fmt.Printf("%v -> Processed element: %+v\n", c, elem) }),
+		builder.SensorWithOnCancelFunc(func(c builder.ComponentMetadata, elem string) {
 			fmt.Printf("%v -> Context cancelled processing element: %+v\n", c, elem)
 		}),
-		builder.SensorWithOnErrorFunc[string](func(c builder.ComponentMetadata, err error, elem string) {
+		builder.SensorWithOnErrorFunc(func(c builder.ComponentMetadata, err error, elem string) {
 			fmt.Printf("%v -> Error processing element: %+v, Error: %+v\n", c, elem, err)
 		}),
 		builder.SensorWithOnCompleteFunc[string](func(c builder.ComponentMetadata) { fmt.Printf("%v -> Processing complete", c) }),
@@ -56,17 +56,17 @@ func main() {
 		return strings.ToUpper(input), nil
 	}
 
-	generator := builder.NewGenerator[string](
+	generator := builder.NewGenerator(
 		ctx,
-		builder.GeneratorWithPlug[string](plug),
+		builder.GeneratorWithPlug(plug),
 	)
 
 	// Create a wire with transformation, sensor, and circuit breaker.
-	wire := builder.NewWire[string](
+	wire := builder.NewWire(
 		ctx,
-		builder.WireWithTransformer[string](transform),
-		builder.WireWithSensor[string](sensor),
-		builder.WireWithGenerator[string](generator),
+		builder.WireWithTransformer(transform),
+		builder.WireWithSensor(sensor),
+		builder.WireWithGenerator(generator),
 	)
 
 	wire.Start(ctx)
