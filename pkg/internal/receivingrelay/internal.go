@@ -28,8 +28,11 @@ package receivingrelay
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +44,20 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4"
 	"google.golang.org/grpc/credentials"
+)
+
+// Local aliases for compression, same as forward side:
+const (
+	COMPRESS_NONE    relay.CompressionAlgorithm = 0
+	COMPRESS_DEFLATE relay.CompressionAlgorithm = 1
+	COMPRESS_SNAPPY  relay.CompressionAlgorithm = 2
+	COMPRESS_ZSTD    relay.CompressionAlgorithm = 3
+	COMPRESS_BROTLI  relay.CompressionAlgorithm = 4
+	COMPRESS_LZ4     relay.CompressionAlgorithm = 5
+
+	// Local aliases for encryption (must match your proto’s enum values!)
+	ENCRYPTION_NONE    relay.EncryptionSuite = 0
+	ENCRYPTION_AES_GCM relay.EncryptionSuite = 1
 )
 
 // decompressData takes a byte slice and a compression algorithm identifier, and returns a decompressed
@@ -162,4 +179,42 @@ func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (creden
 		)
 		return nil, fmt.Errorf("TLS is disabled")
 	}
+}
+
+// decryptData checks SecurityOptions. If encryption is enabled and AES-GCM is selected,
+// it extracts the nonce (the first gcm.NonceSize() bytes) and decrypts the remainder.
+// Otherwise, it returns data as-is (no decryption).
+func decryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
+	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != ENCRYPTION_AES_GCM {
+		// No encryption needed or not AES-GCM.
+		return data, nil
+	}
+
+	// Convert key string to bytes (16, 24, or 32 bytes for AES-128/192/256).
+	aesKey := []byte(key)
+
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return nil, fmt.Errorf("decryptData: invalid AES key: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("decryptData: failed to create GCM: %w", err)
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return nil, errors.New("decryptData: ciphertext too short for nonce")
+	}
+
+	// Split out the nonce (first nonceSize bytes) from the rest (the actual ciphertext).
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+
+	// Decrypt
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decryptData: GCM decryption failed: %w", err)
+	}
+	return plaintext, nil
 }

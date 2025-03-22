@@ -195,6 +195,28 @@ func (fr *ForwardRelay[T]) SetPerformanceOptions(perfOptions *relay.PerformanceO
 	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetPerformanceOptions, new: %v => SetPerformanceOptions called", fr.componentMetadata, fr.PerformanceOptions)
 }
 
+// SetSecurityOptions updates the security settings for the ForwardRelay.
+// This includes whether encryption is enabled (e.g., AES-GCM), and also stores
+// an out-of-band encryption key for use in securing data.
+//
+// Parameters:
+//   - secOptions: A pointer to the SecurityOptions struct specifying the new security settings.
+//   - encryptionKey: The encryption key to use (e.g. an AES-GCM key).
+//
+// This method logs the update of security settings at a debug level, ensuring changes
+// to critical security-related configurations are recorded for auditing and compliance.
+func (fr *ForwardRelay[T]) SetSecurityOptions(secOptions *relay.SecurityOptions, encryptionKey string) {
+	if atomic.LoadInt32(&fr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetSecurityOptions", fr.componentMetadata))
+	}
+	fr.SecurityOptions = secOptions
+	fr.EncryptionKey = encryptionKey
+
+	fr.NotifyLoggers(types.DebugLevel,
+		"component: %v, level: DEBUG, result: SUCCESS, event: SetSecurityOptions, new: %v => SetSecurityOptions called",
+		fr.componentMetadata, fr.SecurityOptions)
+}
+
 // SetTLSConfig updates the TLS (Transport Layer Security) configuration of the ForwardRelay.
 // This configuration is essential for ensuring secure communication channels in environments where data integrity and confidentiality are paramount.
 //
@@ -237,11 +259,11 @@ func (fr *ForwardRelay[T]) Start(ctx context.Context) error {
 // Submit handles the transmission of items via the ForwardRelay to an external receiver.
 // This method involves several critical steps:
 // 1. Extracting or generating a trace ID from the context for tracking and logging.
-// 2. Wrapping the item in a structured payload based on performance configurations.
-// 3. Setting up and using a gRPC client to send the wrapped payload, handling TLS configurations if enabled.
-// 4. Logging the progress and results of the data transmission attempt.
+// 2. Wrapping the item in a structured payload (gob-encoded, optional compression, optional encryption).
+// 3. Setting up and using a gRPC client to send the wrapped payload, handling TLS if enabled.
+// 4. Logging the progress and results of data transmission.
 //
-// The function returns an error if it encounters issues during any step, especially during payload wrapping or data transmission.
+// The function returns an error if it encounters issues during wrapping or data transmission.
 func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	var traceID string
@@ -251,11 +273,23 @@ func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
 		traceID = md["trace-id"][0]
 	}
 
-	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: Submit, element: %v, trace_id: %v => Wrapping payload", fr.componentMetadata, item, traceID)
+	fr.NotifyLoggers(types.DebugLevel,
+		"component: %v, level: DEBUG, result: SUCCESS, event: Submit, element: %v, trace_id: %v => Wrapping payload",
+		fr.componentMetadata, item, traceID,
+	)
 
-	wrappedPayload, err := WrapPayload(item, fr.PerformanceOptions)
+	// Updated WrapPayload call:
+	wrappedPayload, err := WrapPayload(
+		item,
+		fr.PerformanceOptions, // Performance options for compression
+		fr.SecurityOptions,    // Security options for encryption
+		fr.EncryptionKey,      // The AES-GCM key
+	)
 	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Error wrapping payload!", fr.componentMetadata, item, err, traceID)
+		fr.NotifyLoggers(types.ErrorLevel,
+			"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Error wrapping payload!",
+			fr.componentMetadata, item, err, traceID,
+		)
 		return fmt.Errorf("failed to wrap payload: %v", err)
 	}
 
@@ -263,7 +297,10 @@ func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
 	if fr.TlsConfig != nil && fr.TlsConfig.UseTLS {
 		creds, err := fr.loadTLSCredentials(fr.TlsConfig)
 		if err != nil {
-			fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Failed to load TLS credentials when trying to send element!", fr.componentMetadata, item, err, traceID)
+			fr.NotifyLoggers(types.ErrorLevel,
+				"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Failed to load TLS credentials!",
+				fr.componentMetadata, item, err, traceID,
+			)
 			return fmt.Errorf("failed to load TLS credentials: %v", err)
 		}
 		opts = append(opts, grpc.WithTransportCredentials(creds))
@@ -271,23 +308,38 @@ func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
 		opts = append(opts, grpc.WithInsecure())
 	}
 
+	// Send to each configured target
 	for _, address := range fr.Targets {
 		conn, err := grpc.DialContext(ctx, address, opts...)
 		if err != nil {
-			fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Failed to connect to relay within timeout!", fr.componentMetadata, item, err, traceID)
+			fr.NotifyLoggers(types.ErrorLevel,
+				"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Failed to connect!",
+				fr.componentMetadata, item, err, traceID,
+			)
 			continue
 		}
 
 		client := relay.NewRelayServiceClient(conn)
-		fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: Submit, element: %v, trace_id: %v => Sending data to %v...", fr.componentMetadata, item, traceID, address)
+		fr.NotifyLoggers(types.DebugLevel,
+			"component: %v, level: DEBUG, result: SUCCESS, event: Submit, element: %v, trace_id: %v => Sending data to %v...",
+			fr.componentMetadata, item, traceID, address,
+		)
+
 		ack, err := client.Receive(ctx, wrappedPayload)
-		conn.Close()
+		_ = conn.Close() // close connection after sending
+
 		if err != nil {
-			fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Error sending data to %v...", fr.componentMetadata, item, err, traceID, address)
+			fr.NotifyLoggers(types.ErrorLevel,
+				"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Error sending data!",
+				fr.componentMetadata, item, err, traceID,
+			)
 			continue
 		}
 
-		fr.NotifyLoggers(types.InfoLevel, "component: %v, level: INFO, result: SUCCESS, event: Submit, element: %v, ack: %v, trace_id: %v => Data sent successfully to %v.", fr.componentMetadata, item, ack, traceID, address)
+		fr.NotifyLoggers(types.InfoLevel,
+			"component: %v, level: INFO, result: SUCCESS, event: Submit, element: %v, ack: %v, trace_id: %v => Data sent successfully to %v.",
+			fr.componentMetadata, item, ack, traceID, address,
+		)
 	}
 
 	return nil
@@ -341,64 +393,78 @@ func (fr *ForwardRelay[T]) Stop() {
 	atomic.StoreInt32(&fr.isRunning, 0) // Ensure state is updated correctly
 }
 
-// WrapPayload serializes the given data of generic type T into a WrappedPayload structure, potentially applying compression.
-// The function first checks if performance options are provided; if not, it initializes them with default values
-// which do not use compression. The data is then serialized using the gob encoder into a bytes buffer.
-//
-// If compression is enabled in the performance options, the serialized data is compressed using the specified algorithm.
-// The function also generates a unique identifier and a timestamp for the payload, which are used to create metadata
-// for tracking and performance analysis. This metadata, along with the serialized (and potentially compressed) data,
-// are encapsulated in a WrappedPayload structure.
+// WrapPayload serializes the given data of generic type T into a WrappedPayload structure,
+// applying compression and optional AES-GCM encryption if enabled. The resulting bytes
+// go into the payload of the returned WrappedPayload.
 //
 // Parameters:
-//   - data: The generic data to be wrapped and serialized.
-//   - opts: Optional performance settings which may include whether to use compression and the type of compression algorithm.
+//   - data: The generic data to be serialized.
+//   - perfOpts: PerformanceOptions controlling compression.
+//   - secOpts: SecurityOptions controlling encryption (suite, enabled).
+//   - encryptionKey: The AES-GCM key if encryption is enabled.
 //
 // Returns:
-//   - *relay.WrappedPayload: A pointer to the newly created WrappedPayload containing the serialized data and metadata.
-//   - error: An error object that indicates problems during the payload wrapping process, such as serialization failures or issues with compression.
-//
-// This function is crucial for preparing data for transmission, ensuring it is formatted and optionally compressed according to configured preferences.
-func WrapPayload[T any](data T, opts *relay.PerformanceOptions) (*relay.WrappedPayload, error) {
-	if opts == nil {
-		opts = &relay.PerformanceOptions{UseCompression: false, CompressionAlgorithm: COMPRESS_NONE} // Default if nil
-	}
-	var buf bytes.Buffer
+//   - *relay.WrappedPayload: The newly created payload with compressed/encrypted data
+//   - error: If an issue occurs during serialization, compression, or encryption
+func WrapPayload[T any](
+	data T,
+	perfOpts *relay.PerformanceOptions,
+	secOpts *relay.SecurityOptions,
+	encryptionKey string,
+) (*relay.WrappedPayload, error) {
 
-	// Encode the data into the buffer using gob
+	// Default performance opts if nil
+	if perfOpts == nil {
+		perfOpts = &relay.PerformanceOptions{UseCompression: false, CompressionAlgorithm: COMPRESS_NONE}
+	}
+
+	// 1) Serialize via GOB into buf
+	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(data); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gob encode failed: %w", err)
 	}
 
-	// Apply compression if enabled and options are not nil
-	if opts != nil && opts.UseCompression {
-		compressedData, err := compressData(buf.Bytes(), opts.CompressionAlgorithm)
+	// 2) Compress if enabled
+	if perfOpts.UseCompression {
+		compressed, err := compressData(buf.Bytes(), perfOpts.CompressionAlgorithm)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("compression failed: %w", err)
 		}
 		buf.Reset()
-		buf.Write(compressedData)
+		buf.Write(compressed)
 	}
 
-	// Generate current timestamp
+	// 3) Encrypt if secOpts says so (AES-GCM)
+	if secOpts != nil && secOpts.Enabled && secOpts.Suite == ENCRYPT_AES_GCM {
+		encrypted, err := encryptData(buf.Bytes(), secOpts, encryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("encryption failed: %w", err)
+		}
+		buf.Reset()
+		buf.Write(encrypted)
+	}
+
+	// 4) Build the final WrappedPayload
 	timestamp := timestamppb.Now()
 	id := timestamp.AsTime().Format(time.RFC3339Nano)
 
-	// Create MessageMetadata and WrappedPayload
 	metadata := &relay.MessageMetadata{
 		ContentType: "application/octet-stream",
 		Version: &relay.VersionInfo{
 			Major: 1,
 			Minor: 0,
 		},
-		Performance: opts,
+		Performance: perfOpts,
+
+		// Attach SecurityOptions to the metadata so the receiver knows which suite is used
+		Security: secOpts,
 	}
 
 	return &relay.WrappedPayload{
 		Id:        id,
 		Timestamp: timestamp,
-		Payload:   buf.Bytes(),
+		Payload:   buf.Bytes(), // compressed + encrypted
 		Metadata:  metadata,
 	}, nil
 }

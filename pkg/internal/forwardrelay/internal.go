@@ -9,6 +9,9 @@ package forwardrelay
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -31,6 +34,10 @@ const (
 	COMPRESS_ZSTD    relay.CompressionAlgorithm = 3
 	COMPRESS_BROTLI  relay.CompressionAlgorithm = 4
 	COMPRESS_LZ4     relay.CompressionAlgorithm = 5
+
+	// New local aliases for encryption:
+	ENCRYPT_NONE    relay.EncryptionSuite = 0
+	ENCRYPT_AES_GCM relay.EncryptionSuite = 1
 )
 
 // loadTLSCredentials loads the TLS credentials from the provided configuration settings.
@@ -178,4 +185,34 @@ func compressData(data []byte, algorithm relay.CompressionAlgorithm) ([]byte, er
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+// encryptData checks SecurityOptions. If encryption is enabled and suite is AES-GCM,
+// it encrypts data using the provided key, returning (nonce + ciphertext).
+// Otherwise it returns data as-is (no encryption).
+func encryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
+	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != ENCRYPT_AES_GCM {
+		// If security is disabled or using a different suite, return data unchanged
+		return data, nil
+	}
+
+	// Convert key string to bytes. (Ensure your key length is valid, e.g. 16/24/32 for AES-128/192/256)
+	aesKey := []byte(key)
+
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	// Generate a random nonce the correct size for GCM
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	// Seal appends the encrypted data to nonce, returning nonce + ciphertext
+	ciphertext := gcm.Seal(nonce, nonce, data, nil)
+	return ciphertext, nil
 }

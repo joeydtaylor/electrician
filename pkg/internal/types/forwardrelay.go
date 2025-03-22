@@ -55,6 +55,8 @@ type ForwardRelay[T any] interface {
 	// buffering capacities and concurrency controls.
 	SetPerformanceOptions(*relay.PerformanceOptions)
 
+	SetSecurityOptions(secOptions *relay.SecurityOptions, encryptionKey string)
+
 	// SetTLSConfig sets the TLS configuration for secure communication. This method is crucial
 	// for configuring security aspects of the relay, ensuring that data transmission is encrypted
 	// and secure.

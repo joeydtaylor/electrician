@@ -96,6 +96,25 @@ func WithPerformanceOptions[T any](perfOptions *relay.PerformanceOptions) types.
 	}
 }
 
+// WithSecurityOptions configures the security options for the ForwardRelay.
+// This function provides an option to set security-related options for the ForwardRelay, allowing
+// customization of various security aspects such as encryption or key management. It internally
+// uses the SetSecurityOptions method to apply the specified security options.
+//
+// Parameters:
+//   - secOptions:   A pointer to the SecurityOptions struct specifying the new security settings.
+//   - encryptionKey: The encryption key to use (e.g. an AES-GCM key).
+//
+// Returns:
+//
+//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay
+//	component, sets the specified security options and encryption key.
+func WithSecurityOptions[T any](secOptions *relay.SecurityOptions, encryptionKey string) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) {
+		fr.SetSecurityOptions(secOptions, encryptionKey)
+	}
+}
+
 // WithComponentMetadata configures a ForwardRelay component with custom metadata, including a name and an identifier.
 // This function provides an option to set these metadata properties, which can be used for identification,
 // logging, or other purposes where metadata is needed for a ForwardRelay. It uses the SetComponentMetadata method

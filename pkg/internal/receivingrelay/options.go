@@ -119,3 +119,20 @@ func WithComponentMetadata[T any](name string, id string) types.Option[types.Rec
 		rr.SetComponentMetadata(name, id)
 	}
 }
+
+// WithDecryptionKey sets the decryption key for a ReceivingRelay.
+// This key is used to decrypt incoming AES-GCM payloads, relying on
+// the metadata in the WrappedPayload to determine if/when decryption is needed.
+//
+// Parameters:
+//   - key: The decryption key (e.g., for AES-GCM).
+//
+// Returns:
+//
+//	A function conforming to types.Option[types.ReceivingRelay[T]] which,
+//	when applied to a ReceivingRelay, calls SetDecryptionKey.
+func WithDecryptionKey[T any](key string) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) {
+		rr.SetDecryptionKey(key)
+	}
+}

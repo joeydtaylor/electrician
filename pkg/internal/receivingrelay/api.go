@@ -202,22 +202,44 @@ func (rr *ReceivingRelay[T]) Receive(ctx context.Context, payload *relay.Wrapped
 	md, ok := metadata.FromIncomingContext(ctx)
 	var traceID string
 	if !ok || len(md["trace-id"]) == 0 {
-		traceID = utils.GenerateUniqueHash() // Generate a new trace ID if not received
+		traceID = utils.GenerateUniqueHash() // Generate a new trace ID if none was provided
 	} else {
-		traceID = md["trace-id"][0] // Use existing trace ID from metadata
+		traceID = md["trace-id"][0]
 	}
 
-	rr.NotifyLoggers(types.InfoLevel, "%s, address: %s, level: INFO, result: SUCCESS, event: Receive, trace_id: %v => Received stream.", rr.componentMetadata, rr.Address, traceID)
-	ack := &relay.StreamAcknowledgment{Success: true, Message: "Received stream"}
+	rr.NotifyLoggers(
+		types.InfoLevel,
+		"%s, address: %s, level: INFO, result: SUCCESS, event: Receive, trace_id: %v => Received stream.",
+		rr.componentMetadata, rr.Address, traceID,
+	)
+
+	// Immediately return an acknowledgment so the sender knows we "got" it,
+	// even though we unwrap asynchronously below.
+	ack := &relay.StreamAcknowledgment{
+		Success: true,
+		Message: "Received stream",
+	}
+
+	// Unwrap in a separate goroutine to avoid blocking
 	go func() {
 		var data T
-		if err := UnwrapPayload(payload, &data); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "%s, address: %s, level: ERROR, result: FAILURE, event: Receive, error: %v, trace_id: %v => Error unwrapping payload", rr.componentMetadata, rr.Address, err, traceID)
+		if err := UnwrapPayload(payload, rr.DecryptionKey, &data); err != nil {
+			rr.NotifyLoggers(
+				types.ErrorLevel,
+				"%s, address: %s, level: ERROR, result: FAILURE, event: Receive, error: %v, trace_id: %v => Error unwrapping payload",
+				rr.componentMetadata, rr.Address, err, traceID,
+			)
 			return
 		}
-		rr.NotifyLoggers(types.InfoLevel, "%s, address: %s, level: INFO, result: SUCCESS, event: Receive, data: %v, trace_id: %v => Data unwrapped and sent to channel", rr.componentMetadata, rr.Address, data, traceID)
+
+		rr.NotifyLoggers(
+			types.InfoLevel,
+			"%s, address: %s, level: INFO, result: SUCCESS, event: Receive, data: %v, trace_id: %v => Data unwrapped and sent to channel",
+			rr.componentMetadata, rr.Address, data, traceID,
+		)
 		rr.DataCh <- data
 	}()
+
 	return ack, nil
 }
 
@@ -239,6 +261,28 @@ func (rr *ReceivingRelay[T]) SetDataChannel(bufferSize uint32) {
 	}
 	rr.DataCh = make(chan T, bufferSize)
 	rr.NotifyLoggers(types.DebugLevel, "component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetDataChannel, new: %v => SetDataChannel called", rr.componentMetadata, rr.Address, rr.DataCh)
+}
+
+func (rr *ReceivingRelay[T]) SetDecryptionKey(decryptionKey string) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetDecryptionKey", rr.componentMetadata))
+	}
+	rr.DecryptionKey = decryptionKey
+
+	// Always log (at INFO or higher) that the key changed (but not the key itself).
+	rr.NotifyLoggers(
+		types.InfoLevel,
+		"component: %v, level: INFO, result: SUCCESS, event: SetDecryptionKey => Decryption key updated",
+		rr.componentMetadata,
+	)
+
+	// Separately log the actual key at DEBUG level only.
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %v, level: DEBUG, result: SUCCESS, event: SetDecryptionKey, new_key: %v => DecryptionKey updated (debug only)",
+		rr.componentMetadata,
+		decryptionKey,
+	)
 }
 
 // SetComponentMetadata allows for setting or updating the metadata of the ReceivingRelay, such as its name
@@ -282,38 +326,58 @@ func (rr *ReceivingRelay[T]) Start(ctx context.Context) error {
 // and maintaining a session through the provided server stream interface.
 func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamReceiveServer) error {
 	for {
-		rr.NotifyLoggers(types.InfoLevel, "%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive => Waiting to receive stream data", rr.componentMetadata, rr.Address)
+		rr.NotifyLoggers(types.InfoLevel,
+			"%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive => Waiting to receive stream data",
+			rr.componentMetadata, rr.Address)
+
 		payload, err := stream.Recv()
 		if err == io.EOF {
-			rr.NotifyLoggers(types.InfoLevel, "%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive => End of data stream", rr.componentMetadata, rr.Address)
+			rr.NotifyLoggers(types.InfoLevel,
+				"%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive => End of data stream",
+				rr.componentMetadata, rr.Address)
 			return nil
 		}
 		if err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v => Error receiving stream data", rr.componentMetadata, rr.Address, err)
+			rr.NotifyLoggers(types.ErrorLevel,
+				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v => Error receiving stream data",
+				rr.componentMetadata, rr.Address, err)
 			return err
 		}
 
 		// Extract or generate a trace ID
-		md, _ := metadata.FromIncomingContext(stream.Context()) // Assuming the stream's context carries metadata
+		md, _ := metadata.FromIncomingContext(stream.Context()) // The stream's context can carry metadata
 		var traceID string
 		if len(md["trace-id"]) == 0 {
-			traceID = utils.GenerateUniqueHash() // Generate a new trace ID if not received
+			traceID = utils.GenerateUniqueHash() // Generate a new trace ID if none was provided
 		} else {
-			traceID = md["trace-id"][0] // Use existing trace ID from metadata
+			traceID = md["trace-id"][0]
 		}
 
 		var data T
-		if err = UnwrapPayload(payload, &data); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, trace_id: %v => Failed to unwrap payload: %s", rr.componentMetadata, rr.Address, traceID, err)
+		// Updated call: pass rr.DecryptionKey so the payload can be decrypted if needed.
+		if err := UnwrapPayload(payload, rr.DecryptionKey, &data); err != nil {
+			rr.NotifyLoggers(types.ErrorLevel,
+				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, trace_id: %v => Failed to unwrap payload: %v",
+				rr.componentMetadata, rr.Address, traceID, err)
 			return fmt.Errorf("failed to unwrap payload: %v", err)
 		}
-		rr.NotifyLoggers(types.InfoLevel, "%s, address: %s, level: INFO, event: StreamReceive, trace_id: %v => Streaming data received: %v", rr.componentMetadata, rr.Address, traceID, data)
+
+		rr.NotifyLoggers(types.InfoLevel,
+			"%s, address: %s, level: INFO, event: StreamReceive, trace_id: %v => Streaming data received: %v",
+			rr.componentMetadata, rr.Address, traceID, data)
+
+		// Submit the decoded data to DataCh so it can be processed or forwarded to outputs
 		rr.DataCh <- data
 
-		// Create an acknowledgment for each received message with the trace ID
-		ack := &relay.StreamAcknowledgment{Success: true, Message: "Data received successfully"}
+		// Create and send an acknowledgment for each received message
+		ack := &relay.StreamAcknowledgment{
+			Success: true,
+			Message: "Data received successfully",
+		}
 		if err := stream.Send(ack); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v, trace_id: %v => Failed to send acknowledgment:", rr.componentMetadata, rr.Address, err, traceID)
+			rr.NotifyLoggers(types.ErrorLevel,
+				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v, trace_id: %v => Failed to send acknowledgment",
+				rr.componentMetadata, rr.Address, err, traceID)
 			return fmt.Errorf("failed to send acknowledgment: %v", err)
 		}
 	}
@@ -339,39 +403,49 @@ func (rr *ReceivingRelay[T]) Stop() {
 	atomic.StoreInt32(&rr.isRunning, 0)
 }
 
-const (
-	COMPRESS_NONE    relay.CompressionAlgorithm = 0
-	COMPRESS_DEFLATE relay.CompressionAlgorithm = 1
-	COMPRESS_SNAPPY  relay.CompressionAlgorithm = 2
-	COMPRESS_ZSTD    relay.CompressionAlgorithm = 3
-	COMPRESS_BROTLI  relay.CompressionAlgorithm = 4
-	COMPRESS_LZ4     relay.CompressionAlgorithm = 5
-)
-
-// UnwrapPayload decodes the data contained in a WrappedPayload into the specified generic type T, handling
-// potential compression and format differences based on the relay's configuration.
-func UnwrapPayload[T any](wrappedPayload *relay.WrappedPayload, data *T) error {
-	if wrappedPayload.Metadata == nil || wrappedPayload.Metadata.Performance == nil {
-		return errors.New("metadata or performance options are nil")
+// UnwrapPayload takes a WrappedPayload, decrypts it (if SecurityOptions indicate AES-GCM),
+// then decompresses (if PerformanceOptions indicate compression), and finally GOB‐decodes
+// the payload bytes into 'data'.
+//
+// This is the reverse of the "WrapPayload" on the forwarding side, which does
+// "gob encode → compress → encrypt". Consequently, we do "decrypt → decompress → gob decode".
+//
+// Parameters:
+//
+//   - wrappedPayload: The inbound message containing metadata (security, compression).
+//
+//   - decryptionKey:  The AES-GCM key to use if encryption is enabled.
+//
+//   - data:           A pointer to the output variable of type T, where the final decoded data is stored.
+//
+// Returns:
+//   - error:          If any step (decrypt, decompress, decode) fails.
+func UnwrapPayload[T any](wrappedPayload *relay.WrappedPayload, decryptionKey string, data *T) error {
+	if wrappedPayload.Metadata == nil {
+		return errors.New("unwrap: nil metadata in WrappedPayload")
 	}
 
-	var buf *bytes.Buffer
+	// 1) Decrypt if secOpts says so
+	secOpts := wrappedPayload.Metadata.Security
+	plaintext, err := decryptData(wrappedPayload.Payload, secOpts, decryptionKey)
+	if err != nil {
+		return fmt.Errorf("unwrap: decryption failed: %w", err)
+	}
 
-	// Check if compression was used and decompress accordingly
-	if wrappedPayload.Metadata.Performance.UseCompression {
-		var err error
-		buf, err = decompressData(wrappedPayload.Payload, wrappedPayload.Metadata.Performance.CompressionAlgorithm)
+	// 2) Decompress if indicated
+	perfOpts := wrappedPayload.Metadata.Performance
+	if perfOpts != nil && perfOpts.UseCompression {
+		buf, err := decompressData(plaintext, perfOpts.CompressionAlgorithm)
 		if err != nil {
-			return err
+			return fmt.Errorf("unwrap: decompression failed: %w", err)
 		}
-	} else {
-		buf = bytes.NewBuffer(wrappedPayload.Payload)
+		plaintext = buf.Bytes()
 	}
 
-	// Decode the payload using gob
-	dec := gob.NewDecoder(buf)
+	// 3) GOB decode into data
+	dec := gob.NewDecoder(bytes.NewReader(plaintext))
 	if err := dec.Decode(data); err != nil {
-		return err
+		return fmt.Errorf("unwrap: gob decode failed: %w", err)
 	}
 
 	return nil

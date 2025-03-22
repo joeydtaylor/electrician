@@ -40,17 +40,35 @@ import (
 //   - isRunning: An atomic indicator of whether the relay is actively running.
 type ReceivingRelay[T any] struct {
 	relay.UnimplementedRelayServiceServer // Embedding the unimplemented server
-	ctx                                   context.Context
-	cancel                                context.CancelFunc
-	Outputs                               []types.Submitter[T]
-	componentMetadata                     types.ComponentMetadata // Metadata of the wire.
-	Address                               string                  // Address on which the relay listens
-	DataCh                                chan T                  // Channel to stream received data
-	Loggers                               []types.Logger          // List of loggers attached to the wire.
-	loggersLock                           *sync.Mutex
-	TlsConfig                             *types.TLSConfig
-	isRunning                             int32 // Atomic, use 0 or 1 to represent
-	configFrozen                          int32 // Indicates whether the wire's configuration has been frozen, using atomic for thread safety.
+
+	// Core lifecycle management
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// Outbound data flow
+	Outputs []types.Submitter[T]
+
+	// Identifying info
+	componentMetadata types.ComponentMetadata
+
+	// Where we listen for inbound data
+	Address string
+
+	// Channel through which received data is passed to the processing functions
+	DataCh chan T
+
+	// Logging
+	Loggers     []types.Logger
+	loggersLock *sync.Mutex
+
+	// TLS for secure communication
+	TlsConfig    *types.TLSConfig
+	isRunning    int32 // Atomic, 1 if running
+	configFrozen int32
+
+	// New field for decryption
+	// We'll use this to AES-GCM decrypt payloads if the message indicates encryption.
+	DecryptionKey string
 }
 
 // NewReceivingRelay initializes and returns a new instance of ReceivingRelay with configuration
@@ -72,20 +90,23 @@ func NewReceivingRelay[T any](ctx context.Context, options ...types.Option[types
 		ctx:    ctx,
 		cancel: cancel,
 		DataCh: make(chan T),
+
 		componentMetadata: types.ComponentMetadata{
 			ID:   utils.GenerateUniqueHash(),
 			Type: "RECEIVING_RELAY",
 		},
-		Loggers:     make([]types.Logger, 0),
-		loggersLock: new(sync.Mutex),
+
+		Loggers:       make([]types.Logger, 0),
+		loggersLock:   new(sync.Mutex),
+		DecryptionKey: "", // Default no key
 	}
 
-	// Apply all provided options to configure the ReceivingRelay.
+	// Apply provided options
 	for _, option := range options {
-		option(rr) // Apply each option directly to the ReceivingRelay instance.
+		option(rr)
 	}
 
-	// Automatically start handling data if an outputConduit is configured.
+	// If Outputs are configured, automatically forward data from DataCh to each output
 	if rr.Outputs != nil {
 		go func() {
 			for data := range rr.DataCh {

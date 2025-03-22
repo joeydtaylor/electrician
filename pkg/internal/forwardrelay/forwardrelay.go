@@ -42,19 +42,23 @@ import (
 // It manages the transmission of data between relay nodes, providing reliability and efficiency
 // in distributed systems communication.
 type ForwardRelay[T any] struct {
-	Targets              []string                  // Address of the receiving relay.
-	Input                []types.Receiver[T]       // List of receivers for incoming data.
-	ctx                  context.Context           // Context for managing relay operations.
-	cancel               context.CancelFunc        // Function to cancel relay operations.
-	componentMetadata    types.ComponentMetadata   // Metadata of the relay component.
-	Loggers              []types.Logger            // List of loggers for event logging.
-	loggersLock          *sync.Mutex               // Mutex for loggers slice access control.
-	TlsConfig            *types.TLSConfig          // TLS configuration for secure communication.
-	PerformanceOptions   *relay.PerformanceOptions // Performance options for relay operations.
-	isRunning            int32                     // Atomic flag indicating running state.
-	tlsCredentials       atomic.Value              // Atomic value for TLS credentials.
-	tlsCredentialsUpdate sync.Mutex                // Mutex for TLS credentials update.
-	configFrozen         int32                     // Indicates whether the wire's configuration has been frozen, using atomic for thread safety.
+	Targets            []string                  // Address of the receiving relay.
+	Input              []types.Receiver[T]       // List of receivers for incoming data.
+	ctx                context.Context           // Context for managing relay operations.
+	cancel             context.CancelFunc        // Function to cancel relay operations.
+	componentMetadata  types.ComponentMetadata   // Metadata of the relay component.
+	Loggers            []types.Logger            // List of loggers for event logging.
+	loggersLock        *sync.Mutex               // Mutex for loggers slice access control.
+	TlsConfig          *types.TLSConfig          // TLS configuration for secure communication.
+	PerformanceOptions *relay.PerformanceOptions // Performance options for relay operations.
+	// ----- New fields for Security -----
+	SecurityOptions *relay.SecurityOptions // Security options (e.g. AES-GCM).
+	EncryptionKey   string                 // Encryption key for secure communication.
+	// -----------------------------------
+	isRunning            int32        // Atomic flag indicating running state.
+	tlsCredentials       atomic.Value // Atomic value for TLS credentials.
+	tlsCredentialsUpdate sync.Mutex   // Mutex for TLS credentials update.
+	configFrozen         int32        // Indicates whether the relay's configuration has been frozen.
 }
 
 // NewForwardRelay creates a new forward relay instance with the specified context and options.
@@ -69,16 +73,18 @@ func NewForwardRelay[T any](ctx context.Context, options ...types.Option[types.F
 			ID:   utils.GenerateUniqueHash(),
 			Type: "FORWARD_RELAY",
 		},
-		Loggers:     make([]types.Logger, 0), // Initialize an empty slice for loggers
-		loggersLock: new(sync.Mutex),         // Initialize a new mutex
+		Loggers:     make([]types.Logger, 0),
+		loggersLock: new(sync.Mutex),
 		isRunning:   0,
 		PerformanceOptions: &relay.PerformanceOptions{
-			UseCompression:       false,         // Set to false to disable compression by default
-			CompressionAlgorithm: COMPRESS_NONE, // No compression algorithm needed
+			UseCompression:       false,
+			CompressionAlgorithm: COMPRESS_NONE,
 		},
+		SecurityOptions: nil, // No security by default
+		EncryptionKey:   "",  // No key by default
 	}
 
-	// Apply all provided options to configure the forward relay.
+	// Apply any user-provided options
 	for _, option := range options {
 		option(fr)
 	}

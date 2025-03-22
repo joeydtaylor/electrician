@@ -28,6 +28,8 @@ type ReceivingRelay[T any] interface {
 	// name, and type, which are useful for identification and configuration purposes.
 	GetComponentMetadata() ComponentMetadata
 
+	SetDecryptionKey(string)
+
 	// IsRunning checks if the Receiving Relay is actively running and processing data.
 	// This method is useful for health checks and operational monitoring.
 	IsRunning() bool

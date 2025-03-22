@@ -54,3 +54,17 @@ func ReceivingRelayWithOutput[T any](output ...types.Submitter[T]) types.Option[
 func ReceivingRelayWithTLSConfig[T any](config *types.TLSConfig) types.Option[types.ReceivingRelay[T]] {
 	return rr.WithTLSConfig[T](config)
 }
+
+// ReceivingRelayWithDecryptionKey sets the decryption key for the ReceivingRelay.
+// This key is used to decrypt AES-GCM payloads, relying on inbound metadata to
+// determine whether decryption is needed.
+//
+// Parameters:
+//   - key: The decryption key.
+//
+// Returns:
+//
+//	A functional option that calls SetDecryptionKey on the ReceivingRelay.
+func ReceivingRelayWithDecryptionKey[T any](key string) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithDecryptionKey[T](key)
+}
