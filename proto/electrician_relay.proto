@@ -4,7 +4,7 @@ import "google/protobuf/timestamp.proto";
 
 package electrician;
 
-option go_package = "pkg/internal/relay";
+option go_package = "github.com/joeydtaylor/electrician/pkg/internal/relay";
 
 message WrappedPayload {
   string id = 1;
@@ -27,6 +27,19 @@ message MessageMetadata {
   PerformanceOptions performance = 4;
   string trace_id = 5; // For distributed tracing.
   int32 priority = 6; // Priority of the message, higher number indicates higher priority.
+
+  // Newly added security options:
+  SecurityOptions security = 7;
+}
+
+message SecurityOptions {
+  bool enabled = 1;
+  EncryptionSuite suite = 2;
+}
+
+enum EncryptionSuite {
+  ENCRYPTION_NONE = 0;
+  ENCRYPTION_AES_GCM = 1; // Standardizing on AES‐GCM
 }
 
 message VersionInfo {
@@ -48,7 +61,6 @@ enum CompressionAlgorithm {
   COMPRESS_BROTLI = 4; // Brotli, optimized for text compression
   COMPRESS_LZ4 = 5;    // LZ4, extremely fast compression and decompression
 }
-
 
 service RelayService {
   rpc Receive(WrappedPayload) returns (StreamAcknowledgment);

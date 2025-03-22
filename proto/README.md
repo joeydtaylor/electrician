@@ -166,6 +166,20 @@ python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. electrician.p
 
 📌 Note: Python gRPC files will be generated, but you may need to manually adjust imports when using in a package.
 
+⚡ Regenerate Electrician Bindings (from project root):
+
+```bash
+protoc \
+  -I=proto \
+  --go_out=pkg/internal/relay \
+  --go_opt=paths=source_relative \
+  --go_opt=Mproto/electrician_relay.proto=pkg/internal/relay \
+  --go-grpc_out=pkg/internal/relay \
+  --go-grpc_opt=paths=source_relative \
+  --go-grpc_opt=Mproto/electrician_relay.proto=pkg/internal/relay \
+  proto/electrician_relay.proto
+```
+
 📂 Organization
 This protobuf definition is primarily used internally by Electrician’s relays, conduits, and streaming services.
 Each Electrician package has its own dedicated README.md with further details.
