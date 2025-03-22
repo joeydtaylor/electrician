@@ -1,9 +1,6 @@
 package codec
 
-import (
-	"io"
-	"io/ioutil"
-)
+import "io"
 
 // TextDecoder decodes plain text data into a string.
 type TextDecoder struct{}
@@ -13,6 +10,6 @@ func NewTextDecoder() *TextDecoder {
 }
 
 func (d *TextDecoder) Decode(r io.Reader) (string, error) {
-	bytes, err := ioutil.ReadAll(r)
+	bytes, err := io.ReadAll(r)
 	return string(bytes), err
 }

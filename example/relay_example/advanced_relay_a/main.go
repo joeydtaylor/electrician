@@ -104,10 +104,13 @@ func main() {
 		tls.VersionTLS13,    // MaxVersion: Only allow TLS 1.3
 	)
 
+	perfOptions := builder.NewPerformanceOptions(true, builder.COMPRESS_SNAPPY)
+
 	forwardRelay := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithLogger[Feedback](logger),
 		builder.ForwardRelayWithTarget[Feedback]("localhost:50051", "localhost:50052"),
+		builder.ForwardRelayWithPerformanceOptions[Feedback](perfOptions),
 		builder.ForwardRelayWithInput(groundWire),
 		builder.ForwardRelayWithTLSConfig[Feedback](tlsConfig),
 	)

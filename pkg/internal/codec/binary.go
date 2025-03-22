@@ -1,8 +1,6 @@
 package codec
 
-import (
-	"io"
-)
+import "io"
 
 // BinaryDecoder decodes binary data into bytes.
 type BinaryDecoder struct{}
