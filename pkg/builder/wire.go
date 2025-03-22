@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/codec"
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/wire"
 )
@@ -63,4 +64,16 @@ func WireWithSurgeProtector[T any](surgeProtector types.SurgeProtector[T]) types
 // WireWithTransformer adds a transformation function to the wire.
 func WireWithTransformer[T any](transformation ...types.Transformer[T]) types.Option[types.Wire[T]] {
 	return wire.WithTransformer[T](transformation...)
+}
+
+// WireWithDecryptOptions configures inbound AES-GCM decryption for the Wire.
+// If enabled, all inbound data is treated as GOB-encoded + AES-GCM ciphertext.
+func WireWithDecryptOptions[T any](secOpts *relay.SecurityOptions, key string) types.Option[types.Wire[T]] {
+	return wire.WithDecryptOptions[T](secOpts, key)
+}
+
+// WireWithEncryptOptions configures outbound AES-GCM encryption for the Wire.
+// If enabled, after transformations, the Wire re-encodes and encrypts data before output.
+func WireWithEncryptOptions[T any](secOpts *relay.SecurityOptions, key string) types.Option[types.Wire[T]] {
+	return wire.WithEncryptOptions[T](secOpts, key)
 }

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
@@ -68,6 +69,13 @@ type Wire[T any] struct {
 	queueRetryMaxAttempt int                                                     // Maximum retry attempts for queue operations.
 	isClosed             bool                                                    // Indicates if the wire's channels have been closed.
 	closeLock            sync.Mutex                                              // Protects access to the isClosed flag.
+	// Decrypt config (if the wire expects inbound data to be ciphertext)
+	DecryptOptions *relay.SecurityOptions
+	DecryptKey     string
+
+	// Encrypt config (if the wire wants to re-encrypt data before OutputChan)
+	EncryptOptions *relay.SecurityOptions
+	EncryptKey     string
 }
 
 // NewWire creates a new Wire instance configured with the provided options.

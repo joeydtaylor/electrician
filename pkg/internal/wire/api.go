@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
@@ -549,33 +550,43 @@ func (w *Wire[T]) Start(ctx context.Context) error {
 }
 
 // Submit sends an element to the wire for processing.
-// This method handles the submission of data while integrating with the circuit breaker
-// and surge protector mechanisms. Depending on the current state of these components,
-// the submission may be handled normally or deferred via the surge protector.
-//
-// Parameters:
-//   - ctx: The context to manage cancellation or timeouts for the submission.
-//   - elem: The data element to be processed.
-//
-// Returns:
-//   - error: An error if the submission fails, or nil on success.
+// If DecryptOptions are enabled, the wire assumes this inbound 'elem' is ciphertext
+// and decrypts it before continuing the normal flow.
+// Submit sends an element to the wire for processing.
+// If DecryptOptions are enabled, the wire assumes inbound 'elem' is ciphertext.
+// We decrypt it before continuing normal circuit breaker / surge checks.
 func (w *Wire[T]) Submit(ctx context.Context, elem T) error {
+	// If decryption is enabled, decrypt now
+	if w.DecryptOptions != nil && w.DecryptOptions.Enabled {
+		decrypted, err := w.decryptItem(elem)
+		if err != nil {
+			// Log or handle decryption error
+			w.NotifyLoggers(types.ErrorLevel,
+				"component: %v, level: ERROR, event: Submit => decryption failed: %v",
+				w.componentMetadata, err)
+			return fmt.Errorf("failed to decrypt inbound data: %w", err)
+		}
+		elem = decrypted
+	}
+
+	// Create an Element wrapper
 	element := types.NewElement[T](elem)
 
+	// Circuit breaker check
 	if w.CircuitBreaker != nil && !w.CircuitBreaker.Allow() {
 		return w.handleCircuitBreakerTrip(ctx, element.Data)
 	}
-
+	// Surge protector checks
 	if w.surgeProtector != nil && w.surgeProtector.IsTripped() {
 		w.notifySurgeProtectorSubmit(element.Data)
 		return w.surgeProtector.Submit(ctx, element)
 	}
-
 	if w.surgeProtector != nil && !w.surgeProtector.TryTake() {
 		w.notifyRateLimit(elem, time.Now().Add(w.surgeProtector.GetTimeUntilNextRefill()).Format("2006-01-02 15:04:05"))
 		return w.surgeProtector.Submit(ctx, element)
 	}
 
+	// Finally, queue the item for the wire’s transform process
 	return w.submitNormally(ctx, element.Data)
 }
 
@@ -613,6 +624,36 @@ func (w *Wire[T]) Stop() error {
 		})
 	}
 	return nil
+}
+
+// SetDecryptOptions configures AES-GCM decryption for inbound items.
+// If called, the wire assumes *all* data submitted is ciphertext.
+func (w *Wire[T]) SetDecryptOptions(opts *relay.SecurityOptions, key string) {
+	if w.IsStarted() {
+		panic(fmt.Sprintf("cannot set decrypt options after wire has started: %s", w.componentMetadata))
+	}
+	w.DecryptOptions = opts
+	w.DecryptKey = key
+
+	w.NotifyLoggers(types.DebugLevel,
+		"component: %v, level: DEBUG, event: SetDecryptOptions => inbound decryption configured",
+		w.componentMetadata,
+	)
+}
+
+// SetEncryptOptions configures AES-GCM encryption for outbound items.
+// If called, the wire will encrypt data right before placing it on OutputChan (or errorChan).
+func (w *Wire[T]) SetEncryptOptions(opts *relay.SecurityOptions, key string) {
+	if w.IsStarted() {
+		panic(fmt.Sprintf("cannot set encrypt options after wire has started: %s", w.componentMetadata))
+	}
+	w.EncryptOptions = opts
+	w.EncryptKey = key
+
+	w.NotifyLoggers(types.DebugLevel,
+		"component: %v, level: DEBUG, event: SetEncryptOptions => outbound encryption configured",
+		w.componentMetadata,
+	)
 }
 
 // Restart stops the wire, reinitializes its internal state, and starts it again.

@@ -24,6 +24,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
@@ -122,5 +123,39 @@ func WithTransformer[T any](transformation ...types.Transformer[T]) types.Option
 func WithComponentMetadata[T any](name string, id string) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.SetComponentMetadata(name, id)
+	}
+}
+
+// WithDecryptOptions enables AES-GCM decryption for all inbound items submitted to the Wire.
+// If enabled, the wire assumes that every inbound item is ciphertext (serialized + encrypted),
+// and will decrypt it (and deserialize it) before passing it through transformations.
+//
+// Parameters:
+//   - secOpts: The SecurityOptions specifying whether encryption is enabled, which suite, etc.
+//   - key: The AES-GCM key used for decryption.
+//
+// Returns:
+//
+//	A types.Option[types.Wire[T]] that calls SetDecryptOptions on the wire.
+func WithDecryptOptions[T any](secOpts *relay.SecurityOptions, key string) types.Option[types.Wire[T]] {
+	return func(w types.Wire[T]) {
+		w.SetDecryptOptions(secOpts, key)
+	}
+}
+
+// WithEncryptOptions enables AES-GCM encryption for all outbound items in the Wire.
+// If enabled, after the wire applies transformations, it will re-serialize and encrypt
+// the item before placing it on the OutputChan.
+//
+// Parameters:
+//   - secOpts: The SecurityOptions specifying whether encryption is enabled, which suite, etc.
+//   - key: The AES-GCM key used for encryption.
+//
+// Returns:
+//
+//	A types.Option[types.Wire[T]] that calls SetEncryptOptions on the wire.
+func WithEncryptOptions[T any](secOpts *relay.SecurityOptions, key string) types.Option[types.Wire[T]] {
+	return func(w types.Wire[T]) {
+		w.SetEncryptOptions(secOpts, key)
 	}
 }

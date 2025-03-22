@@ -1,54 +1,37 @@
-// Package wire contains internal operations and utilities for the Wire component within the Electrician framework.
-// The Wire component is a fundamental part of the data processing pipeline, responsible for receiving, transforming,
-// and forwarding data. This file includes lower-level functions and methods that handle data processing, error management,
-// and interactions with related components such as circuit breakers and sensors.
-//
-// The provided methods include:
-// - Encoding and processing individual elements received through the wire's input channels.
-// - Handling errors that occur during data processing and reporting them through designated error channels.
-// - Managing the lifecycle and operational state of the wire, including starting and stopping processing based on context signals.
-//
-// This internal API focuses on robust error handling, efficient data processing, and thorough logging. It ensures that
-// the Wire can operate reliably and transparently in a concurrent processing environment, making extensive use of
-// synchronization primitives to manage state safely across multiple goroutines.
-//
-// Highlights include:
-//   - Methods for connecting various components like circuit breakers, which enhance fault tolerance,
-//     and sensors, which provide monitoring capabilities.
-//   - Utilities for encoding data and safely handling potential encoding errors.
-//   - Comprehensive logging throughout processing steps to aid in debugging and operational monitoring.
-//   - Detailed error handling and reporting mechanisms that integrate seamlessly with the wire's operational logic,
-//     ensuring that all errors are accounted for and handled appropriately.
-//
-// The design and implementation of these methods prioritize high-performance and reliable data processing within
-// the broader Electrician framework, aiming to provide a solid foundation for building complex data-intensive applications.
 package wire
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
-// isClosedSafe retrieves the w.isClosed flag under lock, preventing data races.
+// ------------------------------------------------------------------------------------
+// General concurrency & error-handling logic
+// ------------------------------------------------------------------------------------
+
 func (w *Wire[T]) isClosedSafe() bool {
 	w.closeLock.Lock()
 	defer w.closeLock.Unlock()
 	return w.isClosed
 }
 
-// setClosedSafe sets w.isClosed = true under lock. (Called during shutdown.)
 func (w *Wire[T]) setClosedSafe() {
 	w.closeLock.Lock()
 	defer w.closeLock.Unlock()
 	w.isClosed = true
 }
 
-// attemptRecovery attempts to recover from a processing error by applying the configured insulator function.
-// It retries up to w.retryThreshold times, logging each attempt and returning either the successful element or
-// the final error if all retries fail.
 func (w *Wire[T]) attemptRecovery(elem T, originalElem T, originalErr error) (T, error) {
 	var retryErr error
 	for attempt := 1; attempt <= w.retryThreshold; attempt++ {
@@ -57,7 +40,6 @@ func (w *Wire[T]) attemptRecovery(elem T, originalElem T, originalErr error) (T,
 			w.notifyInsulatorAttemptSuccess(retryElem, originalElem, retryErr, originalErr, attempt, w.retryThreshold, w.retryInterval)
 			return retryElem, nil
 		}
-		// If final attempt fails, record error in CircuitBreaker and return the error.
 		if attempt == w.retryThreshold {
 			if w.CircuitBreaker != nil {
 				w.CircuitBreaker.RecordError()
@@ -72,11 +54,9 @@ func (w *Wire[T]) attemptRecovery(elem T, originalElem T, originalErr error) (T,
 	return elem, retryErr
 }
 
-// startCircuitBreakerTicker continuously monitors the circuit breaker status in a separate goroutine.
 func (w *Wire[T]) startCircuitBreakerTicker() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -89,7 +69,6 @@ func (w *Wire[T]) startCircuitBreakerTicker() {
 			}
 			w.cbLock.Unlock()
 
-			// Only send if wire is not closed.
 			w.closeLock.Lock()
 			if !w.isClosed {
 				select {
@@ -102,7 +81,6 @@ func (w *Wire[T]) startCircuitBreakerTicker() {
 	}
 }
 
-// encodeElement uses w.encoder to encode the element into w.OutputBuffer, handling errors with handleError.
 func (w *Wire[T]) encodeElement(elem T) {
 	w.bufferMutex.Lock()
 	defer w.bufferMutex.Unlock()
@@ -113,14 +91,12 @@ func (w *Wire[T]) encodeElement(elem T) {
 	}
 }
 
-// handleCircuitBreakerTrip is called when the circuit breaker disallows processing (breaker is open).
-// The element is diverted to any neutral (ground) wires; if none are available, the element is effectively dropped.
 func (w *Wire[T]) handleCircuitBreakerTrip(ctx context.Context, elem T) error {
 	groundWires := w.CircuitBreaker.GetNeutralWires()
 	if len(groundWires) > 0 {
 		for _, gw := range groundWires {
 			if err := gw.Submit(ctx, elem); err != nil {
-				continue // Try other ground wires if one fails.
+				continue
 			}
 			w.notifyNeutralWireSubmission(elem)
 		}
@@ -130,8 +106,6 @@ func (w *Wire[T]) handleCircuitBreakerTrip(ctx context.Context, elem T) error {
 	return nil
 }
 
-// handleError sends an error + element to w.errorChan if the wire isn't closed.
-// We lock around isClosed check and the send to prevent "send on closed channel."
 func (w *Wire[T]) handleError(elem T, err error) {
 	w.closeLock.Lock()
 	defer w.closeLock.Unlock()
@@ -141,7 +115,6 @@ func (w *Wire[T]) handleError(elem T, err error) {
 	w.errorChan <- types.ElementError[T]{Err: err, Elem: elem}
 }
 
-// handleErrorElements listens for errors from w.errorChan in a loop, calling w.notifyElementTransformError for each.
 func (w *Wire[T]) handleErrorElements() {
 	defer w.wg.Done()
 	for {
@@ -157,7 +130,6 @@ func (w *Wire[T]) handleErrorElements() {
 	}
 }
 
-// handleProcessingError tries to run w.insulatorFunc if configured, else records via circuit breaker.
 func (w *Wire[T]) handleProcessingError(elem T, originalElem T, originalErr error) (T, error) {
 	if w.insulatorFunc != nil && (w.CircuitBreaker == nil || w.CircuitBreaker.Allow()) {
 		return w.attemptRecovery(elem, originalElem, originalErr)
@@ -168,7 +140,6 @@ func (w *Wire[T]) handleProcessingError(elem T, originalElem T, originalErr erro
 	return elem, originalErr
 }
 
-// transformElement runs all transformations in sequence; if any fail, we handle or recover from the error.
 func (w *Wire[T]) transformElement(elem T) (T, error) {
 	var err error
 	originalElem := elem
@@ -184,7 +155,6 @@ func (w *Wire[T]) transformElement(elem T) (T, error) {
 	return elem, nil
 }
 
-// transformElements spawns w.maxBufferSize goroutines, each running processChannel to handle data from w.inChan.
 func (w *Wire[T]) transformElements() {
 	for i := 0; i < int(w.maxBufferSize); i++ {
 		w.wg.Add(1)
@@ -192,7 +162,6 @@ func (w *Wire[T]) transformElements() {
 	}
 }
 
-// processChannel reads elements from w.inChan, spawns transformations, and respects wire/context shutdowns.
 func (w *Wire[T]) processChannel() {
 	defer w.wg.Done()
 	for {
@@ -204,7 +173,6 @@ func (w *Wire[T]) processChannel() {
 			w.concurrencySem <- struct{}{}
 			go func(e T) {
 				defer func() { <-w.concurrencySem }()
-				// If closed mid-flight, skip.
 				if w.isClosedSafe() {
 					return
 				}
@@ -216,7 +184,6 @@ func (w *Wire[T]) processChannel() {
 	}
 }
 
-// processElementOrDivert calls transformElement, checks circuit breaker, possibly diverts, or handles errors.
 func (w *Wire[T]) processElementOrDivert(elem T) {
 	if w.isClosedSafe() {
 		return
@@ -230,15 +197,23 @@ func (w *Wire[T]) processElementOrDivert(elem T) {
 		w.handleError(elem, err)
 		return
 	}
+
+	// If encryption is enabled, do it now
+	if w.EncryptOptions != nil && w.EncryptOptions.Enabled {
+		encrypted, encErr := w.encryptItem(processedElem)
+		if encErr != nil {
+			w.handleError(processedElem, encErr)
+			return
+		}
+		processedElem = encrypted
+	}
 	w.submitProcessedElement(processedElem)
 }
 
-// shouldDivertError returns true if an error occurred and the circuit breaker is open (disallowing processing).
 func (w *Wire[T]) shouldDivertError(err error) bool {
 	return err != nil && w.CircuitBreaker != nil && !w.CircuitBreaker.Allow()
 }
 
-// divertToGroundWires sends the given element to any "neutral" wires if the breaker is open; else handleError.
 func (w *Wire[T]) divertToGroundWires(elem T) {
 	if len(w.CircuitBreaker.GetNeutralWires()) > 0 {
 		for _, gw := range w.CircuitBreaker.GetNeutralWires() {
@@ -250,8 +225,6 @@ func (w *Wire[T]) divertToGroundWires(elem T) {
 	}
 }
 
-// submitProcessedElement encodes the element, then tries to send it on w.OutputChan if not closed.
-// We lock around w.isClosed check and the send to avoid panics.
 func (w *Wire[T]) submitProcessedElement(processedElem T) {
 	w.encodeElement(processedElem)
 	if w.OutputChan == nil {
@@ -264,13 +237,11 @@ func (w *Wire[T]) submitProcessedElement(processedElem T) {
 	}
 	select {
 	case w.OutputChan <- processedElem:
-		// success
 	case <-w.ctx.Done():
 		w.notifyCancel(processedElem)
 	}
 }
 
-// processResisterElements runs w.processItems with a ticker, respecting any rate-limiting from SurgeProtector.
 func (w *Wire[T]) processResisterElements(ctx context.Context) {
 	var ticker *time.Ticker
 	if w.surgeProtector == nil || !w.surgeProtector.IsBeingRateLimited() {
@@ -280,7 +251,6 @@ func (w *Wire[T]) processResisterElements(ctx context.Context) {
 		if fillrate > 0 {
 			ticker = time.NewTicker(fillrate)
 		} else {
-			// If fillrate <= 0, no point in ticking. Use 1s fallback.
 			ticker = time.NewTicker(1 * time.Second)
 		}
 	}
@@ -288,7 +258,6 @@ func (w *Wire[T]) processResisterElements(ctx context.Context) {
 	w.processItems(ctx, ticker)
 }
 
-// processItems repeatedly tries to dequeue items from surgeProtector (if any), then Submit them to wire.
 func (w *Wire[T]) processItems(ctx context.Context, ticker *time.Ticker) {
 	for {
 		select {
@@ -299,7 +268,6 @@ func (w *Wire[T]) processItems(ctx context.Context, ticker *time.Ticker) {
 				if item, err := w.surgeProtector.Dequeue(); err == nil {
 					w.Submit(ctx, item.Data)
 				} else {
-					// If no more items remain, possibly stop.
 					if w.shouldStopProcessing() {
 						return
 					}
@@ -309,12 +277,10 @@ func (w *Wire[T]) processItems(ctx context.Context, ticker *time.Ticker) {
 	}
 }
 
-// shouldStopProcessing returns true if surgeProtector's queue is empty.
 func (w *Wire[T]) shouldStopProcessing() bool {
 	return w.surgeProtector.GetResisterQueue() == 0
 }
 
-// submitNormally attempts to send an item to w.inChan, guarded by closeLock to avoid sends after wire closes.
 func (w *Wire[T]) submitNormally(ctx context.Context, elem T) error {
 	w.closeLock.Lock()
 	defer w.closeLock.Unlock()
@@ -328,4 +294,142 @@ func (w *Wire[T]) submitNormally(ctx context.Context, elem T) error {
 		return ctx.Err()
 	}
 	return nil
+}
+
+// -----------------------------------------------------------------------------
+// AES-GCM Encryption & Decryption (GOB-based), No Type Checking of T
+// -----------------------------------------------------------------------------
+
+// decryptItem expects the inbound data to be base64 ciphertext if DecryptOptions.Enabled is true.
+// Steps:
+//  1. base64 decode inbound => raw ciphertext
+//  2. AES-GCM decrypt => plaintext bytes
+//  3. GOB decode => final domain object T
+//
+// If DecryptOptions is disabled, we just return the inbound data as-is.
+func (w *Wire[T]) decryptItem(inbound T) (T, error) {
+	if w.DecryptOptions == nil || !w.DecryptOptions.Enabled {
+		// No decrypt => pass data through
+		return inbound, nil
+	}
+
+	// 1) interpret inbound T as base64 ciphertext
+	base64Str, ok := any(inbound).(string)
+	if !ok {
+		// The user gave a non-string while decrypt is on => config error
+		return inbound, fmt.Errorf("wire decrypt error: inbound must be base64 string, got %T instead", inbound)
+	}
+	cipherBytes, err := base64.StdEncoding.DecodeString(base64Str)
+	if err != nil {
+		return inbound, fmt.Errorf("wire decrypt error: invalid base64 ciphertext: %w", err)
+	}
+
+	// 2) AES-GCM decrypt
+	plaintextBytes, err := decryptData(cipherBytes, w.DecryptOptions, w.DecryptKey)
+	if err != nil {
+		return inbound, fmt.Errorf("AES-GCM decryption failed: %w", err)
+	}
+
+	// 3) GOB decode => final domain T
+	plaintext, err := gobDecodeToT[T](plaintextBytes)
+	if err != nil {
+		return inbound, fmt.Errorf("GOB decode failed: %w", err)
+	}
+	return plaintext, nil
+}
+
+// encryptItem is called if w.EncryptOptions.Enabled is true. Steps:
+//  1. GOB encode => bytes
+//  2. AES-GCM encrypt
+//  3. base64 => store in T (assuming T is string).
+func (w *Wire[T]) encryptItem(plaintext T) (T, error) {
+	if w.EncryptOptions == nil || !w.EncryptOptions.Enabled {
+		// Not encrypting => pass data
+		return plaintext, nil
+	}
+	// 1) GOB-encode the domain object
+	plaintextBytes, err := gobEncodeFromT(plaintext)
+	if err != nil {
+		return plaintext, fmt.Errorf("failed to GOB encode domain object: %w", err)
+	}
+
+	// 2) AES-GCM encrypt
+	cipherBytes, err := encryptData(plaintextBytes, w.EncryptOptions, w.EncryptKey)
+	if err != nil {
+		return plaintext, fmt.Errorf("AES-GCM encryption failed: %w", err)
+	}
+
+	// 3) base64 => store as T (assuming T is string)
+	base64Cipher := base64.StdEncoding.EncodeToString(cipherBytes)
+
+	tmp := any(base64Cipher)
+	finalVal, ok := tmp.(T)
+	if !ok {
+		return plaintext, fmt.Errorf("failed to cast base64 ciphertext to T")
+	}
+	return finalVal, nil
+}
+
+// gobEncodeFromT GOB-encodes the domain object T into bytes
+func gobEncodeFromT[T any](val T) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(val); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// gobDecodeToT GOB-decodes from bytes => domain object T
+func gobDecodeToT[T any](data []byte) (T, error) {
+	var out T
+	b := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(b)
+	err := dec.Decode(&out)
+	return out, err
+}
+
+// encryptData does AES-GCM encryption if secOpts indicates AES-GCM. Otherwise pass plaintext
+func encryptData(plaintext []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
+	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != relay.EncryptionSuite_ENCRYPTION_AES_GCM {
+		return plaintext, nil
+	}
+	block, err := aes.NewCipher([]byte(key))
+	if err != nil {
+		return nil, fmt.Errorf("invalid AES key: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// decryptData does AES-GCM if secOpts indicates AES-GCM. Otherwise pass ciphertext as-is
+func decryptData(ciphertext []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
+	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != relay.EncryptionSuite_ENCRYPTION_AES_GCM {
+		return ciphertext, nil
+	}
+	block, err := aes.NewCipher([]byte(key))
+	if err != nil {
+		return nil, fmt.Errorf("invalid AES key: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	nonce, actual := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, actual, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GCM decrypt failed: %w", err)
+	}
+	return plaintext, nil
 }
