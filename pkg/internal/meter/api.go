@@ -32,8 +32,6 @@ func (m *Meter[T]) Monitor() {
 
 		case <-ticker.C:
 
-			/* 			m.checkThresholds() */
-
 			for metric, threshold := range m.thresholds {
 				currentCount := float64(m.GetMetricCount(metric))
 				if float64(m.GetMetricCount(types.MetricTotalSubmittedCount)) > 0 && (currentCount/float64(m.GetMetricCount(types.MetricTotalSubmittedCount)))*100 >= threshold {

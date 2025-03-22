@@ -32,16 +32,23 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
+// isClosedSafe retrieves the w.isClosed flag under lock, preventing data races.
+func (w *Wire[T]) isClosedSafe() bool {
+	w.closeLock.Lock()
+	defer w.closeLock.Unlock()
+	return w.isClosed
+}
+
+// setClosedSafe sets w.isClosed = true under lock. (Called during shutdown.)
+func (w *Wire[T]) setClosedSafe() {
+	w.closeLock.Lock()
+	defer w.closeLock.Unlock()
+	w.isClosed = true
+}
+
 // attemptRecovery attempts to recover from a processing error by applying the configured insulator function.
-// It retries the operation up to the retry threshold, logging each attempt.
-// Parameters:
-//   - elem: The element currently being processed.
-//   - originalElem: The original element before any recovery attempts.
-//   - originalErr: The error that triggered the recovery attempt.
-//
-// Returns:
-//   - T: The recovered element (or the last attempted version if recovery fails).
-//   - error: nil if recovery is successful, otherwise the final error encountered.
+// It retries up to w.retryThreshold times, logging each attempt and returning either the successful element or
+// the final error if all retries fail.
 func (w *Wire[T]) attemptRecovery(elem T, originalElem T, originalErr error) (T, error) {
 	var retryErr error
 	for attempt := 1; attempt <= w.retryThreshold; attempt++ {
@@ -50,6 +57,7 @@ func (w *Wire[T]) attemptRecovery(elem T, originalElem T, originalErr error) (T,
 			w.notifyInsulatorAttemptSuccess(retryElem, originalElem, retryErr, originalErr, attempt, w.retryThreshold, w.retryInterval)
 			return retryElem, nil
 		}
+		// If final attempt fails, record error in CircuitBreaker and return the error.
 		if attempt == w.retryThreshold {
 			if w.CircuitBreaker != nil {
 				w.CircuitBreaker.RecordError()
@@ -58,14 +66,13 @@ func (w *Wire[T]) attemptRecovery(elem T, originalElem T, originalErr error) (T,
 			return retryElem, fmt.Errorf("retry threshold of %d reached with error: %v", w.retryThreshold, retryErr)
 		}
 		w.notifyInsulatorAttempt(retryElem, originalElem, retryErr, originalErr, attempt, w.retryThreshold, w.retryInterval)
-		elem = retryElem // Update elem for the next retry attempt
+		elem = retryElem
 		time.Sleep(w.retryInterval)
 	}
 	return elem, retryErr
 }
 
-// startCircuitBreakerTicker continuously monitors the status of the circuit breaker.
-// It runs as a separate goroutine and periodically sends the current allowed state to the control channel.
+// startCircuitBreakerTicker continuously monitors the circuit breaker status in a separate goroutine.
 func (w *Wire[T]) startCircuitBreakerTicker() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -75,64 +82,66 @@ func (w *Wire[T]) startCircuitBreakerTicker() {
 		case <-w.ctx.Done():
 			return
 		case <-ticker.C:
-			w.cbLock.Lock() // Lock before checking the CircuitBreaker status
+			w.cbLock.Lock()
 			allowed := true
 			if w.CircuitBreaker != nil {
 				allowed = w.CircuitBreaker.Allow()
 			}
-			w.cbLock.Unlock() // Unlock after checking
+			w.cbLock.Unlock()
 
-			select {
-			case w.controlChan <- allowed:
-			default:
+			// Only send if wire is not closed.
+			w.closeLock.Lock()
+			if !w.isClosed {
+				select {
+				case w.controlChan <- allowed:
+				default:
+				}
 			}
+			w.closeLock.Unlock()
 		}
 	}
 }
 
-// encodeElement safely encodes a processed element using the configured encoder.
-// The encoded data is written to the output buffer, and any encoding error is handled.
+// encodeElement uses w.encoder to encode the element into w.OutputBuffer, handling errors with handleError.
 func (w *Wire[T]) encodeElement(elem T) {
 	w.bufferMutex.Lock()
 	defer w.bufferMutex.Unlock()
 	if w.encoder != nil {
-		/* 		w.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: Submit, element: %v, => Encoding element.", w.GetComponentMetadata(), elem) */
 		if encodeErr := w.encoder.Encode(w.OutputBuffer, elem); encodeErr != nil {
 			w.handleError(elem, encodeErr)
 		}
 	}
 }
 
-// handleCircuitBreakerTrip manages the submission of an element when the circuit breaker has tripped.
-// It attempts to submit the element to each available neutral (ground) wire.
-// If no ground wires are available, the element is dropped.
+// handleCircuitBreakerTrip is called when the circuit breaker disallows processing (breaker is open).
+// The element is diverted to any neutral (ground) wires; if none are available, the element is effectively dropped.
 func (w *Wire[T]) handleCircuitBreakerTrip(ctx context.Context, elem T) error {
 	groundWires := w.CircuitBreaker.GetNeutralWires()
 	if len(groundWires) > 0 {
 		for _, gw := range groundWires {
 			if err := gw.Submit(ctx, elem); err != nil {
-				/* 				w.NotifyLoggers(types.WarnLevel, "component: %s, level: WARN, result: FAILURE, event: Submit, element: %v, error: %v target: %s => Error submitting to ground wire!", w.GetComponentMetadata(), elem, err, gw.GetComponentMetadata()) */
-				continue // Log but do not return; try other ground wires.
+				continue // Try other ground wires if one fails.
 			}
 			w.notifyNeutralWireSubmission(elem)
-			/* 			w.NotifyLoggers(types.InfoLevel, "component: %s, level: INFO, result: SUCCESS, event: Submit, element: %v, target: %s => Submitted to ground wire after CircuitBreaker trip.", w.GetComponentMetadata(), elem, gw.GetComponentMetadata()) */
 		}
-		return nil // Successfully handled by ground wires.
+		return nil
 	}
 	w.notifyCircuitBreakerDropElement(elem)
-	/* 	w.NotifyLoggers(types.WarnLevel, "component: %s, level: WARN, result: DROPPED, event: Submit, element: %v => No ground wires available, dropping element!", w.GetComponentMetadata(), elem) */
 	return nil
 }
 
-// handleError sends an error along with its associated element to the error channel, if configured.
+// handleError sends an error + element to w.errorChan if the wire isn't closed.
+// We lock around isClosed check and the send to prevent "send on closed channel."
 func (w *Wire[T]) handleError(elem T, err error) {
-	if w.errorChan != nil {
-		w.errorChan <- types.ElementError[T]{Err: err, Elem: elem}
+	w.closeLock.Lock()
+	defer w.closeLock.Unlock()
+	if w.isClosed || w.errorChan == nil {
+		return
 	}
+	w.errorChan <- types.ElementError[T]{Err: err, Elem: elem}
 }
 
-// handleErrorElements continuously listens for errors on the error channel and processes them.
-// It logs each error via the notifyElementTransformError function.
+// handleErrorElements listens for errors from w.errorChan in a loop, calling w.notifyElementTransformError for each.
 func (w *Wire[T]) handleErrorElements() {
 	defer w.wg.Done()
 	for {
@@ -148,9 +157,7 @@ func (w *Wire[T]) handleErrorElements() {
 	}
 }
 
-// handleProcessingError manages errors that occur during element processing.
-// If an insulator function is configured and the circuit breaker allows it,
-// the method attempts recovery; otherwise, it records the error via the circuit breaker.
+// handleProcessingError tries to run w.insulatorFunc if configured, else records via circuit breaker.
 func (w *Wire[T]) handleProcessingError(elem T, originalElem T, originalErr error) (T, error) {
 	if w.insulatorFunc != nil && (w.CircuitBreaker == nil || w.CircuitBreaker.Allow()) {
 		return w.attemptRecovery(elem, originalElem, originalErr)
@@ -161,14 +168,10 @@ func (w *Wire[T]) handleProcessingError(elem T, originalElem T, originalErr erro
 	return elem, originalErr
 }
 
-// transformElement applies all transformation functions in sequence to the given element.
-// If any transformation fails, it handles the error via handleProcessingError.
-// On successful transformation, it notifies sensors of the processed element.
-// Returns the transformed element and any error encountered.
+// transformElement runs all transformations in sequence; if any fail, we handle or recover from the error.
 func (w *Wire[T]) transformElement(elem T) (T, error) {
 	var err error
-	originalElem := elem // Preserve the original element for logging purposes
-
+	originalElem := elem
 	for _, transform := range w.transformations {
 		elem, err = transform(elem)
 		if err != nil {
@@ -181,7 +184,7 @@ func (w *Wire[T]) transformElement(elem T) (T, error) {
 	return elem, nil
 }
 
-// transformElements launches multiple goroutines (equal to maxBufferSize) to process incoming elements concurrently.
+// transformElements spawns w.maxBufferSize goroutines, each running processChannel to handle data from w.inChan.
 func (w *Wire[T]) transformElements() {
 	for i := 0; i < int(w.maxBufferSize); i++ {
 		w.wg.Add(1)
@@ -189,70 +192,53 @@ func (w *Wire[T]) transformElements() {
 	}
 }
 
-// processChannel continuously reads elements from the input channel and processes them.
-// It uses a semaphore to limit the number of concurrent processing routines.
+// processChannel reads elements from w.inChan, spawns transformations, and respects wire/context shutdowns.
 func (w *Wire[T]) processChannel() {
 	defer w.wg.Done()
 	for {
 		select {
-
 		case elem, ok := <-w.inChan:
 			if !ok {
-				return // Exit if the channel is closed.
+				return
 			}
-
-			// Acquire a slot from the semaphore before processing the element.
 			w.concurrencySem <- struct{}{}
-
-			go func(element T) {
-				defer func() { <-w.concurrencySem }() // Release the semaphore slot.
-				if !w.isClosed {
-					w.processElementOrDivert(element)
-				} else {
+			go func(e T) {
+				defer func() { <-w.concurrencySem }()
+				// If closed mid-flight, skip.
+				if w.isClosedSafe() {
 					return
 				}
+				w.processElementOrDivert(e)
 			}(elem)
-
 		case <-w.ctx.Done():
-			return // Terminate if the context is done.
+			return
 		}
 	}
 }
 
-// processElementOrDivert processes a single element by applying transformations.
-// If an error occurs and the circuit breaker is tripped, the element is diverted to ground wires.
-// Otherwise, the processed element is submitted for further processing.
+// processElementOrDivert calls transformElement, checks circuit breaker, possibly diverts, or handles errors.
 func (w *Wire[T]) processElementOrDivert(elem T) {
-	if w.isClosed {
+	if w.isClosedSafe() {
 		return
-	} else if !w.isClosed {
-		processedElem, err := w.transformElement(elem)
-
-		// If an error occurs and the circuit breaker is tripped, divert the element.
-		if w.shouldDivertError(err) {
-			w.divertToGroundWires(elem)
-			return
-		}
-
-		// If processing fails, handle the error.
-		if err != nil {
-			w.handleError(elem, err)
-			return
-		}
-
-		// On successful processing, encode and submit the element.
-		w.submitProcessedElement(processedElem)
 	}
+	processedElem, err := w.transformElement(elem)
+	if w.shouldDivertError(err) {
+		w.divertToGroundWires(elem)
+		return
+	}
+	if err != nil {
+		w.handleError(elem, err)
+		return
+	}
+	w.submitProcessedElement(processedElem)
 }
 
-// shouldDivertError determines whether an error should trigger diversion to ground wires.
-// It returns true if an error exists, a circuit breaker is configured, and the circuit breaker is not allowing processing.
+// shouldDivertError returns true if an error occurred and the circuit breaker is open (disallowing processing).
 func (w *Wire[T]) shouldDivertError(err error) bool {
 	return err != nil && w.CircuitBreaker != nil && !w.CircuitBreaker.Allow()
 }
 
-// divertToGroundWires diverts an element to available neutral (ground) wires when the circuit breaker is open.
-// If no ground wires are available, it handles the error accordingly.
+// divertToGroundWires sends the given element to any "neutral" wires if the breaker is open; else handleError.
 func (w *Wire[T]) divertToGroundWires(elem T) {
 	if len(w.CircuitBreaker.GetNeutralWires()) > 0 {
 		for _, gw := range w.CircuitBreaker.GetNeutralWires() {
@@ -264,58 +250,56 @@ func (w *Wire[T]) divertToGroundWires(elem T) {
 	}
 }
 
-// submitProcessedElement encodes a processed element and submits it to the output channel.
-// It respects the shutdown state and cancellation signals.
+// submitProcessedElement encodes the element, then tries to send it on w.OutputChan if not closed.
+// We lock around w.isClosed check and the send to avoid panics.
 func (w *Wire[T]) submitProcessedElement(processedElem T) {
 	w.encodeElement(processedElem)
-	if w.OutputChan != nil {
-		w.closeLock.Lock()
-		defer w.closeLock.Unlock()
-		if w.isClosed {
-			return
-		}
-		select {
-		case w.OutputChan <- processedElem:
-		case <-w.ctx.Done():
-			w.notifyCancel(processedElem)
-			return
-		}
+	if w.OutputChan == nil {
+		return
+	}
+	w.closeLock.Lock()
+	defer w.closeLock.Unlock()
+	if w.isClosed {
+		return
+	}
+	select {
+	case w.OutputChan <- processedElem:
+		// success
+	case <-w.ctx.Done():
+		w.notifyCancel(processedElem)
 	}
 }
 
-// processResisterElements manages the processing of elements under rate limiting.
-// It sets up a ticker based on the surge protector's configuration and delegates processing to processItems.
+// processResisterElements runs w.processItems with a ticker, respecting any rate-limiting from SurgeProtector.
 func (w *Wire[T]) processResisterElements(ctx context.Context) {
+	var ticker *time.Ticker
 	if w.surgeProtector == nil || !w.surgeProtector.IsBeingRateLimited() {
-		// Use a default ticker for normal operation if rate limiting is not enabled.
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-		w.processItems(ctx, ticker)
+		ticker = time.NewTicker(1 * time.Second)
 	} else {
 		_, fillrate, _, _ := w.surgeProtector.GetRateLimit()
 		if fillrate > 0 {
-			ticker := time.NewTicker(fillrate)
-			defer ticker.Stop()
-			w.processItems(ctx, ticker)
+			ticker = time.NewTicker(fillrate)
+		} else {
+			// If fillrate <= 0, no point in ticking. Use 1s fallback.
+			ticker = time.NewTicker(1 * time.Second)
 		}
 	}
+	defer ticker.Stop()
+	w.processItems(ctx, ticker)
 }
 
-// processItems periodically checks for available items from the surge protector's queue using a ticker.
-// If an item is available, it is submitted for processing.
-// Processing stops if the context is cancelled or if the surge protector's queue is empty.
+// processItems repeatedly tries to dequeue items from surgeProtector (if any), then Submit them to wire.
 func (w *Wire[T]) processItems(ctx context.Context, ticker *time.Ticker) {
 	for {
 		select {
 		case <-ctx.Done():
-			return // Exit on context cancellation.
+			return
 		case <-ticker.C:
 			if w.surgeProtector != nil && w.surgeProtector.TryTake() {
 				if item, err := w.surgeProtector.Dequeue(); err == nil {
-					// Only submit if items are available.
 					w.Submit(ctx, item.Data)
 				} else {
-					// Stop processing if no items remain.
+					// If no more items remain, possibly stop.
 					if w.shouldStopProcessing() {
 						return
 					}
@@ -325,15 +309,18 @@ func (w *Wire[T]) processItems(ctx context.Context, ticker *time.Ticker) {
 	}
 }
 
-// shouldStopProcessing determines whether processing should stop by checking the surge protector's queue.
-// Returns true if the queue is empty.
+// shouldStopProcessing returns true if surgeProtector's queue is empty.
 func (w *Wire[T]) shouldStopProcessing() bool {
 	return w.surgeProtector.GetResisterQueue() == 0
 }
 
-// submitNormally attempts to submit an element to the wire's input channel.
-// It notifies successful submission and returns an error if the context is cancelled.
+// submitNormally attempts to send an item to w.inChan, guarded by closeLock to avoid sends after wire closes.
 func (w *Wire[T]) submitNormally(ctx context.Context, elem T) error {
+	w.closeLock.Lock()
+	defer w.closeLock.Unlock()
+	if w.isClosed {
+		return fmt.Errorf("cannot submit: input channel is closed")
+	}
 	select {
 	case w.inChan <- elem:
 		w.notifySubmit(elem)

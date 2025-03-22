@@ -580,7 +580,7 @@ func (w *Wire[T]) Submit(ctx context.Context, elem T) error {
 }
 
 // Stop gracefully terminates the wire's processing routines and cleans up resources.
-// It cancels the context, waits for all goroutines to finish, and closes all associated channels.
+// It cancels the context, waits for all goroutines to finish, and then closes all associated channels.
 //
 // Returns:
 //   - error: An error if the shutdown encounters issues, otherwise nil.
@@ -589,17 +589,26 @@ func (w *Wire[T]) Stop() error {
 	if atomic.CompareAndSwapInt32(&w.started, 1, 0) {
 		w.notifyStop()
 		w.terminateOnce.Do(func() {
+			// First, mark the wire as closed so new sends don't occur.
+			w.closeLock.Lock()
+			w.isClosed = true
+			w.closeLock.Unlock()
+
+			// Cancel the context so that generators and other components can shut down.
 			w.cancel()
+
+			// Wait for all worker goroutines (transformers, error handlers, etc.) to finish.
 			w.wg.Wait()
 
+			// Now it is safe to close all channels.
 			w.closeLock.Lock()
 			defer w.closeLock.Unlock()
 
 			w.closeOutputChanOnce.Do(func() { close(w.OutputChan) })
 			w.closeInputChanOnce.Do(func() { close(w.inChan) })
 			w.closeErrorChanOnce.Do(func() { close(w.errorChan) })
-			w.isClosed = true
 
+			// Reset the waitgroup in case of a future restart.
 			w.wg = sync.WaitGroup{}
 		})
 	}
