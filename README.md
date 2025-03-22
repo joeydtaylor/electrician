@@ -10,7 +10,7 @@
 - **⚙️ Configurable concurrency** – Provides simple, high-level APIs for controlling concurrency, buffering, and parallelism.
 - **🛡️ Built-in resilience** – Includes circuit breakers, retry logic (insulators), surge protectors, and backup pipelines.
 - **📡 Flexible pipeline architecture** – Uses wires and conduits to construct complex data flows without manual channel management.
-- **🌍 Network-ready** – Supports gRPC relays with TLS, enabling secure microservice communication.
+- **🌍 Network-ready** – Supports gRPC relays with TLS and AES-GCM, enabling secure microservice communication in a multilayered security strategy.
 - **📊 Real-time instrumentation** – Sensors and meters capture metrics such as throughput, error rates, and resource usage.
 
 Whether you need a simple pipeline for data transformation or a multi-stage microservice architecture with failover and scaling, Electrician provides the tools to build it efficiently.
