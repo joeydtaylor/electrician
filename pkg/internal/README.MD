@@ -13,6 +13,7 @@ Each package within `internal/` has a **specific role** in the Electrician ecosy
 | Package             | Description                                                                                                 |
 | ------------------- | ----------------------------------------------------------------------------------------------------------- |
 | **adapter/**        | Connects external systems via **HTTP, OAuth2, or other data sources**.                                      |
+| **httpserver/**     | Listens for inbound **HTTP/HTTPS requests**, optionally with TLS and custom response handling.             |
 | **circuitbreaker/** | Implements **failure detection and recovery**, including automatic reset logic.                             |
 | **codec/**          | Handles **serialization and deserialization** of data within pipelines.                                     |
 | **conduit/**        | Manages **multi-stage processing** by linking multiple Wires together.                                      |
@@ -74,25 +75,20 @@ While Go technically allows modifying running components, **Electrician strongly
 
 To **add new functionality**, follow this **strict contract**:
 
-1️⃣ **Modify `types/`**
-
-- All public functionality starts by **adding an interface method** to `types/package.go`.
+1️⃣ **Modify `types/`**  
+- All public functionality starts by **adding an interface method** to `types/package.go`.  
 - This ensures **consistent contracts** across components.
 
-2️⃣ **Implement in `api.go`**
-
+2️⃣ **Implement in `api.go`**  
 - Add the **actual implementation** of the new method.
 
-3️⃣ **Create a Functional Option in `options.go`**
-
+3️⃣ **Create a Functional Option in `options.go`**  
 - Supports **composable, declarative-style configuration**.
 
-4️⃣ **Enhance `notify.go` (if applicable)**
-
+4️⃣ **Enhance `notify.go` (if applicable)**  
 - If your change introduces **new events**, add corresponding **logging and telemetry hooks**.
 
-5️⃣ **Update Tests (`package_test.go`)**
-
+5️⃣ **Update Tests (`package_test.go`)**  
 - Ensure **full test coverage** before merging.
 
 By enforcing these steps, Electrician maintains **consistency, safety, and extensibility**.
@@ -126,7 +122,7 @@ Everything else—including **networking, data transformation, and concurrency m
 ## 📖 Further Reading
 
 - **[Root README](../../../README.md)** – Electrician’s overall architecture and principles.
-- **[Per-Package README]** – Each internal sub-package (`wire`, `circuitbreaker`, etc.) contains additional details.
+- **[Per-Package README]** – Each internal sub-package (`wire`, `circuitbreaker`, `httpserver`, etc.) contains additional details.
 - **[Examples Directory](../../../example/)** – Demonstrates these internal components in real-world use cases.
 
 ---

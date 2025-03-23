@@ -1,6 +1,6 @@
-# 🌐 HTTP Server Adapter
+# 🌐 HTTP Server
 
-The **HTTP Server Adapter** exposes **webhooks or HTTP endpoints** within Electrician pipelines,  
+The **HTTP Server** exposes **webhooks or HTTP endpoints** within Electrician pipelines,  
 allowing external services to **send data** into your pipeline and receive **custom responses**.
 
 It supports **TLS, custom request parsing, flexible response handling, and structured logging**,  
@@ -28,13 +28,13 @@ making it ideal for **secure and straightforward inbound HTTP integrations**.
 | **internal.go** | Handles **request parsing**, TLS configuration, and **core server** logic. |
 | **options.go**  | Functional options for **declarative HTTP server** setup.               |
 | **httpserver.go** | Core **type definitions** and the **`NewHTTPServer`** constructor. |
-| **README.md**   | This overview document describing the **HTTP Server Adapter**.          |
+| **README.md**   | This overview document describing the **HTTP Server**.          |
 
 ---
 
-## 🔧 How the HTTP Server Adapter Works
+## 🔧 How the HTTP Server Works
 
-The **HTTP Server Adapter** listens on a specified **address and endpoint** for incoming HTTP or HTTPS requests.  
+The **HTTP Server** listens on a specified **address and endpoint** for incoming HTTP or HTTPS requests.  
 It **decodes the request body** (JSON, XML, raw bytes, etc.) and **injects the data** into Electrician’s pipeline.  
 You can **return custom responses**—including status codes, headers, and JSON payloads—back to the client.
 
@@ -48,13 +48,13 @@ You can **return custom responses**—including status codes, headers, and JSON 
 
 ---
 
-## 🔧 Extending the HTTP Server Adapter
+## 🔧 Extending the HTTP Server
 
 To **add new features** or hooks, follow a structured approach:
 
 1. **Enhance `types/`** – Add or update interfaces in `types/httpserver.go` to represent new behaviors.
 2. **Extend `options.go`** – Introduce new **functional options** for configuration (e.g., request limit, advanced logging).
-3. **Adapt `api.go`** – Expose updated functionality through the **public adapter interface**.
+3. **Adapt `api.go`** – Expose updated functionality through the **public interface**.
 4. **Modify `internal.go`** – Handle additional server logic, like **IP filtering**, advanced TLS, or custom routing.
 5. **Refine `httpserver.go`** – Ensure the main server logic leverages any **new features** consistently.
 
@@ -63,13 +63,13 @@ To **add new features** or hooks, follow a structured approach:
 ## 📖 Further Reading
 
 - **[Root README](../../../README.md)** – Explore Electrician’s **overall architecture** and design principles.
-- **[Examples Directory](../../../../example/httpserver)** – Demonstrates **HTTP Server Adapter** usage in a real-world scenario.
+- **[Examples Directory](../../../../example/httpserver)** – Demonstrates **HTTP Server** usage in a real-world scenario.
 
 ---
 
 ## 📝 License
 
-The **HTTP Server Adapter** is part of Electrician, released under the [Apache 2.0 License](../../../LICENSE).  
+The **HTTP Server** is part of Electrician, released under the [Apache 2.0 License](../../../LICENSE).  
 Use, modify, and distribute it under these terms.
 
 ---
