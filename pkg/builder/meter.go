@@ -135,10 +135,6 @@ func MeterWithInitialMetricCount[T any](metricName MetricName, count uint64) typ
 	return meter.WithInitialMetricCount[T](string(metricName), count)
 }
 
-func MeterWithErrorThreshold[T any](threshold float64) types.Option[types.Meter[T]] {
-	return meter.WithErrorThreshold[T](threshold)
-}
-
 func MeterWithTimerStart[T any](metricName MetricName, startTime time.Time) types.Option[types.Meter[T]] {
 	return meter.WithTimerStart[T](string(metricName), startTime)
 }

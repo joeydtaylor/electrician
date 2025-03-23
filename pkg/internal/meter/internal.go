@@ -27,9 +27,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Percentage,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCurrentRamPercentage: {
 			Name:          types.MetricCurrentRamPercentage,
@@ -37,9 +35,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Percentage,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricPeakGoRoutinesActive: {
 			Name:          types.MetricPeakGoRoutinesActive,
@@ -47,9 +43,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCurrentGoRoutinesActive: {
 			Name:          types.MetricCurrentGoRoutinesActive,
@@ -57,9 +51,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricPeakProcessedPerSecond: {
 			Name:          types.MetricPeakProcessedPerSecond,
@@ -67,9 +59,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricPeakTransformedPerSecond: {
 			Name:          types.MetricPeakTransformedPerSecond,
@@ -77,9 +67,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricPeakTransformationErrorsPerSecond: {
 			Name:          types.MetricPeakTransformationErrorsPerSecond,
@@ -87,9 +75,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricProcessedPerSecond: {
 			Name:          types.MetricProcessedPerSecond,
@@ -97,9 +83,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTransformationErrorsPerSecond: {
 			Name:          types.MetricTransformationErrorsPerSecond,
@@ -107,9 +91,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTransformsPerSecond: {
 			Name:          types.MetricTransformsPerSecond,
@@ -117,9 +99,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTotalPendingCount: {
 			Name:          types.MetricTotalPendingCount,
@@ -127,9 +107,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTotalComponentsUsedCount: {
 			Name:          types.MetricTotalComponentsUsedCount,
@@ -137,9 +115,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricSurgeProtectorCurrentTripCount: {
 			Name:          types.MetricSurgeProtectorCurrentTripCount,
@@ -147,9 +123,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTransformationErrorPercentage: {
 			Name:          types.MetricTransformationErrorPercentage,
@@ -157,9 +131,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Percentage,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTransformPercentage: {
 			Name:          types.MetricTransformPercentage,
@@ -167,9 +139,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Percentage,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricErrorPercentage: {
 			Name:          types.MetricErrorPercentage,
@@ -177,9 +147,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Percentage,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTotalErrorCount: {
 			Name:          types.MetricTotalErrorCount,
@@ -187,9 +155,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricProgressPercentage: {
 			Name:          types.MetricProgressPercentage,
@@ -197,9 +163,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Percentage,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTotalProcessedCount: {
 			Name:          types.MetricTotalProcessedCount,
@@ -207,9 +171,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTotalSubmittedCount: {
 			Name:          types.MetricTotalSubmittedCount,
@@ -217,9 +179,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricTotalTransformedCount: {
 			Name:          types.MetricTotalTransformedCount,
@@ -227,9 +187,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricMeterConnectedComponentCount: {
 			Name:          types.MetricMeterConnectedComponentCount,
@@ -237,9 +195,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricComponentRunningCount: {
 			Name:          types.MetricComponentRunningCount,
@@ -247,9 +203,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricLoggerConnectedComponentCount: {
 			Name:          types.MetricLoggerConnectedComponentCount,
@@ -257,9 +211,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricComponentRestartCount: {
 			Name:          types.MetricComponentRestartCount,
@@ -267,9 +219,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricComponentLifecycleErrorCount: {
 			Name:          types.MetricComponentLifecycleErrorCount,
@@ -277,9 +227,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementTransformCount: {
 			Name:          types.MetricWireElementTransformCount,
@@ -287,9 +235,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementTransformErrorCount: {
 			Name:          types.MetricWireElementTransformErrorCount,
@@ -297,9 +243,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireRunningCount: {
 			Name:          types.MetricWireRunningCount,
@@ -307,9 +251,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementSubmitCount: {
 			Name:          types.MetricWireElementSubmitCount,
@@ -317,9 +259,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementSubmitErrorCount: {
 			Name:          types.MetricWireElementSubmitErrorCount,
@@ -327,9 +267,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementSubmitCancelCount: {
 			Name:          types.MetricWireElementSubmitCancelCount,
@@ -337,9 +275,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementCancelCount: {
 			Name:          types.MetricWireElementCancelCount,
@@ -347,9 +283,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementErrorCount: {
 			Name:          types.MetricWireElementErrorCount,
@@ -357,9 +291,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementRecoverAttemptCount: {
 			Name:          types.MetricWireElementRecoverAttemptCount,
@@ -367,9 +299,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementRecoverSuccessCount: {
 			Name:          types.MetricWireElementRecoverSuccessCount,
@@ -377,9 +307,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricWireElementRecoverFailureCount: {
 			Name:          types.MetricWireElementRecoverFailureCount,
@@ -387,9 +315,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerResetTimer: {
 			Name:          types.MetricCircuitBreakerResetTimer,
@@ -397,9 +323,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerLastTripTime: {
 			Name:          types.MetricCircuitBreakerLastTripTime,
@@ -407,9 +331,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerLastErrorRecordTime: {
 			Name:          types.MetricCircuitBreakerLastErrorRecordTime,
@@ -417,9 +339,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerLastResetTime: {
 			Name:          types.MetricCircuitBreakerLastResetTime,
@@ -427,9 +347,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerNextResetTime: {
 			Name:          types.MetricCircuitBreakerNextResetTime,
@@ -437,9 +355,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerCurrentTripCount: {
 			Name:          types.MetricCircuitBreakerCurrentTripCount,
@@ -447,9 +363,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerTripCount: {
 			Name:          types.MetricCircuitBreakerTripCount,
@@ -457,9 +371,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerResetCount: {
 			Name:          types.MetricCircuitBreakerResetCount,
@@ -467,9 +379,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerNeutralWireSubmissionCount: {
 			Name:          types.MetricCircuitBreakerNeutralWireSubmissionCount,
@@ -477,9 +387,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerRecordedErrorCount: {
 			Name:          types.MetricCircuitBreakerRecordedErrorCount,
@@ -487,9 +395,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerDroppedElementCount: {
 			Name:          types.MetricCircuitBreakerDroppedElementCount,
@@ -497,9 +403,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerNeutralWireConnectedCount: {
 			Name:          types.MetricCircuitBreakerNeutralWireConnectedCount,
@@ -507,9 +411,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerNeutralWireFailureCount: {
 			Name:          types.MetricCircuitBreakerNeutralWireFailureCount,
@@ -517,9 +419,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricCircuitBreakerCount: {
 			Name:          types.MetricCircuitBreakerCount,
@@ -527,9 +427,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPRequestMadeCount: {
 			Name:          types.MetricHTTPRequestMadeCount,
@@ -537,9 +435,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPRequestReceivedCount: {
 			Name:          types.MetricHTTPRequestReceivedCount,
@@ -547,9 +443,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPRequestCompletedCount: {
 			Name:          types.MetricHTTPRequestCompletedCount,
@@ -557,9 +451,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPResponseCount: {
 			Name:          types.MetricHTTPResponseCount,
@@ -567,9 +459,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientErrorCount: {
 			Name:          types.MetricHTTPClientErrorCount,
@@ -577,9 +467,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientRetryCount: {
 			Name:          types.MetricHTTPClientRetryCount,
@@ -587,9 +475,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPOAuth2ClientCount: {
 			Name:          types.MetricHTTPOAuth2ClientCount,
@@ -597,9 +483,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPResponseErrorCount: {
 			Name:          types.MetricHTTPResponseErrorCount,
@@ -607,9 +491,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientWithTlsPinningCount: {
 			Name:          types.MetricHTTPClientWithTlsPinningCount,
@@ -617,9 +499,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientFetchCount: {
 			Name:          types.MetricHTTPClientFetchCount,
@@ -627,9 +507,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientFetchErrorCount: {
 			Name:          types.MetricHTTPClientFetchErrorCount,
@@ -637,9 +515,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientFetchAndSubmitErrorCount: {
 			Name:          types.MetricHTTPClientFetchAndSubmitErrorCount,
@@ -647,9 +523,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientWithActiveOAuthTokenCount: {
 			Name:          types.MetricHTTPClientWithActiveOAuthTokenCount,
@@ -657,9 +531,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientOAuthTokenRequestCount: {
 			Name:          types.MetricHTTPClientOAuthTokenRequestCount,
@@ -667,9 +539,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientOAuthTokenErrorCount: {
 			Name:          types.MetricHTTPClientOAuthTokenErrorCount,
@@ -677,9 +547,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientJsonUnmarshalErrorCount: {
 			Name:          types.MetricHTTPClientJsonUnmarshalErrorCount,
@@ -687,9 +555,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientSuccessfulFetchCount: {
 			Name:          types.MetricHTTPClientSuccessfulFetchCount,
@@ -697,9 +563,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricHTTPClientRetryExhaustedCount: {
 			Name:          types.MetricHTTPClientRetryExhaustedCount,
@@ -707,9 +571,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricSurgeProtectorBackupWireSubmissionCount: {
 			Name:          types.MetricSurgeProtectorBackupWireSubmissionCount,
@@ -717,9 +579,7 @@ func (m *Meter[T]) initializeMetrics() {
 			ThresholdType: types.Absolute,
 			Total:         0,
 			Count:         new(uint64),
-			Alerted:       false,
 			Timestamp:     time.Now().Unix(),
-			Monitored:     false,
 		},
 		types.MetricSurgeProtectorBackupWireSubmissionPercentage: {
 			Name:          types.MetricSurgeProtectorBackupWireSubmissionPercentage,
@@ -737,9 +597,8 @@ func (m *Meter[T]) initializeMetrics() {
 				DisplayAs:     info.DisplayAs,
 				ThresholdType: info.ThresholdType,
 				Count:         new(uint64),
-				Alerted:       false,
-				Timestamp:     time.Now().Unix(),
-				Monitored:     false,
+
+				Timestamp: time.Now().Unix(),
 			}
 		}
 	}

@@ -96,16 +96,6 @@ func (m *Meter[T]) ReportData() {
 	}
 }
 
-// SetErrorThreshold sets an error threshold for a specific metric.
-func (m *Meter[T]) SetErrorThreshold(threshold float64) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.thresholds["error_count"] = threshold
-	if info, exists := m.metrics["error_count"]; exists {
-		info.Monitored = true
-	}
-}
-
 // SetDynamicMetric initializes or updates a dynamic metric with the specified values.
 func (m *Meter[T]) SetDynamicMetric(metricName string, total uint64, initialCount uint64, threshold float64) {
 	m.mutex.Lock()

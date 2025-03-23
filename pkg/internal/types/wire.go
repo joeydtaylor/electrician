@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"time"
-
-	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 )
 
 type Wire[T any] interface {
@@ -25,9 +23,6 @@ type Wire[T any] interface {
 	ConnectSensor(...Sensor[T])
 
 	ConnectSurgeProtector(SurgeProtector[T])
-
-	SetDecryptOptions(opts *relay.SecurityOptions, key string)
-	SetEncryptOptions(opts *relay.SecurityOptions, key string)
 
 	// ConnectTransformer attaches a transformation function to the Wire, which is used to modify or
 	// process each data item flowing through the Wire.
@@ -101,3 +96,71 @@ type Wire[T any] interface {
 	// Terminate stops the Wire's operations, ensuring a clean shutdown and proper resource deallocation.
 	Stop() error
 }
+
+/*
+type Wire[T any] interface {
+	// Circuit Breaker
+	ConnectCircuitBreaker(CircuitBreaker[T])
+	GetCircuitBreaker() CircuitBreaker[T]
+
+	// Generators
+	ConnectGenerator(...Generator[T])
+	GetGenerators() []Generator[T]
+
+	// Concurrency Control
+	GetConcurrencyControl() (int, int)
+	SetConcurrencyControl(bufferSize int, maxRoutines int)
+
+	// Logger
+	ConnectLogger(...Logger)
+	GetLoggers() []Logger
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
+
+	// Sensor
+	ConnectSensor(...Sensor[T])
+	GetSensors() []Sensor[T]
+
+	// Surge Protector
+	ConnectSurgeProtector(SurgeProtector[T])
+	GetSurgeProtector() SurgeProtector[T]
+
+	// Transformer
+	ConnectTransformer(...Transformer[T])
+	GetTransformers() []Transformer[T]
+
+	// Component Metadata
+	GetComponentMetadata() ComponentMetadata
+	SetComponentMetadata(name string, id string)
+
+	// Channels
+	GetInputChannel() chan T
+	SetInputChannel(chan T)
+	GetOutputChannel() chan T
+	SetOutputChannel(chan T)
+	GetErrorChannel() chan ElementError[T]
+	SetErrorChannel(chan ElementError[T])
+
+	// Insulator
+	GetInsulator() (retryFunc func(ctx context.Context, elem T, err error) (T, error), threshold int, interval time.Duration)
+	SetInsulator(retryFunc func(ctx context.Context, elem T, err error) (T, error), threshold int, interval time.Duration)
+
+	// Output Buffer
+	GetOutputBuffer() *bytes.Buffer
+	SetOutputBuffer(b bytes.Buffer)
+
+	// Start/Stop
+	IsStarted() bool
+	Start(context.Context) error
+	Restart(ctx context.Context) error
+	Submit(ctx context.Context, elem T) error
+	Stop() error
+
+	// Load methods
+	Load() *bytes.Buffer
+	LoadAsJSONArray() ([]byte, error)
+
+	// Encoder
+	GetEncoder() Encoder[T]
+	SetEncoder(e Encoder[T])
+}
+*/

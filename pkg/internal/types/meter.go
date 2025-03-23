@@ -156,7 +156,6 @@ type Meter[T any] interface {
 	GetDynamicMetricInfo(metricName string) (*MetricInfo, bool)
 	SetMetricPeak(metricName string, count uint64)
 	SetDynamicMetricTotal(metricName string, total uint64)
-	SetErrorThreshold(threshold float64)
 	GetTicker() *time.Ticker
 	SetTicker(ticker *time.Ticker)
 	GetOriginalContext() context.Context
@@ -181,7 +180,6 @@ type Meter[T any] interface {
 	GetComponentMetadata() ComponentMetadata
 	ConnectLogger(...Logger)
 	NotifyLoggers(level LogLevel, format string, args ...interface{})
-	// SetComponentMetadata sets the metadata for the Forward Relay, such as its name and ID.
 	SetComponentMetadata(name string, id string)
 	ResetMetrics()
 }

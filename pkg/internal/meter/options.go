@@ -34,13 +34,6 @@ func WithTotalItems[T any](total uint64) types.Option[types.Meter[T]] {
 	}
 }
 
-// WithErrorThreshold sets an error threshold percentage for when to take action (e.g., pause or stop processing).
-func WithErrorThreshold[T any](threshold float64) types.Option[types.Meter[T]] {
-	return func(m types.Meter[T]) {
-		m.SetErrorThreshold(threshold) // Ensure error threshold is applied to the types.MetricTransformationErrorPercentage metric
-	}
-}
-
 // WithTimerStart sets the start time for a specified timer metric manually.
 func WithTimerStart[T any](metricName string, startTime time.Time) types.Option[types.Meter[T]] {
 	return func(m types.Meter[T]) {
