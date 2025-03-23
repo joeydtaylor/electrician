@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json" // Needed for JSON marshalling
 	"fmt"
 	"time"
 
@@ -9,14 +11,18 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
 
-// MyRequest represents the request body for incoming data.
+// MyRequest represents the request body for incoming JSON data.
 type MyRequest struct {
 	Name string `json:"name"`
 }
 
-// main sets up and runs the HTTP server adapter.
+// MyResponse is the JSON body we want to send back to the client.
+type MyResponse struct {
+	Greeting string `json:"greeting"`
+}
+
 func main() {
-	// Create a background context that we can use to run the server.
+	// Create a background context to run the server.
 	ctx := context.Background()
 
 	// Build a simple logger using the builder’s logger factory.
@@ -25,32 +31,67 @@ func main() {
 		builder.LoggerWithDevelopment(false), // toggles dev mode in the internal logger
 	)
 
-	// Create the server using the builder’s NewHTTPServerAdapter function.
-	// We supply a few functional options to demonstrate usage.
-	server := builder.NewHTTPServerAdapter(ctx,
-		builder.HTTPServerAdapterWithAddress[MyRequest](":8080"),               // Listen on port 8080
+	// Create a TLSConfig object. Adjust paths to your cert files in the tls/ directory.
+	// The example below sets:
+	//   - UseTLS = true => Enables HTTPS
+	//   - CertFile = "../tls/server.crt"
+	//   - KeyFile  = "../tls/server.key"
+	//   - CAFile   = "../tls/ca.crt"
+	//   - MinTLSVersion = tls.VersionTLS12
+	//   - MaxTLSVersion = tls.VersionTLS13
+	tlsConfig := builder.NewTlsServerConfig(
+		true,                // Enable TLS
+		"../tls/server.crt", // Path to server cert
+		"../tls/server.key", // Path to server key
+		"../tls/ca.crt",     // Path to CA cert, if needed
+		"localhost",         // SubjectAlternativeName (optional)
+		tls.VersionTLS12,    // Minimum TLS version
+		tls.VersionTLS13,    // Maximum TLS version
+	)
+
+	// Create the server using the builder’s NewHTTPServerAdapter function with TLS.
+	server := builder.NewHTTPServerAdapter[MyRequest](ctx,
+		builder.HTTPServerAdapterWithAddress[MyRequest](":8443"),               // Listen on port 8443 (HTTPS)
 		builder.HTTPServerAdapterWithServerConfig[MyRequest]("POST", "/hello"), // Handle POST /hello
 		builder.HTTPServerAdapterWithLogger[MyRequest](myLogger),               // Attach our logger
 		builder.HTTPServerAdapterWithHeader[MyRequest]("Server", "ExampleServer/1.0"),
 		builder.HTTPServerAdapterWithTimeout[MyRequest](5*time.Second), // 5-second read/write timeout
+		builder.HTTPServerAdapterWithTLS[MyRequest](*tlsConfig),        // Pass our TLS config
 	)
 
 	// Define the callback function that processes incoming requests of type MyRequest.
-	// This is our “pipeline” function that the server calls after JSON decoding.
-	handleRequest := func(ctx context.Context, req MyRequest) error {
-		// For simplicity, we’ll just log the request data.
+	// Because builder.HTTPServerResponse.Body is []byte, we must JSON-marshal any struct ourselves.
+	handleRequest := func(ctx context.Context, req MyRequest) (builder.HTTPServerResponse, error) {
 		fmt.Printf("Received request with Name=%q\n", req.Name)
-		// ... do any processing here ...
 
-		// Return nil to indicate success (200 OK).
-		return nil
+		// 1) Create your response struct.
+		responseData := MyResponse{
+			Greeting: "Hello, " + req.Name,
+		}
+
+		// 2) Marshal the struct into a JSON byte slice for the Body.
+		bodyBytes, err := json.Marshal(responseData)
+		if err != nil {
+			return builder.HTTPServerResponse{}, fmt.Errorf("failed to marshal response: %w", err)
+		}
+
+		// 3) Construct a custom HTTPServerResponse with your desired status code, headers, and JSON bytes.
+		response := builder.HTTPServerResponse{
+			StatusCode: 201, // e.g., “Created”
+			Headers: map[string]string{
+				"X-Custom-Header": "MyExample",
+				"Content-Type":    "application/json",
+			},
+			Body: bodyBytes, // Must be []byte
+		}
+
+		return response, nil
 	}
 
-	// Start the server. This call will block until ctx is canceled
-	// or the server encounters a fatal error.
-	fmt.Println("[Main] Starting HTTP server. Send POST requests to http://localhost:8080/hello")
-	err := server.Serve(ctx, handleRequest)
-	if err != nil {
+	fmt.Println("[Main] Starting HTTPS server. Send POST requests to https://localhost:8443/hello")
+
+	// Start the server. This call blocks until ctx is canceled or there's a fatal error.
+	if err := server.Serve(ctx, handleRequest); err != nil {
 		fmt.Printf("[Main] Server stopped with error: %v\n", err)
 	} else {
 		fmt.Println("[Main] Server stopped gracefully.")

@@ -1,4 +1,4 @@
-// httpserver_adapter.go file
+// httpserver_adapter.go
 package types
 
 import (
@@ -16,12 +16,10 @@ type HTTPServerRequest[T any] struct {
 	Path    string              // e.g., "/webhook"
 }
 
-// HTTPServerResponse is what your handler may return to the client.
-// You can choose to store a response code, headers, and an optional body.
-type HTTPServerResponse[T any] struct {
+type HTTPServerResponse struct {
 	StatusCode int
-	Body       T
-	Headers    map[string][]string
+	Headers    map[string]string
+	Body       []byte // Raw bytes to be sent directly to the client
 }
 
 // HTTPServerError encapsulates server-side errors with an HTTP status code.
@@ -49,10 +47,11 @@ type HTTPServerAdapter[T any] interface {
 	//  1. Parse or decode the request body into T.
 	//  2. Create an HTTPServerRequest[T] from it.
 	//  3. Invoke submitFunc(ctx, requestStruct) to feed that data into the pipeline.
+	//  4. Use the returned HTTPServerResponse to send custom responses to the client.
 	//
 	// If any error occurs (e.g., parsing fails), the server can return an HTTP error code
 	// back to the client and optionally notify sensors/loggers.
-	Serve(ctx context.Context, submitFunc func(ctx context.Context, req T) error) error
+	Serve(ctx context.Context, submitFunc func(ctx context.Context, req T) (HTTPServerResponse, error)) error
 
 	// ConnectLogger attaches one or more Logger instances that will receive log messages
 	// about server start, incoming request handling, errors, etc.
@@ -72,7 +71,7 @@ type HTTPServerAdapter[T any] interface {
 	SetServerConfig(method, endpoint string)
 
 	// AddHeader could be used to configure default response headers or
-	// server-level headers (e.g., “Server: MyCustomServer/1.0”).
+	// server-level headers (e.g., "Server: MyCustomServer/1.0").
 	AddHeader(key, value string)
 
 	// GetComponentMetadata retrieves metadata about the server (its ID, name, type).
@@ -89,4 +88,9 @@ type HTTPServerAdapter[T any] interface {
 	// SetTimeout sets a read/write timeout for inbound requests, to avoid
 	// hanging connections or slowloris attacks.
 	SetTimeout(timeout time.Duration)
+
+	// SetTLSConfig configures the server to use TLS for inbound connections
+	// according to the provided TLSConfig. If UseTLS == false, the server
+	// should revert to plain HTTP (no TLS).
+	SetTLSConfig(tlsCfg TLSConfig)
 }

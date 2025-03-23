@@ -1,4 +1,4 @@
-// api.go file
+// File: api.go
 package httpserver
 
 import (
@@ -10,23 +10,41 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
+// SetTLSConfig configures the server to use TLS for inbound connections.
+func (h *httpServerAdapter[T]) SetTLSConfig(tlsCfg types.TLSConfig) {
+	if !tlsCfg.UseTLS {
+		// If the user explicitly does not want TLS,
+		// ensure no TLS config is set.
+		h.tlsConfig = nil
+		return
+	}
+
+	// Use the internal helper to build a *tls.Config.
+	cfg, err := buildTLSConfig(tlsCfg)
+	if err != nil {
+		// In production, you may handle or log the error rather than panic.
+		panic(fmt.Sprintf("Failed to build TLS config: %v", err))
+	}
+
+	h.tlsConfig = cfg
+}
+
 // Serve starts listening for incoming HTTP requests on the configured address/endpoint.
 // For each request matching the specified method, it decodes into T, then calls submitFunc.
-func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx context.Context, req T) error) error {
+// The submitFunc returns a builder.HTTPServerResponse (with a []byte Body) and an error.
+func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx context.Context, req T) (types.HTTPServerResponse, error)) error {
 	h.serverMu.Lock()
 	defer h.serverMu.Unlock()
 
 	mux := http.NewServeMux()
 
-	// Simple approach: one method & endpoint
 	mux.HandleFunc(h.endpoint, func(w http.ResponseWriter, r *http.Request) {
-		// Check method
 		if r.Method != h.method {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Decode request body into T (placeholder logic)
+		// Decode request body into T.
 		var parsedData T
 		wrappedResp, err := h.parseRequest(r)
 		if err != nil {
@@ -36,23 +54,43 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 		}
 		parsedData = wrappedResp.Data
 
-		// Feed the data into the pipeline
-		if err := submitFunc(ctx, parsedData); err != nil {
+		// Execute the business logic via the submit function.
+		resp, err := submitFunc(ctx, parsedData)
+		if err != nil {
 			h.notifyHTTPServerError(err)
 			http.Error(w, fmt.Sprintf("Pipeline error: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		// Optional default response headers
+		// Apply default headers from the adapter.
 		for key, val := range h.headers {
+			if resp.Headers == nil {
+				resp.Headers = make(map[string]string)
+			}
+			if _, exists := resp.Headers[key]; !exists {
+				w.Header().Set(key, val)
+			}
+		}
+
+		// Apply custom headers from the response.
+		for key, val := range resp.Headers {
 			w.Header().Set(key, val)
 		}
 
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "Success")
+		// Set HTTP status code (default to 200 if not provided).
+		status := resp.StatusCode
+		if status == 0 {
+			status = http.StatusOK
+		}
+		w.WriteHeader(status)
+
+		// If Body is already JSON, just write it directly (no double marshalling).
+		if len(resp.Body) > 0 {
+			w.Write(resp.Body)
+		}
 	})
 
-	// Build our server
+	// Build our HTTP server
 	h.server = &http.Server{
 		Addr:         h.address,
 		Handler:      mux,
@@ -61,7 +99,7 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 		TLSConfig:    h.tlsConfig,
 	}
 
-	// Start the server in a separate goroutine so Serve() can monitor ctx.Done()
+	// Start the server in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
 		var err error
@@ -69,7 +107,6 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 			h.NotifyLoggers(types.InfoLevel,
 				"%s => level: INFO, event: Serve, message: Starting HTTPS server on %s %s",
 				h.componentMetadata, h.address, h.endpoint)
-			// We do not pass certPath, keyPath here; they're in h.tlsConfig.Certificates
 			err = h.server.ListenAndServeTLS("", "")
 		} else {
 			h.NotifyLoggers(types.InfoLevel,
@@ -80,7 +117,7 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 		errChan <- err
 	}()
 
-	// Wait until context is canceled or server errors out
+	// Wait until context is canceled or server errors out.
 	select {
 	case <-ctx.Done():
 		h.NotifyLoggers(types.WarnLevel,

@@ -1,4 +1,3 @@
-// httpserver.go file
 package httpserver
 
 import (

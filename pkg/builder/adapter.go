@@ -18,6 +18,8 @@ type SinkConfig = types.SinkConfig
 
 type SinkType = types.SinkType
 
+type HTTPServerResponse = types.HTTPServerResponse
+
 const (
 	FileSink    SinkType = "file"
 	StdoutSink  SinkType = "stdout"
@@ -130,4 +132,10 @@ func HTTPServerAdapterWithHeader[T any](key, value string) types.Option[types.HT
 // HTTPServerAdapterWithTimeout sets the read/write timeout for incoming requests.
 func HTTPServerAdapterWithTimeout[T any](timeout time.Duration) types.Option[types.HTTPServerAdapter[T]] {
 	return httpServerAdapter.WithTimeout[T](timeout)
+}
+
+// HTTPServerAdapterWithTLS configures the server to use TLS if tlsCfg.UseTLS == true.
+// Otherwise, it reverts to plain HTTP (no TLS).
+func HTTPServerAdapterWithTLS[T any](tlsCfg types.TLSConfig) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithTLS[T](tlsCfg)
 }

@@ -1,4 +1,4 @@
-// options.go file
+// options.go
 package httpserver
 
 import (
@@ -48,5 +48,13 @@ func WithHeader[T any](key, value string) types.Option[types.HTTPServerAdapter[T
 func WithTimeout[T any](timeout time.Duration) types.Option[types.HTTPServerAdapter[T]] {
 	return func(srv types.HTTPServerAdapter[T]) {
 		srv.SetTimeout(timeout)
+	}
+}
+
+// WithTLS configures the server to use TLS, if tlsCfg.UseTLS == true.
+// Otherwise, it reverts the server to plain HTTP (no TLS).
+func WithTLS[T any](tlsCfg types.TLSConfig) types.Option[types.HTTPServerAdapter[T]] {
+	return func(srv types.HTTPServerAdapter[T]) {
+		srv.SetTLSConfig(tlsCfg)
 	}
 }
