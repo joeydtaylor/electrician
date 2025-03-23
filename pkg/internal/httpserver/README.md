@@ -62,14 +62,14 @@ To **add new features** or hooks, follow a structured approach:
 
 ## 📖 Further Reading
 
-- **[Root README](../../../../README.md)** – Explore Electrician’s **overall architecture** and design principles.
-- **[Examples Directory](../../../../example/plug_example/httpadapter/httpserver)** – Demonstrates **HTTP Server Adapter** usage in a real-world scenario.
+- **[Root README](../../../README.md)** – Explore Electrician’s **overall architecture** and design principles.
+- **[Examples Directory](../../../../example/httpserver)** – Demonstrates **HTTP Server Adapter** usage in a real-world scenario.
 
 ---
 
 ## 📝 License
 
-The **HTTP Server Adapter** is part of Electrician, released under the [Apache 2.0 License](../../../../LICENSE).  
+The **HTTP Server Adapter** is part of Electrician, released under the [Apache 2.0 License](../../../LICENSE).  
 Use, modify, and distribute it under these terms.
 
 ---
