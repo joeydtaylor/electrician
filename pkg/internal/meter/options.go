@@ -20,13 +20,6 @@ func WithIdleTimeout[T any](to time.Duration) types.Option[types.Meter[T]] {
 	}
 }
 
-// WithMetricTotal sets an initial total for a specific metric.
-func WithMetricMonitor[T any](metricInfo ...*types.MetricInfo) types.Option[types.Meter[T]] {
-	return func(m types.Meter[T]) {
-		m.AddMetricMonitor(metricInfo...)
-	}
-}
-
 // WithInitialMetricCount sets an initial count for a specific metric.
 func WithInitialMetricCount[T any](metricName string, count uint64) types.Option[types.Meter[T]] {
 	return func(m types.Meter[T]) {
@@ -44,7 +37,7 @@ func WithTotalItems[T any](total uint64) types.Option[types.Meter[T]] {
 // WithErrorThreshold sets an error threshold percentage for when to take action (e.g., pause or stop processing).
 func WithErrorThreshold[T any](threshold float64) types.Option[types.Meter[T]] {
 	return func(m types.Meter[T]) {
-		m.SetMetricThreshold(types.MetricTransformationErrorPercentage, threshold) // Ensure error threshold is applied to the types.MetricTransformationErrorPercentage metric
+		m.SetErrorThreshold(threshold) // Ensure error threshold is applied to the types.MetricTransformationErrorPercentage metric
 	}
 }
 
@@ -66,13 +59,6 @@ func WithComponentMetadata[T any](name string, id string) types.Option[types.Met
 func WithLogger[T any](loggers ...types.Logger) types.Option[types.Meter[T]] {
 	return func(m types.Meter[T]) {
 		m.ConnectLogger(loggers...)
-	}
-}
-
-// WithMetricThreshold sets a threshold for a specific metric that triggers an alert when exceeded.
-func WithMetricThreshold[T any](metricName string, threshold float64) types.Option[types.Meter[T]] {
-	return func(m types.Meter[T]) {
-		m.SetMetricThreshold(metricName, threshold)
 	}
 }
 

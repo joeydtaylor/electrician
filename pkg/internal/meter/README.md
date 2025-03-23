@@ -50,7 +50,7 @@ A **Meter** continuously monitors **pipeline performance**, tracking various met
 | Method                 | Description                                                   |
 | ---------------------- | ------------------------------------------------------------- |
 | `IncrementCount()`     | Increases a specific **metric counter**.                      |
-| `SetMetricThreshold()` | Defines **alert thresholds** for monitored metrics.           |
+| `SetErrorThreshold()`  | Defines **alert thresholds** for monitored metrics.           |
 | `Monitor()`            | Starts **real-time tracking** of pipeline performance.        |
 | `GetMetricCount()`     | Retrieves the **current value** of a specific metric.         |
 | `SetIdleTimeout()`     | **Terminates processing** if no activity occurs for a period. |
@@ -100,7 +100,7 @@ Below is a list of **string constants** used when monitoring and configuring thr
 
 - **`"circuit_breaker_trip_count"`**, **`"circuit_breaker_reset_count"`**  
 - **`"circuit_breaker_current_trip_count"`**, **`"circuit_breaker_recorded_error_count"`**  
-- **`"circuit_breaker_diverted_element_count"`** (Neutral wire submissions)  
+- **`"circuit_breaker_diverted_element_count"`**  
 - **`"circuit_breaker_dropped_element_count"`**  
 - **`"circuit_breaker_last_trip_time"`**, **`"circuit_breaker_next_reset_time"`**  
 - **`"circuit_breaker_count"`**  
@@ -117,7 +117,7 @@ Below is a list of **string constants** used when monitoring and configuring thr
 - **`"http_request_made_count"`**, **`"http_request_received_count"`**  
 - **`"http_client_error_count"`**, **`"http_client_retry_count"`**  
 - **`"http_response_error_count"`**, **`"http_client_json_unmarshal_error_count"`**  
-- **`"http_client_fetch_successful_count"`**, etc.
+- **`"http_client_fetch_successful_count"`**  
 
 ### Resister & Relay Metrics
 
@@ -140,36 +140,27 @@ Below is a list of **string constants** used when monitoring and configuring thr
 
 ## 🏷 Example: Setting a Metric Threshold
 
-When configuring a Meter, you can set a threshold on any tracked metric by referencing one of the **string constants** above. For instance, using `"error_count"` with a numeric limit will stop the pipeline once that threshold is reached or exceeded.
+When configuring a Meter, you can set a threshold on any tracked metric by referencing one of the string constants above. For instance, using `"error_count"` with a numeric limit will stop the pipeline once that threshold is reached or exceeded.
 
 ---
 
 ## 🔧 Extending the Meter Package
 
-To **add new metrics or functionality**, follow this **structured workflow**:
+To add new metrics or functionality, follow this structured workflow:
 
-1. **Modify `types/`**  
-   - Define new **metrics and counters** in `types/meter.go`.
-
-2. **Implement in `api.go`**  
-   - Add or update **public API methods** for your new metric(s).
-
-3. **Add a Functional Option in `options.go`**  
-   - Enables **clean, composable configuration** (e.g., setting thresholds).
-
-4. **Extend `notify.go`**  
-   - If you introduce new events, add **sensor/logger hooks** for structured telemetry.
-
-5. **Unit Testing (`meter_test.go`)**  
-   - **Validate** that your metric is tracked accurately under real usage scenarios.
+1. Modify `types/` to define new metrics and counters in `types/meter.go`.  
+2. Implement or update public API methods in `api.go` for your new metric(s).  
+3. Add a Functional Option in `options.go` for clean, composable configuration.  
+4. Extend `notify.go` if you introduce new events or sensor/logger hooks.  
+5. Write or update unit tests in `meter_test.go` to validate your new metric logic.
 
 ---
 
 ## 📖 Further Reading
 
-- **[Root README](../../../README.md)** – Electrician’s overall architecture and principles.
-- **[Internal README](../README.MD)** – How `internal/` packages interact with `types/`.
-- **[Examples Directory](../../../example/meter_example/)** – Demonstrates **real-world Meter usage** (including error thresholds, idle detection, and more).
+- [Root README](../../../README.md) – Electrician’s overall architecture and principles.  
+- [Internal README](../README.MD) – How internal packages interact with `types/`.  
+- [Examples Directory](../../../example/meter_example/) – Demonstrates real-world Meter usage including error thresholds and idle detection.
 
 ---
 
@@ -178,4 +169,4 @@ To **add new metrics or functionality**, follow this **structured workflow**:
 The **Meter package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
 You’re free to use, modify, and distribute it within these terms.
 
-**Happy monitoring!** If you have questions or need support, feel free to open a GitHub issue.
+Happy monitoring! If you have questions or need support, feel free to open a GitHub issue.

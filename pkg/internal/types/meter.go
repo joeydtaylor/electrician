@@ -8,8 +8,6 @@ import (
 const (
 	MetricCurrentCpuPercentage                         = "current_cpu_percentage"
 	MetricCurrentRamPercentage                         = "current_ram_percentage"
-	MetricPeakCpuUsagePercentage                       = "peak_cpu_percentage"
-	MetricPeakRamUsagePercentage                       = "peak_ram_percentage"
 	MetricPeakGoRoutinesActive                         = "peak_go_routines_active"
 	MetricCurrentGoRoutinesActive                      = "current_go_routines_active"
 	MetricPeakProcessedPerSecond                       = "max_processed_per_second"
@@ -153,14 +151,12 @@ type Meter[T any] interface {
 	GetMetricNames() []string
 	ReportData()
 	SetIdleTimeout(to time.Duration)
-	AddMetricMonitor(metricInfo ...*MetricInfo) (*MetricInfo, bool)
 	SetContextCancelHook(hook func())
 	SetDynamicMetric(metricName string, total uint64, initialCount uint64, threshold float64)
 	GetDynamicMetricInfo(metricName string) (*MetricInfo, bool)
 	SetMetricPeak(metricName string, count uint64)
 	SetDynamicMetricTotal(metricName string, total uint64)
-	SetDynamicMetricThreshold(metricName string, threshold float64)
-	SetMetricThreshold(name string, threshold float64)
+	SetErrorThreshold(threshold float64)
 	GetTicker() *time.Ticker
 	SetTicker(ticker *time.Ticker)
 	GetOriginalContext() context.Context

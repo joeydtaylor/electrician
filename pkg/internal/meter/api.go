@@ -10,55 +10,78 @@ import (
 )
 
 func (m *Meter[T]) Monitor() {
-	m.startTime = time.Now() // Capture the start time when monitoring begins
+	m.startTime = time.Now()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	// Properly initialize the idleTimer with the idleTimeout
 	for {
 		select {
+
+		// 1) Idle Timeout
 		case <-m.idleTimer.C:
 			fmt.Println()
-			fmt.Print("\033[2K") // Clear the entire line
+			fmt.Print("\033[2K")
 			fmt.Printf("Idled for %ds, shutting down...\n", int(m.idleTimeout.Seconds()))
 			fmt.Println()
 			m.printFinalProgress()
-			m.cancel() // Cancel the meter's context to stop the process
+			m.cancel()
 			return
+
+		// 2) Context Done
 		case <-m.ctx.Done():
 			fmt.Println("Process cancelled.")
 			m.printFinalProgress()
 			return
 
+		// 3) Periodic Checks
 		case <-ticker.C:
 
-			for metric, threshold := range m.thresholds {
-				currentCount := float64(m.GetMetricCount(metric))
-				if float64(m.GetMetricCount(types.MetricTotalSubmittedCount)) > 0 && (currentCount/float64(m.GetMetricCount(types.MetricTotalSubmittedCount)))*100 >= threshold {
-					m.updateDisplay()
-					fmt.Println()
-					fmt.Printf("\nThreshold exceeded for %s: %.2f%%\n", metric, threshold)
-					m.printFinalProgress()
-					m.cancel() // Cancel the process if any threshold is exceeded
-					return
+			// ---------------------------------------------------------
+			// A) Check error_count threshold as a percentage of total
+			// ---------------------------------------------------------
+			if threshold, hasThreshold := m.thresholds["error_count"]; hasThreshold {
+				totalSubmitted := float64(m.GetMetricCount(types.MetricTotalSubmittedCount))
+				errorCount := float64(m.GetMetricCount("error_count"))
+
+				// If totalSubmitted is nonzero, interpret threshold as an error ratio (%)
+				if totalSubmitted > 0 {
+					errRatio := (errorCount / totalSubmitted) * 100
+					if errRatio >= threshold {
+						m.updateDisplay()
+						fmt.Println()
+						fmt.Printf("\nThreshold exceeded for error_count: %.2f%%\n", threshold)
+						m.printFinalProgress()
+						m.cancel()
+						return
+					}
 				}
 			}
 
+			// ---------------------------------------------------------
+			// B) If we've processed all items, wrap up
+			// ---------------------------------------------------------
 			if m.totalItems != 0 && m.GetMetricCount(types.MetricTotalProcessedCount) == m.totalItems {
 				m.updateDisplay()
-				if m.GetMetricCount(types.MetricTransformationErrorPercentage) != 0 {
-					fmt.Print("\033[2K") // Clear the entire line
+
+				// If you want to detect “any errors occurred,”
+				// you can check "error_count" or a percentage metric, if you prefer
+				if m.GetMetricCount("error_count") != 0 {
+					fmt.Print("\033[2K")
 					fmt.Printf("\nFinished with errors\n")
 				} else {
-					fmt.Print("\033[2K") // Clear the entire line
+					fmt.Print("\033[2K")
 					fmt.Printf("\nCompleted all results successfully!\n")
 				}
 				fmt.Println()
+
 				m.printFinalProgress()
-				m.cancel() // Cancel the process if any threshold is exceeded
+				m.cancel()
 				return
 			}
 
+			// ---------------------------------------------------------
+			// C) Otherwise, just update the display
+			// ---------------------------------------------------------
 			m.updateDisplay()
 		}
 	}
@@ -70,6 +93,16 @@ func (m *Meter[T]) ReportData() {
 		// Signal sent successfully, do nothing
 	default:
 		// Channel is full, do nothing
+	}
+}
+
+// SetErrorThreshold sets an error threshold for a specific metric.
+func (m *Meter[T]) SetErrorThreshold(threshold float64) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.thresholds["error_count"] = threshold
+	if info, exists := m.metrics["error_count"]; exists {
+		info.Monitored = true
 	}
 }
 
@@ -238,16 +271,6 @@ func (m *Meter[T]) UpdateMetricPercentage(name string, percentage float64) {
 	defer m.mutex.Unlock()
 	if info, exists := m.metrics[name]; exists {
 		info.Percentage = percentage
-	}
-}
-
-// SetErrorThreshold sets an error threshold for a specific metric.
-func (m *Meter[T]) SetMetricThreshold(metricName string, threshold float64) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.thresholds[metricName] = threshold
-	if info, exists := m.metrics[metricName]; exists {
-		info.Monitored = true
 	}
 }
 

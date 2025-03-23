@@ -155,11 +155,6 @@ func MeterWithLogger[T any](loggers ...types.Logger) types.Option[types.Meter[T]
 	return meter.WithLogger[T](loggers...)
 }
 
-// WithMetricThreshold sets a threshold for a specific metric that triggers an alert when exceeded.
-func MeterWithMetricThreshold[T any](metricName MetricName, threshold float64) types.Option[types.Meter[T]] {
-	return meter.WithMetricThreshold[T](string(metricName), threshold)
-}
-
 // WithDynamicMetric adds a new metric to be monitored, with optional initial values.
 func MeterWithDynamicMetric[T any](metricName MetricName, total uint64, initialCount uint64, threshold float64) types.Option[types.Meter[T]] {
 	return meter.WithDynamicMetric[T](string(metricName), total, initialCount, threshold)
@@ -173,9 +168,4 @@ func MeterWithUpdateFrequency[T any](duration time.Duration) types.Option[types.
 // WithCancellationHook adds a custom function to be called upon cancellation.
 func MeterWithCancellationHook[T any](hook func()) types.Option[types.Meter[T]] {
 	return meter.WithCancellationHook[T](hook)
-}
-
-// WithMetricTotal sets an initial total for a specific metric.
-func MeterWithMetricMonitor[T any](metricInfo ...*types.MetricInfo) types.Option[types.Meter[T]] {
-	return meter.WithMetricMonitor[T](metricInfo...)
 }
