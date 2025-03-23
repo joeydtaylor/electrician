@@ -27,7 +27,7 @@ making it ideal for **secure and straightforward inbound HTTP integrations**.
 | **api.go**      | Public API for **configuring and managing HTTP server** instances.      |
 | **internal.go** | Handles **request parsing**, TLS configuration, and **core server** logic. |
 | **options.go**  | Functional options for **declarative HTTP server** setup.               |
-| **httpserver.go** | Core **type definitions** and the **`NewHTTPServerAdapter`** constructor. |
+| **httpserver.go** | Core **type definitions** and the **`NewHTTPServer`** constructor. |
 | **README.md**   | This overview document describing the **HTTP Server Adapter**.          |
 
 ---

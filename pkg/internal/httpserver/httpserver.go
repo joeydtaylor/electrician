@@ -11,7 +11,7 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// httpServerAdapter implements types.HTTPServerAdapter[T].
+// httpServerAdapter implements types.HTTPServer[T].
 type httpServerAdapter[T any] struct {
 	componentMetadata types.ComponentMetadata
 
@@ -35,11 +35,11 @@ type httpServerAdapter[T any] struct {
 	serverMu sync.Mutex
 }
 
-// NewHTTPServerAdapter constructs a new HTTP server adapter with sensible defaults.
-func NewHTTPServerAdapter[T any](
+// NewHTTPServer constructs a new HTTP server adapter with sensible defaults.
+func NewHTTPServer[T any](
 	ctx context.Context,
-	options ...types.Option[types.HTTPServerAdapter[T]],
-) types.HTTPServerAdapter[T] {
+	options ...types.Option[types.HTTPServer[T]],
+) types.HTTPServer[T] {
 
 	// Create an instance with default values
 	h := &httpServerAdapter[T]{

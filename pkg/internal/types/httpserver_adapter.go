@@ -33,13 +33,13 @@ func (e *HTTPServerError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s, %v", e.StatusCode, e.Message, e.Err)
 }
 
-// HTTPServerAdapter is the inverse of HTTPClientAdapter. It listens on a
+// HTTPServer is the inverse of HTTPClientAdapter. It listens on a
 // specified address/endpoint for incoming requests, decodes them into T,
 // and passes them into a pipeline via a submitFunc or similar mechanism.
 //
 // For example, it could act as a webhook receiver: “When data arrives at
 // /my-webhook, parse JSON into T, then call submitFunc(ctx, T) to feed the pipeline.”
-type HTTPServerAdapter[T any] interface {
+type HTTPServer[T any] interface {
 
 	// Serve starts the HTTP server. Once running, it should listen for incoming
 	// requests on the configured method/endpoint. For each valid request:

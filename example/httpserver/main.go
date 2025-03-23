@@ -40,23 +40,23 @@ func main() {
 	//   - MinTLSVersion = tls.VersionTLS12
 	//   - MaxTLSVersion = tls.VersionTLS13
 	tlsConfig := builder.NewTlsServerConfig(
-		true,                // Enable TLS
-		"../tls/server.crt", // Path to server cert
-		"../tls/server.key", // Path to server key
-		"../tls/ca.crt",     // Path to CA cert, if needed
-		"localhost",         // SubjectAlternativeName (optional)
-		tls.VersionTLS12,    // Minimum TLS version
-		tls.VersionTLS13,    // Maximum TLS version
+		true,               // Enable TLS
+		"./tls/server.crt", // Path to server cert
+		"./tls/server.key", // Path to server key
+		"./tls/ca.crt",     // Path to CA cert, if needed
+		"localhost",        // SubjectAlternativeName (optional)
+		tls.VersionTLS12,   // Minimum TLS version
+		tls.VersionTLS13,   // Maximum TLS version
 	)
 
-	// Create the server using the builder’s NewHTTPServerAdapter function with TLS.
-	server := builder.NewHTTPServerAdapter[MyRequest](ctx,
-		builder.HTTPServerAdapterWithAddress[MyRequest](":8443"),               // Listen on port 8443 (HTTPS)
-		builder.HTTPServerAdapterWithServerConfig[MyRequest]("POST", "/hello"), // Handle POST /hello
-		builder.HTTPServerAdapterWithLogger[MyRequest](myLogger),               // Attach our logger
-		builder.HTTPServerAdapterWithHeader[MyRequest]("Server", "ExampleServer/1.0"),
-		builder.HTTPServerAdapterWithTimeout[MyRequest](5*time.Second), // 5-second read/write timeout
-		builder.HTTPServerAdapterWithTLS[MyRequest](*tlsConfig),        // Pass our TLS config
+	// Create the server using the builder’s NewHTTPServer function with TLS.
+	server := builder.NewHTTPServer[MyRequest](ctx,
+		builder.HTTPServerWithAddress[MyRequest](":8443"),               // Listen on port 8443 (HTTPS)
+		builder.HTTPServerWithServerConfig[MyRequest]("POST", "/hello"), // Handle POST /hello
+		builder.HTTPServerWithLogger[MyRequest](myLogger),               // Attach our logger
+		builder.HTTPServerWithHeader[MyRequest]("Server", "ExampleServer/1.0"),
+		builder.HTTPServerWithTimeout[MyRequest](5*time.Second), // 5-second read/write timeout
+		builder.HTTPServerWithTLS[MyRequest](*tlsConfig),        // Pass our TLS config
 	)
 
 	// Define the callback function that processes incoming requests of type MyRequest.
