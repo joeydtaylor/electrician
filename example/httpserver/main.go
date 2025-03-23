@@ -50,7 +50,7 @@ func main() {
 	)
 
 	// Create the server using the builder’s NewHTTPServer function with TLS.
-	server := builder.NewHTTPServer[MyRequest](ctx,
+	server := builder.NewHTTPServer(ctx,
 		builder.HTTPServerWithAddress[MyRequest](":8443"),               // Listen on port 8443 (HTTPS)
 		builder.HTTPServerWithServerConfig[MyRequest]("POST", "/hello"), // Handle POST /hello
 		builder.HTTPServerWithLogger[MyRequest](myLogger),               // Attach our logger
