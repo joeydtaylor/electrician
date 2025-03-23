@@ -6,6 +6,7 @@ import (
 	"time"
 
 	httpClientAdapter "github.com/joeydtaylor/electrician/pkg/internal/adapter/httpclient"
+	httpServerAdapter "github.com/joeydtaylor/electrician/pkg/internal/adapter/httpserver"
 
 	internalLogger "github.com/joeydtaylor/electrician/pkg/internal/internallogger"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
@@ -94,4 +95,39 @@ func HTTPClientAdapterWithTLSPinning[T any](certPath string) types.Option[types.
 
 func HTTPClientAdapterWithOAuth2ClientCredentials[T any](clientID, clientSecret, tokenURL string, audience string, scopes ...string) types.Option[types.HTTPClientAdapter[T]] {
 	return httpClientAdapter.WithOAuth2ClientCredentials[T](clientID, clientSecret, tokenURL, audience, scopes...)
+}
+
+// NewHTTPServerAdapter creates a new HTTPServerAdapter with the specified options.
+func NewHTTPServerAdapter[T any](ctx context.Context, options ...types.Option[types.HTTPServerAdapter[T]]) types.HTTPServerAdapter[T] {
+	return httpServerAdapter.NewHTTPServerAdapter[T](ctx, options...)
+}
+
+// HTTPServerAdapterWithLogger attaches one or more loggers to the server.
+func HTTPServerAdapterWithLogger[T any](loggers ...types.Logger) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithLogger[T](loggers...)
+}
+
+// HTTPServerAdapterWithSensor attaches one or more sensors to the server.
+func HTTPServerAdapterWithSensor[T any](sensors ...types.Sensor[T]) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithSensor[T](sensors...)
+}
+
+// HTTPServerAdapterWithAddress sets the IP/port on which the server will listen (e.g., ":8080").
+func HTTPServerAdapterWithAddress[T any](address string) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithAddress[T](address)
+}
+
+// HTTPServerAdapterWithServerConfig sets the HTTP method and endpoint (e.g. "POST" and "/webhook").
+func HTTPServerAdapterWithServerConfig[T any](method, endpoint string) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithServerConfig[T](method, endpoint)
+}
+
+// HTTPServerAdapterWithHeader adds a default response header to all successful server responses.
+func HTTPServerAdapterWithHeader[T any](key, value string) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithHeader[T](key, value)
+}
+
+// HTTPServerAdapterWithTimeout sets the read/write timeout for incoming requests.
+func HTTPServerAdapterWithTimeout[T any](timeout time.Duration) types.Option[types.HTTPServerAdapter[T]] {
+	return httpServerAdapter.WithTimeout[T](timeout)
 }

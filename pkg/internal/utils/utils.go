@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -148,4 +149,10 @@ func GenerateUniqueHash() string {
 
 	// Return the hexadecimal string representation of the hash
 	return hex.EncodeToString(hash[:])
+}
+
+// DecodeJSON is a convenience function that decodes JSON from an io.Reader into a destination object.
+func DecodeJSON(r io.Reader, dest interface{}) error {
+	decoder := json.NewDecoder(r)
+	return decoder.Decode(dest)
 }
