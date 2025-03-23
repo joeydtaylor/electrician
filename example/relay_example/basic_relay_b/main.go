@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"os"
 	"os/signal"
@@ -48,24 +47,9 @@ func main() {
 
 	logger := builder.NewLogger()
 
-	// Create the TLS configuration
-	tlsConfig := builder.NewTlsServerConfig(
-		true,                // UseTLS - Set this to 'true'
-		"../tls/server.crt", // CertFile - Update paths as needed
-		"../tls/server.key", // KeyFile - Update paths as needed
-		"../tls/ca.crt",     // CAFile - Update paths as needed
-		"localhost",
-		tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
-		tls.VersionTLS13, // MaxVersion: Only allow TLS 1.3
-	)
-
 	sentimentWire := builder.NewWire(
 		ctx,
 		builder.WireWithTransformer(sentimentAnalyzer),
-	)
-	outputConduit := builder.NewConduit(
-		ctx,
-		builder.ConduitWithWire(sentimentWire),
 	)
 
 	// Receiving Relay that uses the second conduit
@@ -74,8 +58,7 @@ func main() {
 		builder.ReceivingRelayWithAddress[Feedback]("localhost:50051"),
 		builder.ReceivingRelayWithBufferSize[Feedback](10000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput(outputConduit),
-		builder.ReceivingRelayWithTLSConfig[Feedback](tlsConfig),
+		builder.ReceivingRelayWithOutput(sentimentWire),
 	)
 
 	// Start the receiving relay
@@ -85,7 +68,7 @@ func main() {
 	<-ctx.Done()
 
 	// Attempt to aggregate results after cancellation
-	output, err := outputConduit.LoadAsJSONArray()
+	output, err := sentimentWire.LoadAsJSONArray()
 	if err != nil {
 		fmt.Printf("Error converting output to JSON: %v\n", err)
 		return
