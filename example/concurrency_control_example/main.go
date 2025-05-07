@@ -61,7 +61,6 @@ func main() {
 
 	// Create a new Meter
 	meter := builder.NewMeter[Feedback](ctx,
-		/* 		builder.MeterWithErrorThreshold[Feedback](10), */
 		builder.MeterWithTotalItems[Feedback](uint64(totalItems)),
 	)
 
