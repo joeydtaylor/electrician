@@ -1,8 +1,6 @@
 module github.com/joeydtaylor/electrician
 
-go 1.22.0
-
-toolchain go1.23.7
+go 1.24.3
 
 require (
 	github.com/andybalholm/brotli v1.1.0
