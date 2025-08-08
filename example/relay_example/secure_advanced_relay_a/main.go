@@ -11,8 +11,10 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/url"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
@@ -68,59 +70,6 @@ func mustHexKey() string {
 		log.Fatalf("bad hex key: %v", err)
 	}
 	return string(raw) // 32 bytes -> AES-256
-}
-
-// ----- OAuth2: client_credentials against aegis-auth -----
-
-type tokenResp struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int32  `json:"expires_in"`
-	Scope       string `json:"scope"`
-}
-
-func fetchClientCredentialsToken(ctx context.Context, baseURL, clientID, clientSecret string, scopes []string) (string, error) {
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	if len(scopes) > 0 {
-		form.Set("scope", strings.Join(scopes, " "))
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/auth/oauth/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(clientID, clientSecret)
-
-	// Dev: accept self-signed cert from local aegis-auth
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			MaxVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: true, // dev only
-		},
-	}
-	hc := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", fmt.Errorf("token endpoint status %d", resp.StatusCode)
-	}
-
-	var trsp tokenResp
-	if err := json.NewDecoder(resp.Body).Decode(&trsp); err != nil {
-		return "", err
-	}
-	if trsp.AccessToken == "" {
-		return "", errors.New("empty access_token")
-	}
-	return trsp.AccessToken, nil
 }
 
 // ----- JWT debug helpers -----
@@ -187,8 +136,17 @@ func dumpJWT(token string) {
 // ----- Main -----
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	// Run until Ctrl+C
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Handle SIGINT/SIGTERM
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-signals
+		log.Println("Received termination signal, shutting down...")
+		cancel()
+	}()
 
 	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
 
@@ -233,14 +191,35 @@ func main() {
 	oauthHints := builder.NewForwardRelayOAuth2JWTOptions(issuerBase, jwksURL, aud, scp, 300)
 	authOpts := builder.NewForwardRelayAuthenticationOptionsOAuth2(oauthHints)
 
-	// Acquire token dynamically via client_credentials for seeded confidential client:
-	// client_id: steeze-local-cli ; client_secret: local-secret
-	token, err := fetchClientCredentialsToken(ctx, issuerBase, "steeze-local-cli", "local-secret", scp)
-	if err != nil {
-		log.Fatalf("token fetch failed: %v", err)
+	// HTTP client for local dev auth (accept self-signed, TLS1.3)
+	authHTTP := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				MaxVersion:         tls.VersionTLS13,
+				InsecureSkipVerify: true, // dev only
+			},
+		},
 	}
-	dumpJWT(token) // print header/claims/scopes
-	ts := builder.NewForwardRelayStaticBearerTokenSource(token)
+
+	// Refreshing client-credentials token source (auto-rotates before expiry).
+	// NOTE: If you didn't add the builder wrapper, call the forwardrelay ctor directly.
+	ts := builder.NewForwardRelayRefreshingClientCredentialsSource(
+		issuerBase,
+		"steeze-local-cli",
+		"local-secret",
+		scp,
+		20*time.Second, // refresh leeway
+		authHTTP,
+	)
+
+	// Print the first token for debugging scopes/claims
+	if firstTok, err := ts.AccessToken(ctx); err == nil {
+		dumpJWT(firstTok)
+	} else {
+		log.Printf("warning: couldn't fetch initial token for dump: %v", err)
+	}
 
 	staticHeaders := map[string]string{"x-tenant": "local"}
 
@@ -259,17 +238,19 @@ func main() {
 		builder.ForwardRelayWithStaticHeaders[Feedback](staticHeaders),
 	)
 
-	wire.Start(ctx)
-	relay.Start(ctx)
+	// Start components
+	if err := wire.Start(ctx); err != nil {
+		log.Fatalf("wire start: %v", err)
+	}
+	if err := relay.Start(ctx); err != nil {
+		log.Fatalf("relay start: %v", err)
+	}
 
+	log.Println("Sender running. Press Ctrl+C to stop...")
 	<-ctx.Done()
 
+	// Shutdown
 	wire.Stop()
 	relay.Stop()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		fmt.Println("Processing timeout.")
-	} else {
-		fmt.Println("Processing finished within the allotted time.")
-	}
+	log.Println("Shutdown complete.")
 }

@@ -2,6 +2,8 @@ package builder
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	fr "github.com/joeydtaylor/electrician/pkg/internal/forwardrelay"
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
@@ -180,4 +182,18 @@ func NewForwardRelayStaticBearerTokenSource(token string) types.OAuth2TokenSourc
 // NewForwardRelayEnvBearerTokenSource returns a token source that pulls the token from an env var at call time.
 func NewForwardRelayEnvBearerTokenSource(envVar string) types.OAuth2TokenSource {
 	return fr.NewEnvBearerTokenSource(envVar)
+}
+
+// NewForwardRelayRefreshingClientCredentialsSource returns a token source that automatically
+// fetches and refreshes a client_credentials token with a small leeway before expiry.
+// If httpClient is nil, http.DefaultClient is used.
+func NewForwardRelayRefreshingClientCredentialsSource(
+	baseURL string,
+	clientID string,
+	clientSecret string,
+	scopes []string,
+	leeway time.Duration,
+	httpClient *http.Client,
+) types.OAuth2TokenSource {
+	return fr.NewRefreshingClientCredentialsSource(baseURL, clientID, clientSecret, scopes, leeway, httpClient)
 }

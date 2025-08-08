@@ -33,11 +33,16 @@ import (
 	"crypto/cipher"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/golang/snappy"
@@ -278,9 +283,11 @@ func (rr *ReceivingRelay[T]) buildStreamPolicyInterceptor() grpc.StreamServerInt
 	}
 }
 
-// appendAuthServerOptions chains our policy interceptors and any custom rr.authUnary into grpc.ServerOptions.
 func (rr *ReceivingRelay[T]) appendAuthServerOptions(opts []grpc.ServerOption) []grpc.ServerOption {
-	// Unary chain: policy + user-provided (order matters: policy first, then rr.authUnary)
+	// Auto-install a built-in validator if OAuth2 introspection is configured
+	rr.ensureDefaultAuthValidator()
+
+	// Unary chain: policy + user-provided (order: policy first, then custom)
 	var unaryChain []grpc.UnaryServerInterceptor
 	if p := rr.buildUnaryPolicyInterceptor(); p != nil {
 		unaryChain = append(unaryChain, p)
@@ -292,11 +299,10 @@ func (rr *ReceivingRelay[T]) appendAuthServerOptions(opts []grpc.ServerOption) [
 		opts = append(opts, grpc.ChainUnaryInterceptor(unaryChain...))
 	}
 
-	// Stream chain: policy only (we don't have a user-provided stream interceptor today)
+	// Stream chain
 	if p := rr.buildStreamPolicyInterceptor(); p != nil {
 		opts = append(opts, grpc.ChainStreamInterceptor(p))
 	}
-
 	return opts
 }
 
@@ -323,4 +329,208 @@ func (rr *ReceivingRelay[T]) checkStaticHeaders(md map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// tokenCacheEntry holds the cached decision for a bearer token.
+type tokenCacheEntry struct {
+	active bool
+	scope  string
+	exp    time.Time
+}
+
+type cachingIntrospectionValidator struct {
+	introspectionURL string
+	authType         string // "basic" | "bearer" | "none"
+	clientID         string
+	clientSecret     string
+	bearerToken      string
+	requiredScopes   []string
+
+	hc  *http.Client
+	mu  sync.Mutex
+	m   map[string]tokenCacheEntry
+	ttl time.Duration
+
+	// backoff on server 429 / overload
+	backoffUntil time.Time
+	backoffStep  time.Duration // grows up to maxBackoff
+	maxBackoff   time.Duration
+}
+
+func newCachingIntrospectionValidator(o *relay.OAuth2Options) *cachingIntrospectionValidator {
+	ttl := time.Duration(o.GetIntrospectionCacheSeconds()) * time.Second
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	// TLS 1.3 client that accepts local/self-signed (dev); prod users can override by wiring a custom hc later if needed.
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			MaxVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, // dev only
+		},
+	}
+	return &cachingIntrospectionValidator{
+		introspectionURL: strings.TrimRight(o.GetIntrospectionUrl(), "/"),
+		authType:         strings.ToLower(o.GetIntrospectionAuthType()),
+		clientID:         o.GetIntrospectionClientId(),
+		clientSecret:     o.GetIntrospectionClientSecret(),
+		bearerToken:      o.GetIntrospectionBearerToken(),
+		requiredScopes:   append([]string(nil), o.GetRequiredScopes()...),
+		hc:               &http.Client{Timeout: 8 * time.Second, Transport: tr},
+		m:                make(map[string]tokenCacheEntry),
+		ttl:              ttl,
+		backoffStep:      250 * time.Millisecond,
+		maxBackoff:       5 * time.Second,
+	}
+}
+
+func (v *cachingIntrospectionValidator) hasAllScopes(granted string) bool {
+	if len(v.requiredScopes) == 0 {
+		return true
+	}
+	parts := strings.Fields(granted) // space separated
+	set := make(map[string]struct{}, len(parts))
+	for _, s := range parts {
+		set[s] = struct{}{}
+	}
+	for _, need := range v.requiredScopes {
+		if _, ok := set[need]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+type introspectResp struct {
+	Active bool   `json:"active"`
+	Scope  string `json:"scope"`
+}
+
+func (v *cachingIntrospectionValidator) validate(ctx context.Context, token string) error {
+	now := time.Now()
+
+	// global backoff if auth server is overloaded
+	if until := v.backoffUntil; until.After(now) {
+		return errors.New("auth server backoff in effect")
+	}
+
+	// cache hit still valid?
+	v.mu.Lock()
+	if e, ok := v.m[token]; ok && e.exp.After(now) {
+		v.mu.Unlock()
+		if !e.active {
+			return errors.New("token inactive")
+		}
+		if !v.hasAllScopes(e.scope) {
+			return errors.New("insufficient scope")
+		}
+		return nil
+	}
+	v.mu.Unlock()
+
+	// call RFC 7662
+	form := url.Values{}
+	form.Set("token", token)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.introspectionURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	switch v.authType {
+	case "basic":
+		req.SetBasicAuth(v.clientID, v.clientSecret)
+	case "bearer":
+		if v.bearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+v.bearerToken)
+		}
+	case "none":
+		// no auth header
+	default:
+		// default to basic if misconfigured but fields exist
+		if v.clientID != "" || v.clientSecret != "" {
+			req.SetBasicAuth(v.clientID, v.clientSecret)
+		}
+	}
+
+	resp, err := v.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// exponential-ish backoff
+		v.mu.Lock()
+		if v.backoffStep < v.maxBackoff {
+			v.backoffStep *= 2
+			if v.backoffStep > v.maxBackoff {
+				v.backoffStep = v.maxBackoff
+			}
+		}
+		v.backoffUntil = now.Add(v.backoffStep)
+		v.mu.Unlock()
+		return errors.New("introspection 429")
+	}
+	// reset backoff on success/non-429
+	v.mu.Lock()
+	v.backoffStep = 250 * time.Millisecond
+	v.backoffUntil = time.Time{}
+	v.mu.Unlock()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return errors.New(resp.Status)
+	}
+
+	var ir introspectResp
+	if err := json.NewDecoder(resp.Body).Decode(&ir); err != nil {
+		return err
+	}
+
+	// cache result
+	v.mu.Lock()
+	v.m[token] = tokenCacheEntry{
+		active: ir.Active,
+		scope:  ir.Scope,
+		exp:    now.Add(v.ttl),
+	}
+	v.mu.Unlock()
+
+	if !ir.Active {
+		return errors.New("token inactive")
+	}
+	if !v.hasAllScopes(ir.Scope) {
+		return errors.New("insufficient scope")
+	}
+	return nil
+}
+
+// ensureDefaultAuthValidator installs a built-in introspection validator
+// when rr.dynamicAuthValidator is nil and OAuth2 introspection is configured.
+func (rr *ReceivingRelay[T]) ensureDefaultAuthValidator() {
+	if rr.dynamicAuthValidator != nil {
+		return
+	}
+	if rr.authOptions == nil || rr.authOptions.Mode != relay.AuthMode_AUTH_OAUTH2 {
+		return
+	}
+	o := rr.authOptions.GetOauth2()
+	if o == nil || !o.GetAcceptIntrospection() || o.GetIntrospectionUrl() == "" {
+		return
+	}
+	validator := newCachingIntrospectionValidator(o)
+	rr.dynamicAuthValidator = func(ctx context.Context, md map[string]string) error {
+		// Find bearer in metadata
+		var token string
+		if v, ok := md["authorization"]; ok && strings.HasPrefix(strings.ToLower(v), "bearer ") {
+			token = strings.TrimSpace(v[len("bearer "):])
+		}
+		if token == "" {
+			return errors.New("missing bearer token")
+		}
+		return validator.validate(ctx, token)
+	}
+	rr.NotifyLoggers(types.InfoLevel, "component: %s, address: %s, level: INFO, event: Auth => installed built-in OAuth2 introspection validator", rr.componentMetadata, rr.Address)
 }
