@@ -3,18 +3,25 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
 
-// Feedback struct defines the structure of feedback received from customers.
+// ----- Demo payload -----
+
 type Feedback struct {
 	CustomerID string   `json:"customerId"`
 	Content    string   `json:"content"`
@@ -23,7 +30,6 @@ type Feedback struct {
 	Tags       []string `json:"tags,omitempty"`
 }
 
-// errorSimulator simulates a processing error if the feedback content contains the word "error".
 func errorSimulator(feedback Feedback) (Feedback, error) {
 	if strings.Contains(strings.ToLower(feedback.Content), "error") {
 		return Feedback{}, errors.New("simulated processing error")
@@ -31,133 +37,220 @@ func errorSimulator(feedback Feedback) (Feedback, error) {
 	return feedback, nil
 }
 
-// generator periodically generates and submits feedback, simulating input from an external source.
-func plugFunc(ctx context.Context, submitFunc func(ctx context.Context, feedback Feedback) error) {
-	ticker := time.NewTicker(1000 * time.Millisecond)
-	defer ticker.Stop()
-
-	count := 0
+func plugFunc(ctx context.Context, submit func(ctx context.Context, fb Feedback) error) {
+	t := time.NewTicker(1000 * time.Millisecond)
+	defer t.Stop()
+	var n int
 	for {
 		select {
 		case <-ctx.Done():
-			// If the context is done, stop generating feedback.
 			return
-		case <-ticker.C:
-			// Randomly decide to introduce an error in the feedback content
-			errorTrigger := ""
-			if rand.Intn(10) == 0 { // ~10% chance to trigger an error
-				errorTrigger = " error "
+		case <-t.C:
+			errTrig := ""
+			if rand.Intn(10) == 0 {
+				errTrig = " error "
 			}
-
-			feedbackContent := fmt.Sprintf("This is feedback item number %d%s", count, errorTrigger)
-			feedback := Feedback{
-				CustomerID: fmt.Sprintf("Feedback%d", count),
-				Content:    feedbackContent,
-				IsNegative: count%10 == 0,
-			}
-			if err := submitFunc(ctx, feedback); err != nil {
-				fmt.Printf("Error submitting feedback: %v\n", err)
-			}
-			count++
+			_ = submit(ctx, Feedback{
+				CustomerID: fmt.Sprintf("Feedback%d", n),
+				Content:    fmt.Sprintf("This is feedback item number %d%s", n, errTrig),
+				IsNegative: n%10 == 0,
+			})
+			n++
 		}
 	}
 }
 
-// For example/demo only; you'd never embed a real key like this in production code.
+// ----- Local demo-only content encryption key -----
+
 const AES256KeyHex = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
 
-// loadExampleAESKey decodes the hex-encoded 256-bit key into raw bytes.
-func loadExampleAESKey() []byte {
+func mustHexKey() string {
 	raw, err := hex.DecodeString(AES256KeyHex)
 	if err != nil {
-		log.Fatalf("Failed to decode example AES-256 key: %v", err)
+		log.Fatalf("bad hex key: %v", err)
 	}
-	return raw
+	return string(raw) // 32 bytes -> AES-256
 }
 
+// ----- JWT debug helpers -----
+
+func pretty(v any) string {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return string(b)
+}
+
+func dumpJWT(token string) {
+	log.Printf("RAW ACCESS TOKEN:\n%s\n", token)
+
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		log.Printf("Not a JWT (parts=%d)", len(parts))
+		return
+	}
+
+	dec := func(s string) []byte {
+		b, err := base64.RawURLEncoding.DecodeString(s)
+		if err != nil {
+			return []byte(fmt.Sprintf(`"<decode error: %v>"`, err))
+		}
+		return b
+	}
+
+	var hdr map[string]any
+	var claims map[string]any
+
+	if err := json.Unmarshal(dec(parts[0]), &hdr); err != nil {
+		log.Printf("JWT header decode error: %v", err)
+	}
+	if err := json.Unmarshal(dec(parts[1]), &claims); err != nil {
+		log.Printf("JWT claims decode error: %v", err)
+	}
+
+	log.Printf("JWT HEADER:\n%s", pretty(hdr))
+	log.Printf("JWT CLAIMS:\n%s", pretty(claims))
+
+	// Surface common scope fields
+	if s, ok := claims["scope"].(string); ok && s != "" {
+		log.Printf("scope (string): %q", s)
+	}
+	if arr, ok := claims["scp"].([]any); ok && len(arr) > 0 {
+		var out []string
+		for _, v := range arr {
+			if x, ok := v.(string); ok {
+				out = append(out, x)
+			}
+		}
+		log.Printf("scp (array): %v", out)
+	}
+	if arr, ok := claims["permissions"].([]any); ok && len(arr) > 0 {
+		var out []string
+		for _, v := range arr {
+			if x, ok := v.(string); ok {
+				out = append(out, x)
+			}
+		}
+		log.Printf("permissions (array): %v", out)
+	}
+}
+
+// ----- Main -----
+
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	// Run until Ctrl+C
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Handle SIGINT/SIGTERM
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-signals
+		log.Println("Received termination signal, shutting down...")
+		cancel()
+	}()
 
 	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
 
-	// Step 1: Create an adapter (plug) function that periodically generates data.
-	plug := builder.NewPlug(
-		ctx,
-		builder.PlugWithAdapterFunc(plugFunc),
-	)
+	plug := builder.NewPlug(ctx, builder.PlugWithAdapterFunc(plugFunc))
+	gen := builder.NewGenerator(ctx, builder.GeneratorWithPlug(plug))
 
-	// Step 2: Create a generator that uses the plug
-	generator := builder.NewGenerator(
-		ctx,
-		builder.GeneratorWithPlug(plug),
-	)
-
-	// Step 3: Create a groundWire + circuitBreaker pipeline
-	groundWire := builder.NewWire[Feedback](ctx)
-	circuitBreaker := builder.NewCircuitBreaker(
-		ctx,
-		1, 10*time.Second,
-		builder.CircuitBreakerWithNeutralWire(groundWire),
+	ground := builder.NewWire[Feedback](ctx)
+	cb := builder.NewCircuitBreaker(ctx, 1, 10*time.Second,
+		builder.CircuitBreakerWithNeutralWire(ground),
 		builder.CircuitBreakerWithLogger[Feedback](logger),
 	)
-	// The main wire that processes data + passes it to the circuit breaker
-	generatorWire := builder.NewWire(
+	wire := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Feedback](logger),
 		builder.WireWithConcurrencyControl[Feedback](1000, 100),
-		builder.WireWithCircuitBreaker(circuitBreaker),
+		builder.WireWithCircuitBreaker(cb),
 		builder.WireWithTransformer(errorSimulator),
-		builder.WireWithGenerator(generator),
+		builder.WireWithGenerator(gen),
 	)
 
-	// Step 4: Configure TLS for only TLS1.3
-	tlsConfig := builder.NewTlsClientConfig(
-		true,                // useTLS
-		"../tls/client.crt", // path to client's certificate
-		"../tls/client.key", // path to client's private key
-		"../tls/ca.crt",     // path to CA certificate
-		tls.VersionTLS13,    // min version
-		tls.VersionTLS13,    // max version
+	// TLS 1.3 client config for gRPC to receiving relays
+	tlsCfg := builder.NewTlsClientConfig(
+		true,
+		"../tls/client.crt",
+		"../tls/client.key",
+		"../tls/ca.crt",
+		tls.VersionTLS13,
+		tls.VersionTLS13,
 	)
 
-	// Step 5: Create performance + security (AES-GCM) options
-	perfOptions := builder.NewPerformanceOptions(true, builder.COMPRESS_SNAPPY)
-	secOptions := builder.NewSecurityOptions(true, builder.ENCRYPTION_AES_GCM) // Enable AES-GCM
+	// Perf + content encryption (AES-GCM over the payload)
+	perf := builder.NewPerformanceOptions(true, builder.COMPRESS_SNAPPY)
+	sec := builder.NewSecurityOptions(true, builder.ENCRYPTION_AES_GCM)
+	key := mustHexKey()
 
-	// Convert the hex key to a raw string (16, 24, or 32 bytes) for AES-GCM usage
-	encryptionKeyBytes := loadExampleAESKey()
-	// If your encryption code expects a string of length 32, do:
-	encryptionKey := string(encryptionKeyBytes) // This is 32 bytes => AES-256
+	// OAuth2 resource-server hints (receivers validate JWT via JWKS)
+	const issuerBase = "https://localhost:3000"
+	const jwksURL = "https://localhost:3000/api/auth/.well-known/jwks.json"
+	aud := []string{"your-api"}
+	scp := []string{"write:data"}
 
-	// Step 6: Create a forward relay with compression + encryption
-	forwardRelay := builder.NewForwardRelay(
+	oauthHints := builder.NewForwardRelayOAuth2JWTOptions(issuerBase, jwksURL, aud, scp, 300)
+	authOpts := builder.NewForwardRelayAuthenticationOptionsOAuth2(oauthHints)
+
+	// HTTP client for local dev auth (accept self-signed, TLS1.3)
+	authHTTP := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				MaxVersion:         tls.VersionTLS13,
+				InsecureSkipVerify: true, // dev only
+			},
+		},
+	}
+
+	// Refreshing client-credentials token source (auto-rotates before expiry).
+	// NOTE: If you didn't add the builder wrapper, call the forwardrelay ctor directly.
+	ts := builder.NewForwardRelayRefreshingClientCredentialsSource(
+		issuerBase,
+		"steeze-local-cli",
+		"local-secret",
+		scp,
+		20*time.Second, // refresh leeway
+		authHTTP,
+	)
+
+	// Print the first token for debugging scopes/claims
+	if firstTok, err := ts.AccessToken(ctx); err == nil {
+		dumpJWT(firstTok)
+	} else {
+		log.Printf("warning: couldn't fetch initial token for dump: %v", err)
+	}
+
+	staticHeaders := map[string]string{"x-tenant": "local"}
+
+	relay := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithLogger[Feedback](logger),
 		builder.ForwardRelayWithTarget[Feedback]("localhost:50051", "localhost:50052"),
-		builder.ForwardRelayWithPerformanceOptions[Feedback](perfOptions),
+		builder.ForwardRelayWithPerformanceOptions[Feedback](perf),
+		builder.ForwardRelayWithSecurityOptions[Feedback](sec, key),
+		builder.ForwardRelayWithInput(ground),
+		builder.ForwardRelayWithTLSConfig[Feedback](tlsCfg),
 
-		// The new security config
-		builder.ForwardRelayWithSecurityOptions[Feedback](secOptions, encryptionKey),
-
-		builder.ForwardRelayWithInput(groundWire),
-		builder.ForwardRelayWithTLSConfig[Feedback](tlsConfig),
+		// OAuth2
+		builder.ForwardRelayWithAuthenticationOptions[Feedback](authOpts),
+		builder.ForwardRelayWithOAuthBearer[Feedback](ts),
+		builder.ForwardRelayWithStaticHeaders[Feedback](staticHeaders),
 	)
 
-	// Step 7: Start the pipeline
-	generatorWire.Start(ctx)
-	forwardRelay.Start(ctx)
+	// Start components
+	if err := wire.Start(ctx); err != nil {
+		log.Fatalf("wire start: %v", err)
+	}
+	if err := relay.Start(ctx); err != nil {
+		log.Fatalf("relay start: %v", err)
+	}
 
-	// Step 8: Wait until context times out or is canceled
+	log.Println("Sender running. Press Ctrl+C to stop...")
 	<-ctx.Done()
 
-	// Clean up
-	generatorWire.Stop()
-	forwardRelay.Stop()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		fmt.Println("Processing timeout.")
-	} else {
-		fmt.Println("Processing finished within the allotted time.")
-	}
+	// Shutdown
+	wire.Stop()
+	relay.Stop()
+	log.Println("Shutdown complete.")
 }

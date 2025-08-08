@@ -1,137 +1,373 @@
-// Package forwardrelay provides options for configuring the ForwardRelay component, enabling users to customize its behavior and functionality.
-//
-// The options.go file defines various functions, each representing a specific configuration option that can be applied to a ForwardRelay instance.
-// These options allow users to set the network address, input conduit, TLS configuration, logger, performance options, and component metadata of a ForwardRelay.
-// By leveraging these options, users can achieve fine-grained control over the operation and configuration of the ForwardRelay component within their distributed systems.
 package forwardrelay
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
+	"google.golang.org/protobuf/proto"
 )
 
-// WithAddress configures the network address for the ForwardRelay.
-// This function provides an option to set the network address of the ForwardRelay, allowing customization of the destination
-// where data will be forwarded. It internally uses the SetAddress method to apply the specified address.
-//
-// Parameters:
-//   - address: The network address to set for the ForwardRelay.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay component,
-//	sets the specified network address.
+// WithTarget configures one or more outbound target addresses.
 func WithTarget[T any](targets ...string) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.SetTargets(targets...)
-	}
+	return func(fr types.ForwardRelay[T]) { fr.SetTargets(targets...) }
 }
 
-// WithLogger configures the logger for the ForwardRelay.
-// This function provides an option to set the logger for the ForwardRelay, enabling customization of the logging behavior
-// and output destinations. It internally uses the ConnectLogger method to append the specified logger(s).
-//
-// Parameters:
-//   - logger: The logger(s) to append to the ForwardRelay.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay component,
-//	appends the specified logger(s).
+// WithLogger attaches one or more loggers.
 func WithLogger[T any](logger ...types.Logger) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.ConnectLogger(logger...)
-	}
+	return func(fr types.ForwardRelay[T]) { fr.ConnectLogger(logger...) }
 }
 
-// WithInput configures the input conduit for the ForwardRelay.
-// This function provides an option to set the input conduit for the ForwardRelay, allowing customization of the source(s)
-// from which data will be received. It internally uses the ConnectInput method to append the specified input conduit(s).
-//
-// Parameters:
-//   - input: The input conduit(s) to append to the ForwardRelay.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay component,
-//	appends the specified input conduit(s).
+// WithInput attaches one or more inputs.
 func WithInput[T any](input ...types.Receiver[T]) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.ConnectInput(input...)
-	}
+	return func(fr types.ForwardRelay[T]) { fr.ConnectInput(input...) }
 }
 
-// WithTLSConfig configures the TLS settings for the ForwardRelay.
-// This function provides an option to set the TLS configuration for the ForwardRelay, enabling secure communication
-// with remote endpoints. It internally uses the SetTLSConfig method to apply the specified TLS configuration.
-//
-// Parameters:
-//   - config: The TLS configuration to set for the ForwardRelay.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay component,
-//	sets the specified TLS configuration.
+// WithTLSConfig sets TLS configuration.
 func WithTLSConfig[T any](config *types.TLSConfig) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.SetTLSConfig(config)
-	}
+	return func(fr types.ForwardRelay[T]) { fr.SetTLSConfig(config) }
 }
 
-// WithPerformanceOptions configures the performance options for the ForwardRelay.
-// This function provides an option to set performance-related options for the ForwardRelay, allowing customization
-// of various performance aspects such as compression, encryption, etc. It internally uses the SetPerformanceOptions
-// method to apply the specified performance options.
-//
-// Parameters:
-//   - perfOptions: The performance options to set for the ForwardRelay.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay component,
-//	sets the specified performance options.
+// WithPerformanceOptions sets performance options.
 func WithPerformanceOptions[T any](perfOptions *relay.PerformanceOptions) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.SetPerformanceOptions(perfOptions)
-	}
+	return func(fr types.ForwardRelay[T]) { fr.SetPerformanceOptions(perfOptions) }
 }
 
-// WithSecurityOptions configures the security options for the ForwardRelay.
-// This function provides an option to set security-related options for the ForwardRelay, allowing
-// customization of various security aspects such as encryption or key management. It internally
-// uses the SetSecurityOptions method to apply the specified security options.
-//
-// Parameters:
-//   - secOptions:   A pointer to the SecurityOptions struct specifying the new security settings.
-//   - encryptionKey: The encryption key to use (e.g. an AES-GCM key).
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay
-//	component, sets the specified security options and encryption key.
+// WithSecurityOptions sets content-encryption options and key.
 func WithSecurityOptions[T any](secOptions *relay.SecurityOptions, encryptionKey string) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.SetSecurityOptions(secOptions, encryptionKey)
+	return func(fr types.ForwardRelay[T]) { fr.SetSecurityOptions(secOptions, encryptionKey) }
+}
+
+// WithComponentMetadata sets name and ID metadata.
+func WithComponentMetadata[T any](name string, id string) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) { fr.SetComponentMetadata(name, id) }
+}
+
+// -------------------- New auth-related options --------------------
+
+// WithAuthenticationOptions provides auth hints (mirrors proto MessageMetadata.authentication).
+// Optional; receivers may ignore; server config may override.
+func WithAuthenticationOptions[T any](opts *relay.AuthenticationOptions) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) { fr.SetAuthenticationOptions(opts) }
+}
+
+// WithOAuth2 enables per-RPC Bearer injection using the provided token source.
+// Pass nil to disable. Implementations must enforce TLS when enabled.
+func WithOAuth2[T any](ts types.OAuth2TokenSource) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) { fr.SetOAuth2(ts) }
+}
+
+// WithStaticHeaders sets constant metadata headers added to every RPC.
+func WithStaticHeaders[T any](headers map[string]string) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) { fr.SetStaticHeaders(headers) }
+}
+
+// WithDynamicHeaders sets a callback to compute per-request headers from context.
+func WithDynamicHeaders[T any](fn func(ctx context.Context) map[string]string) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) { fr.SetDynamicHeaders(fn) }
+}
+
+// ============================================================================
+// OAuth2 / Auth builders (kept close to forwardrelay; builder package stays thin)
+// ============================================================================
+
+// NewOAuth2JWTOptions builds JWT validation settings for resource servers.
+func NewOAuth2JWTOptions(
+	issuer string,
+	jwksURI string,
+	audiences []string,
+	scopes []string,
+	jwksCacheSeconds int32,
+) *relay.OAuth2Options {
+	return &relay.OAuth2Options{
+		AcceptJwt:             true,
+		AcceptIntrospection:   false,
+		Issuer:                issuer,
+		JwksUri:               jwksURI,
+		RequiredAudience:      cloneStrings(audiences),
+		RequiredScopes:        cloneStrings(scopes),
+		JwksCacheSeconds:      jwksCacheSeconds,
+		ForwardBearerToken:    false,
+		ForwardMetadataKey:    "",
+		IntrospectionUrl:      "",
+		IntrospectionAuthType: "",
 	}
 }
 
-// WithComponentMetadata configures a ForwardRelay component with custom metadata, including a name and an identifier.
-// This function provides an option to set these metadata properties, which can be used for identification,
-// logging, or other purposes where metadata is needed for a ForwardRelay. It uses the SetComponentMetadata method
-// internally to apply these settings. If the ForwardRelay's configuration is frozen (indicating that the component
-// has started operation and its configuration should no longer be changed), attempting to set metadata
-// will result in a panic. This ensures the integrity of component configurations during runtime.
-//
-// Parameters:
-//   - name: The name to set for the ForwardRelay component, used for identification and logging.
-//   - id: The unique identifier to set for the ForwardRelay component, used for unique identification across systems.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ForwardRelay[T]], which when called with a ForwardRelay component,
-//	sets the specified name and id in the component's metadata.
-func WithComponentMetadata[T any](name string, id string) types.Option[types.ForwardRelay[T]] {
-	return func(fr types.ForwardRelay[T]) {
-		fr.SetComponentMetadata(name, id)
+// NewOAuth2IntrospectionOptions builds RFC 7662 introspection settings.
+func NewOAuth2IntrospectionOptions(
+	introspectionURL string,
+	authType string, // "basic" | "bearer" | "none"
+	clientID string,
+	clientSecret string,
+	bearerToken string,
+	introspectionCacheSeconds int32,
+) *relay.OAuth2Options {
+	return &relay.OAuth2Options{
+		AcceptJwt:                 false,
+		AcceptIntrospection:       true,
+		IntrospectionUrl:          introspectionURL,
+		IntrospectionAuthType:     authType,
+		IntrospectionClientId:     clientID,
+		IntrospectionClientSecret: clientSecret,
+		IntrospectionBearerToken:  bearerToken,
+		IntrospectionCacheSeconds: introspectionCacheSeconds,
 	}
+}
+
+// NewOAuth2Forwarding toggles forwarding of the inbound bearer token to downstream services.
+func NewOAuth2Forwarding(forward bool, forwardMetadataKey string) *relay.OAuth2Options {
+	return &relay.OAuth2Options{
+		ForwardBearerToken: forward,
+		ForwardMetadataKey: forwardMetadataKey,
+	}
+}
+
+// MergeOAuth2Options merges non-zero fields from src into dst (shallow merge).
+func MergeOAuth2Options(dst *relay.OAuth2Options, src *relay.OAuth2Options) *relay.OAuth2Options {
+	if dst == nil {
+		return cloneOAuth2(src)
+	}
+	if src == nil {
+		return dst
+	}
+	if src.AcceptJwt {
+		dst.AcceptJwt = true
+	}
+	if src.AcceptIntrospection {
+		dst.AcceptIntrospection = true
+	}
+	if src.Issuer != "" {
+		dst.Issuer = src.Issuer
+	}
+	if src.JwksUri != "" {
+		dst.JwksUri = src.JwksUri
+	}
+	if len(src.RequiredAudience) > 0 {
+		dst.RequiredAudience = cloneStrings(src.RequiredAudience)
+	}
+	if len(src.RequiredScopes) > 0 {
+		dst.RequiredScopes = cloneStrings(src.RequiredScopes)
+	}
+	if src.IntrospectionUrl != "" {
+		dst.IntrospectionUrl = src.IntrospectionUrl
+	}
+	if src.IntrospectionAuthType != "" {
+		dst.IntrospectionAuthType = src.IntrospectionAuthType
+	}
+	if src.IntrospectionClientId != "" {
+		dst.IntrospectionClientId = src.IntrospectionClientId
+	}
+	if src.IntrospectionClientSecret != "" {
+		dst.IntrospectionClientSecret = src.IntrospectionClientSecret
+	}
+	if src.IntrospectionBearerToken != "" {
+		dst.IntrospectionBearerToken = src.IntrospectionBearerToken
+	}
+	if src.JwksCacheSeconds != 0 {
+		dst.JwksCacheSeconds = src.JwksCacheSeconds
+	}
+	if src.IntrospectionCacheSeconds != 0 {
+		dst.IntrospectionCacheSeconds = src.IntrospectionCacheSeconds
+	}
+	if src.ForwardMetadataKey != "" || src.ForwardBearerToken {
+		dst.ForwardBearerToken = src.ForwardBearerToken
+		dst.ForwardMetadataKey = src.ForwardMetadataKey
+	}
+	return dst
+}
+
+// NewAuthenticationOptionsOAuth2 builds a ready-to-use AuthenticationOptions for OAuth2.
+func NewAuthenticationOptionsOAuth2(oauth *relay.OAuth2Options) *relay.AuthenticationOptions {
+	return &relay.AuthenticationOptions{
+		Enabled: true,
+		Mode:    relay.AuthMode_AUTH_OAUTH2,
+		Oauth2:  oauth,
+	}
+}
+
+// NewAuthenticationOptionsMTLS builds AuthenticationOptions for mTLS-only expectations.
+func NewAuthenticationOptionsMTLS(allowedPrincipals []string, trustDomain string) *relay.AuthenticationOptions {
+	return &relay.AuthenticationOptions{
+		Enabled: true,
+		Mode:    relay.AuthMode_AUTH_MUTUAL_TLS,
+		Mtls: &relay.MTLSOptions{
+			AllowedPrincipals: cloneStrings(allowedPrincipals),
+			TrustDomain:       trustDomain,
+		},
+	}
+}
+
+// NewAuthenticationOptionsNone builds a disabled auth options object.
+func NewAuthenticationOptionsNone() *relay.AuthenticationOptions {
+	return &relay.AuthenticationOptions{
+		Enabled: false,
+		Mode:    relay.AuthMode_AUTH_NONE,
+	}
+}
+
+// -------------------- Token source helpers (client-side) --------------------
+
+type staticTokenSource struct{ tok string }
+
+func (s staticTokenSource) AccessToken(_ context.Context) (string, error) { return s.tok, nil }
+
+// NewStaticBearerTokenSource returns a token source that always returns the provided token.
+func NewStaticBearerTokenSource(token string) types.OAuth2TokenSource {
+	return staticTokenSource{tok: token}
+}
+
+type envTokenSource struct{ key string }
+
+func (e envTokenSource) AccessToken(_ context.Context) (string, error) {
+	return os.Getenv(e.key), nil
+}
+
+// NewEnvBearerTokenSource returns a token source that pulls the token from an env var at call time.
+func NewEnvBearerTokenSource(envVar string) types.OAuth2TokenSource {
+	return envTokenSource{key: envVar}
+}
+
+// --- Refreshing client-credentials token source -----------------------------
+
+type refreshingCCSource struct {
+	tokenURL     string
+	clientID     string
+	clientSecret string
+	scopes       []string
+
+	hc   *http.Client
+	mu   sync.Mutex
+	tok  string
+	exp  time.Time
+	skew time.Duration
+}
+
+type ccTokenResp struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int32  `json:"expires_in"`
+	Scope       string `json:"scope"`
+	TokenType   string `json:"token_type"`
+}
+
+// NewClientCredentialsBearerTokenSource returns a token source that fetches
+// client_credentials tokens and refreshes them before expiry.
+// baseURL should be the AUTH base (e.g. https://localhost:3000).
+// Pass a custom http.Client if you need special TLS (self-signed, etc.).
+func NewClientCredentialsBearerTokenSource(
+	baseURL, clientID, clientSecret string,
+	scopes []string,
+	httpClient *http.Client, // pass nil to use a sane default
+) types.OAuth2TokenSource {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &refreshingCCSource{
+		tokenURL:     strings.TrimRight(baseURL, "/") + "/api/auth/oauth/token",
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		scopes:       append([]string(nil), scopes...),
+		hc:           httpClient,
+		skew:         20 * time.Second,
+	}
+}
+
+// NewRefreshingClientCredentialsSource is a convenience alias that also allows
+// specifying a custom refresh leeway (skew). If leeway <= 0, 20s is used.
+func NewRefreshingClientCredentialsSource(
+	baseURL, clientID, clientSecret string,
+	scopes []string,
+	leeway time.Duration,
+	httpClient *http.Client,
+) types.OAuth2TokenSource {
+	ts := NewClientCredentialsBearerTokenSource(baseURL, clientID, clientSecret, scopes, httpClient)
+	if s, ok := ts.(*refreshingCCSource); ok {
+		if leeway > 0 {
+			s.skew = leeway
+		}
+	}
+	return ts
+}
+
+func (s *refreshingCCSource) AccessToken(ctx context.Context) (string, error) {
+	// Fast path: still valid?
+	s.mu.Lock()
+	tok, exp := s.tok, s.exp
+	s.mu.Unlock()
+
+	if tok != "" && time.Now().Add(s.skew).Before(exp) {
+		return tok, nil
+	}
+
+	// Fetch new token
+	form := url.Values{}
+	form.Set("grant_type", "client_credentials")
+	if len(s.scopes) > 0 {
+		form.Set("scope", strings.Join(s.scopes, " "))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(s.clientID, s.clientSecret)
+
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", fmt.Errorf("token endpoint status %s", resp.Status)
+	}
+
+	var tr ccTokenResp
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		return "", err
+	}
+	if tr.AccessToken == "" {
+		return "", errors.New("empty access_token")
+	}
+
+	expAt := time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+	if tr.ExpiresIn == 0 {
+		// Fallback: if server doesn't return expires_in, default to 60s
+		expAt = time.Now().Add(60 * time.Second)
+	}
+
+	s.mu.Lock()
+	s.tok = tr.AccessToken
+	s.exp = expAt
+	s.mu.Unlock()
+
+	return tr.AccessToken, nil
+}
+
+// -------------------- small internals --------------------
+
+func cloneStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+// cloneOAuth2 avoids copying proto internal mutexes by using proto.Clone.
+func cloneOAuth2(in *relay.OAuth2Options) *relay.OAuth2Options {
+	if in == nil {
+		return nil
+	}
+	return proto.Clone(in).(*relay.OAuth2Options)
 }

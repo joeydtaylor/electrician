@@ -239,20 +239,22 @@ func (fr *ForwardRelay[T]) SetTLSConfig(config *types.TLSConfig) {
 // Start logs at an informational level when the relay begins processing, and updates its running state atomically to indicate it's operational.
 func (fr *ForwardRelay[T]) Start(ctx context.Context) error {
 	if fr.Input == nil {
-		panic("Input is nil") // Replace panic with proper error handling in production
+		return fmt.Errorf("no inputs configured")
 	}
 
 	atomic.StoreInt32(&fr.configFrozen, 1)
 
 	for _, input := range fr.Input {
-		go fr.readFromInput(input)
 		if !input.IsStarted() {
-			input.Start(ctx)
+			if err := input.Start(ctx); err != nil {
+				return fmt.Errorf("failed to start input %v: %w", input.GetComponentMetadata(), err)
+			}
 		}
+		go fr.readFromInput(input)
 	}
-	atomic.StoreInt32(&fr.isRunning, 1)
-	fr.NotifyLoggers(types.InfoLevel, "component: %s, level: INFO, result: SUCCESS, event: Start => Starting Forward Relay", fr.componentMetadata)
 
+	atomic.StoreInt32(&fr.isRunning, 1)
+	fr.NotifyLoggers(types.InfoLevel, "component: %v, level: INFO, event: Start => forward relay running", fr.componentMetadata)
 	return nil
 }
 
@@ -265,81 +267,78 @@ func (fr *ForwardRelay[T]) Start(ctx context.Context) error {
 //
 // The function returns an error if it encounters issues during wrapping or data transmission.
 func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
-	md, ok := metadata.FromIncomingContext(ctx)
+	// Build outgoing context with auth headers, static/dynamic headers, and trace-id
+	outCtx, err := fr.buildPerRPCContext(ctx)
+	if err != nil {
+		fr.NotifyLoggers(types.ErrorLevel,
+			"component: %v, level: ERROR, event: Submit => metadata build failed: %v",
+			fr.componentMetadata, err)
+		return fmt.Errorf("metadata build failed: %w", err)
+	}
+
+	// For logging only, extract trace-id (buildPerRPCContext guarantees one is present)
 	var traceID string
-	if !ok || len(md["trace-id"]) == 0 {
-		traceID = utils.GenerateUniqueHash()
-	} else {
+	if md, ok := metadata.FromOutgoingContext(outCtx); ok && len(md["trace-id"]) > 0 {
 		traceID = md["trace-id"][0]
+	} else {
+		traceID = utils.GenerateUniqueHash()
 	}
 
 	fr.NotifyLoggers(types.DebugLevel,
-		"component: %v, level: DEBUG, result: SUCCESS, event: Submit, element: %v, trace_id: %v => Wrapping payload",
-		fr.componentMetadata, item, traceID,
-	)
+		"component: %v, level: DEBUG, event: Submit => wrapping payload, trace_id: %v, element: %v",
+		fr.componentMetadata, traceID, item)
 
-	// Updated WrapPayload call:
-	wrappedPayload, err := WrapPayload(
-		item,
-		fr.PerformanceOptions, // Performance options for compression
-		fr.SecurityOptions,    // Security options for encryption
-		fr.EncryptionKey,      // The AES-GCM key
-	)
+	wrappedPayload, err := WrapPayload(item, fr.PerformanceOptions, fr.SecurityOptions, fr.EncryptionKey)
 	if err != nil {
 		fr.NotifyLoggers(types.ErrorLevel,
-			"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Error wrapping payload!",
-			fr.componentMetadata, item, err, traceID,
-		)
-		return fmt.Errorf("failed to wrap payload: %v", err)
+			"component: %v, level: ERROR, event: Submit => wrap failed: %v, trace_id: %v, element: %v",
+			fr.componentMetadata, err, traceID, item)
+		return fmt.Errorf("failed to wrap payload: %w", err)
 	}
 
-	var opts []grpc.DialOption
-	if fr.TlsConfig != nil && fr.TlsConfig.UseTLS {
-		creds, err := fr.loadTLSCredentials(fr.TlsConfig)
-		if err != nil {
-			fr.NotifyLoggers(types.ErrorLevel,
-				"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Failed to load TLS credentials!",
-				fr.componentMetadata, item, err, traceID,
-			)
-			return fmt.Errorf("failed to load TLS credentials: %v", err)
-		}
-		opts = append(opts, grpc.WithTransportCredentials(creds))
+	// Dial options (enforce TLS if OAuth2 is enabled)
+	creds, useInsecure, err := fr.makeDialOptions()
+	if err != nil {
+		fr.NotifyLoggers(types.ErrorLevel,
+			"component: %v, level: ERROR, event: Submit => dial options failed: %v, trace_id: %v",
+			fr.componentMetadata, err, traceID)
+		return fmt.Errorf("dial options: %w", err)
+	}
+	var dialOpts []grpc.DialOption
+	if !useInsecure {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds[0]))
 	} else {
-		opts = append(opts, grpc.WithInsecure())
+		dialOpts = append(dialOpts, grpc.WithInsecure())
 	}
 
-	// Send to each configured target
+	// Send to each target
 	for _, address := range fr.Targets {
-		conn, err := grpc.DialContext(ctx, address, opts...)
+		conn, err := grpc.DialContext(outCtx, address, dialOpts...)
 		if err != nil {
 			fr.NotifyLoggers(types.ErrorLevel,
-				"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Failed to connect!",
-				fr.componentMetadata, item, err, traceID,
-			)
+				"component: %v, level: ERROR, event: Submit => dial failed: %v, addr: %s, trace_id: %v",
+				fr.componentMetadata, err, address, traceID)
 			continue
 		}
 
 		client := relay.NewRelayServiceClient(conn)
 		fr.NotifyLoggers(types.DebugLevel,
-			"component: %v, level: DEBUG, result: SUCCESS, event: Submit, element: %v, trace_id: %v => Sending data to %v...",
-			fr.componentMetadata, item, traceID, address,
-		)
+			"component: %v, level: DEBUG, event: Submit => sending, addr: %s, trace_id: %v",
+			fr.componentMetadata, address, traceID)
 
-		ack, err := client.Receive(ctx, wrappedPayload)
-		_ = conn.Close() // close connection after sending
+		ack, err := client.Receive(outCtx, wrappedPayload)
+		_ = conn.Close()
 
 		if err != nil {
 			fr.NotifyLoggers(types.ErrorLevel,
-				"component: %v, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v, trace_id: %v => Error sending data!",
-				fr.componentMetadata, item, err, traceID,
-			)
+				"component: %v, level: ERROR, event: Submit => send failed: %v, addr: %s, trace_id: %v",
+				fr.componentMetadata, err, address, traceID)
 			continue
 		}
 
 		fr.NotifyLoggers(types.InfoLevel,
-			"component: %v, level: INFO, result: SUCCESS, event: Submit, element: %v, ack: %v, trace_id: %v => Data sent successfully to %v.",
-			fr.componentMetadata, item, ack, traceID, address,
-		)
+			"component: %v, level: INFO, event: Submit => success, addr: %s, ack: %v, trace_id: %v",
+			fr.componentMetadata, address, ack, traceID)
 	}
 
 	return nil
@@ -467,4 +466,43 @@ func WrapPayload[T any](
 		Payload:   buf.Bytes(), // compressed + encrypted
 		Metadata:  metadata,
 	}, nil
+}
+
+func (fr *ForwardRelay[T]) SetAuthenticationOptions(opts *relay.AuthenticationOptions) {
+	if atomic.LoadInt32(&fr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetAuthenticationOptions", fr.componentMetadata))
+	}
+	fr.authOptions = opts
+	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetAuthenticationOptions, new: %+v", fr.componentMetadata, opts)
+}
+
+func (fr *ForwardRelay[T]) SetOAuth2(ts types.OAuth2TokenSource) {
+	if atomic.LoadInt32(&fr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetOAuth2", fr.componentMetadata))
+	}
+	fr.tokenSource = ts
+	if ts == nil {
+		fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetOAuth2, state: disabled", fr.componentMetadata)
+	} else {
+		fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetOAuth2, state: enabled", fr.componentMetadata)
+	}
+}
+
+func (fr *ForwardRelay[T]) SetStaticHeaders(h map[string]string) {
+	if atomic.LoadInt32(&fr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetStaticHeaders", fr.componentMetadata))
+	}
+	fr.staticHeaders = make(map[string]string, len(h))
+	for k, v := range h {
+		fr.staticHeaders[k] = v
+	}
+	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetStaticHeaders, keys: %d", fr.componentMetadata, len(fr.staticHeaders))
+}
+
+func (fr *ForwardRelay[T]) SetDynamicHeaders(fn func(ctx context.Context) map[string]string) {
+	if atomic.LoadInt32(&fr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetDynamicHeaders", fr.componentMetadata))
+	}
+	fr.dynamicHeaders = fn
+	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetDynamicHeaders, installed: %t", fr.componentMetadata, fn != nil)
 }

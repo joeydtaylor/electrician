@@ -9,11 +9,14 @@ package forwardrelay
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -22,9 +25,11 @@ import (
 	"github.com/golang/snappy"
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
+	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -35,25 +40,13 @@ const (
 	COMPRESS_BROTLI  relay.CompressionAlgorithm = 4
 	COMPRESS_LZ4     relay.CompressionAlgorithm = 5
 
-	// New local aliases for encryption:
+	// Encryption suites
 	ENCRYPT_NONE    relay.EncryptionSuite = 0
 	ENCRYPT_AES_GCM relay.EncryptionSuite = 1
 )
 
-// loadTLSCredentials loads the TLS credentials from the provided configuration settings.
-// This method is responsible for setting up a secure context for the ForwardRelay by loading
-// X509 certificates and configuring the TLS settings based on the given TLSConfig.
-// It attempts to load cached credentials and if unavailable, it reads the certificate and key files
-// from the filesystem to create new credentials, caching them for future use.
-//
-// Parameters:
-//   - config: A pointer to types.TLSConfig which includes certificate file paths and other TLS-related settings.
-//
-// Returns:
-//   - credentials.TransportCredentials: Configured transport credentials for establishing a secure connection.
-//   - error: An error object detailing issues encountered during the loading of TLS credentials.
-//
-// This method logs all steps, including successful loads and errors, providing traceability and debugging insights.
+// ---------------- TLS credentials cache ----------------
+
 func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credentials.TransportCredentials, error) {
 	loadedCreds := fr.tlsCredentials.Load()
 	if loadedCreds != nil {
@@ -63,35 +56,30 @@ func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credenti
 	fr.tlsCredentialsUpdate.Lock()
 	defer fr.tlsCredentialsUpdate.Unlock()
 
-	// Check again in case credentials were loaded while acquiring the lock
 	loadedCreds = fr.tlsCredentials.Load()
 	if loadedCreds != nil {
 		return loadedCreds.(credentials.TransportCredentials), nil
 	}
 
-	// Load from file system
 	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: loadTLSCredentials, error: %v, ca_cert: %v => Error Loading Keys", fr.componentMetadata, err, cert)
+		fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, event: loadTLSCredentials => load keypair failed: %v", fr.componentMetadata, err)
 		return nil, err
 	}
 	certPool := x509.NewCertPool()
 	ca, err := os.ReadFile(config.CAFile)
 	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: loadTLSCredentials, error: %v, ca_cert: %v => Error Reading CA File", fr.componentMetadata, err, ca)
+		fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, event: loadTLSCredentials => read CA failed: %v", fr.componentMetadata, err)
 		return nil, err
 	}
 	if !certPool.AppendCertsFromPEM(ca) {
-		fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, result: FAILURE, event: loadTLSCredentials, error: %v, ca_cert: %v => Error loading Tls Credentials", fr.componentMetadata, ca, err)
 		return nil, fmt.Errorf("failed to append CA certificate")
 	}
 
-	// Set Min and Max TLS versions (default to TLS 1.2 - 1.3 if not specified)
 	minTLSVersion := config.MinTLSVersion
 	if minTLSVersion == 0 {
 		minTLSVersion = tls.VersionTLS12
 	}
-
 	maxTLSVersion := config.MaxTLSVersion
 	if maxTLSVersion == 0 {
 		maxTLSVersion = tls.VersionTLS13
@@ -104,60 +92,35 @@ func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credenti
 		MinVersion:   minTLSVersion,
 		MaxVersion:   maxTLSVersion,
 	})
-
 	fr.tlsCredentials.Store(newCreds)
-	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: loadTLSCredentials, credentials: %v => Loaded Tls Credentials", fr.componentMetadata, newCreds)
+	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, event: loadTLSCredentials => loaded", fr.componentMetadata)
 	return newCreds, nil
 }
 
-// readFromInput manages the continuous reading of data from a specified input channel.
-// It repeatedly reads data from the given Receiver's output channel until the channel is closed or the context is cancelled.
-// Each received data item is immediately submitted for further processing using the Submit method of ForwardRelay.
-// This function is typically executed in a separate goroutine for each input conduit and is crucial for the real-time
-// processing capabilities of the ForwardRelay.
-//
-// Parameters:
-//   - input: The types.Receiver[T] from which to continuously read data.
-//
-// No return values, but the function handles all operational logging internally,
-// documenting key events like data reception and errors during data forwarding.
+// ---------------- Input pump ----------------
 
 func (fr *ForwardRelay[T]) readFromInput(input types.Receiver[T]) {
 	for {
 		select {
 		case <-fr.ctx.Done():
-			fr.NotifyLoggers(types.InfoLevel, "component: %s, level: INFO, result: SUCCESS, event: readFromInput => Context canceled, stopping read from conduit", fr.componentMetadata)
+			fr.NotifyLoggers(types.InfoLevel, "component: %v, level: INFO, event: readFromInput => context canceled", fr.componentMetadata)
 			return
 		case data, ok := <-input.GetOutputChannel():
 			if !ok {
-				return // Channel is closed, exit the goroutine
+				return
 			}
 			if err := fr.Submit(fr.ctx, data); err != nil {
-				fr.NotifyLoggers(types.ErrorLevel, "component: %s, level: ERROR, result: FAILURE, event: readFromInput, error: %v => Error forwarding data", fr.componentMetadata, err)
+				fr.NotifyLoggers(types.ErrorLevel, "component: %v, level: ERROR, event: readFromInput => submit failed: %v", fr.componentMetadata, err)
 			}
 		}
 	}
 }
 
-// compressData applies the specified compression algorithm to the provided data.
-// This function supports multiple compression algorithms such as gzip, snappy, zstd, brotli, and lz4.
-// It initializes the appropriate compressor according to the specified algorithm, processes the input data,
-// and returns the compressed byte slice. This utility is critical for reducing data size before network transmission
-// in the ForwardRelay component.
-//
-// Parameters:
-//   - data: A byte slice containing the data to be compressed.
-//   - algorithm: The compression algorithm to use as defined by relay.CompressionAlgorithm.
-//
-// Returns:
-//   - []byte: The compressed data.
-//   - error: An error object indicating any issues encountered during the compression process.
-//
-// This method includes detailed error handling and logging for diagnostics and performance tracking.
+// ---------------- Compression ----------------
 
 func compressData(data []byte, algorithm relay.CompressionAlgorithm) ([]byte, error) {
 	var b bytes.Buffer
-	var w io.WriteCloser // Declare the writer variable here with appropriate interface
+	var w io.WriteCloser
 
 	switch algorithm {
 	case COMPRESS_DEFLATE:
@@ -166,7 +129,7 @@ func compressData(data []byte, algorithm relay.CompressionAlgorithm) ([]byte, er
 		w = snappy.NewBufferedWriter(&b)
 	case COMPRESS_ZSTD:
 		var err error
-		w, err = zstd.NewWriter(&b) // You should handle this error.
+		w, err = zstd.NewWriter(&b)
 		if err != nil {
 			return nil, err
 		}
@@ -175,7 +138,7 @@ func compressData(data []byte, algorithm relay.CompressionAlgorithm) ([]byte, er
 	case COMPRESS_LZ4:
 		w = lz4.NewWriter(&b)
 	default:
-		return data, nil // No compression, directly return the data.
+		return data, nil
 	}
 
 	if _, err := w.Write(data); err != nil {
@@ -187,18 +150,33 @@ func compressData(data []byte, algorithm relay.CompressionAlgorithm) ([]byte, er
 	return b.Bytes(), nil
 }
 
-// encryptData checks SecurityOptions. If encryption is enabled and suite is AES-GCM,
-// it encrypts data using the provided key, returning (nonce + ciphertext).
-// Otherwise it returns data as-is (no encryption).
+// ---------------- Encryption ----------------
+
+func normalizeAESKey(s string) ([]byte, error) {
+	k := []byte(s)
+	switch len(k) {
+	case 16, 24, 32:
+		return k, nil
+	default:
+		if b, err := hex.DecodeString(s); err == nil && (len(b) == 16 || len(b) == 24 || len(b) == 32) {
+			return b, nil
+		}
+		if b, err := base64.StdEncoding.DecodeString(s); err == nil && (len(b) == 16 || len(b) == 24 || len(b) == 32) {
+			return b, nil
+		}
+		return nil, fmt.Errorf("invalid AES key length: got %d; need 16/24/32 bytes or hex/base64 of those", len(k))
+	}
+}
+
+// encryptData checks SecurityOptions. If AES-GCM enabled, returns nonce||ciphertext.
 func encryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
 	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != ENCRYPT_AES_GCM {
-		// If security is disabled or using a different suite, return data unchanged
 		return data, nil
 	}
-
-	// Convert key string to bytes. (Ensure your key length is valid, e.g. 16/24/32 for AES-128/192/256)
-	aesKey := []byte(key)
-
+	aesKey, err := normalizeAESKey(key)
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, err
@@ -207,12 +185,85 @@ func encryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	// Generate a random nonce the correct size for GCM
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
-	// Seal appends the encrypted data to nonce, returning nonce + ciphertext
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
 	return ciphertext, nil
+}
+
+// ---------------- Per-RPC auth/metadata helpers ----------------
+
+// buildPerRPCContext constructs outgoing metadata:
+// - Authorization: Bearer <token> (when tokenSource configured)
+// - static headers (SetStaticHeaders)
+// - dynamic headers (SetDynamicHeaders)
+// - trace-id (generated if absent)
+func (fr *ForwardRelay[T]) buildPerRPCContext(ctx context.Context) (context.Context, error) {
+	// Start with existing md if any
+	var md metadata.MD
+	if existing, ok := metadata.FromOutgoingContext(ctx); ok {
+		md = existing.Copy()
+	} else {
+		md = metadata.New(nil)
+	}
+
+	// Static headers
+	for k, v := range fr.staticHeaders {
+		if k == "" {
+			continue
+		}
+		md.Set(k, v)
+	}
+
+	// Dynamic headers
+	if fr.dynamicHeaders != nil {
+		for k, v := range fr.dynamicHeaders(ctx) {
+			if k == "" || v == "" {
+				continue
+			}
+			md.Set(k, v)
+		}
+	}
+
+	// Authorization
+	if fr.tokenSource != nil {
+		tok, err := fr.tokenSource.AccessToken(ctx)
+		if err != nil {
+			return ctx, fmt.Errorf("oauth token source error: %w", err)
+		}
+		if tok == "" {
+			return ctx, fmt.Errorf("oauth token empty")
+		}
+		md.Set("authorization", "Bearer "+tok)
+	}
+
+	// Trace ID: set only if not present
+	if _, present := md["trace-id"]; !present {
+		md.Set("trace-id", utils.GenerateUniqueHash())
+	}
+
+	return metadata.NewOutgoingContext(ctx, md), nil
+}
+
+// makeDialOptions enforces TLS if OAuth2 is enabled, returns appropriate transport creds.
+func (fr *ForwardRelay[T]) makeDialOptions() ([]credentials.TransportCredentials, bool, error) {
+	// Return: (creds, useInsecure, err)
+	if fr.TlsConfig != nil && fr.TlsConfig.UseTLS {
+		creds, err := fr.loadTLSCredentials(fr.TlsConfig)
+		if err != nil {
+			return nil, false, err
+		}
+		return []credentials.TransportCredentials{creds}, false, nil
+	}
+
+	// No TLS configured
+	if fr.tokenSource != nil {
+		// Do not allow bearer over plaintext.
+		return nil, false, fmt.Errorf("oauth2 enabled but TLS is disabled; refuse to dial insecure")
+	}
+
+	// Caller will choose grpc.WithInsecure() path.
+	return nil, true, nil
 }
