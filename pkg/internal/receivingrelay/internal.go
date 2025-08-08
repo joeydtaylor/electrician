@@ -28,6 +28,7 @@ package receivingrelay
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/tls"
@@ -36,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/andybalholm/brotli"
 	"github.com/golang/snappy"
@@ -43,7 +45,11 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // Local aliases for compression, same as forward side:
@@ -217,4 +223,104 @@ func decryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byt
 		return nil, fmt.Errorf("decryptData: GCM decryption failed: %w", err)
 	}
 	return plaintext, nil
+}
+
+// -------------------- NEW: auth policy + interceptor wiring --------------------
+
+// buildUnaryPolicyInterceptor enforces static headers and the dynamic auth validator for unary RPCs.
+func (rr *ReceivingRelay[T]) buildUnaryPolicyInterceptor() grpc.UnaryServerInterceptor {
+	needPolicy := rr.dynamicAuthValidator != nil || len(rr.staticHeaders) > 0
+	if !needPolicy {
+		return nil
+	}
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		mdMap := rr.collectIncomingMD(ctx)
+
+		// Static headers
+		if err := rr.checkStaticHeaders(mdMap); err != nil {
+			return nil, err
+		}
+
+		// Dynamic validator
+		if rr.dynamicAuthValidator != nil {
+			if err := rr.dynamicAuthValidator(ctx, mdMap); err != nil {
+				return nil, status.Errorf(codes.Unauthenticated, "auth validation failed: %v", err)
+			}
+		}
+
+		return handler(ctx, req)
+	}
+}
+
+// buildStreamPolicyInterceptor enforces the same policy for streaming RPCs (e.g., StreamReceive).
+func (rr *ReceivingRelay[T]) buildStreamPolicyInterceptor() grpc.StreamServerInterceptor {
+	needPolicy := rr.dynamicAuthValidator != nil || len(rr.staticHeaders) > 0
+	if !needPolicy {
+		return nil
+	}
+	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		ctx := ss.Context()
+		mdMap := rr.collectIncomingMD(ctx)
+
+		// Static headers
+		if err := rr.checkStaticHeaders(mdMap); err != nil {
+			return err
+		}
+
+		// Dynamic validator
+		if rr.dynamicAuthValidator != nil {
+			if err := rr.dynamicAuthValidator(ctx, mdMap); err != nil {
+				return status.Errorf(codes.Unauthenticated, "auth validation failed: %v", err)
+			}
+		}
+
+		return handler(srv, ss)
+	}
+}
+
+// appendAuthServerOptions chains our policy interceptors and any custom rr.authUnary into grpc.ServerOptions.
+func (rr *ReceivingRelay[T]) appendAuthServerOptions(opts []grpc.ServerOption) []grpc.ServerOption {
+	// Unary chain: policy + user-provided (order matters: policy first, then rr.authUnary)
+	var unaryChain []grpc.UnaryServerInterceptor
+	if p := rr.buildUnaryPolicyInterceptor(); p != nil {
+		unaryChain = append(unaryChain, p)
+	}
+	if rr.authUnary != nil {
+		unaryChain = append(unaryChain, rr.authUnary)
+	}
+	if len(unaryChain) > 0 {
+		opts = append(opts, grpc.ChainUnaryInterceptor(unaryChain...))
+	}
+
+	// Stream chain: policy only (we don't have a user-provided stream interceptor today)
+	if p := rr.buildStreamPolicyInterceptor(); p != nil {
+		opts = append(opts, grpc.ChainStreamInterceptor(p))
+	}
+
+	return opts
+}
+
+// collectIncomingMD flattens incoming metadata into a case-insensitive map.
+func (rr *ReceivingRelay[T]) collectIncomingMD(ctx context.Context) map[string]string {
+	out := make(map[string]string)
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		for k, vals := range md {
+			if len(vals) > 0 {
+				out[strings.ToLower(k)] = vals[0]
+			}
+		}
+	}
+	return out
+}
+
+// checkStaticHeaders enforces exact-match static metadata headers.
+func (rr *ReceivingRelay[T]) checkStaticHeaders(md map[string]string) error {
+	for k, v := range rr.staticHeaders {
+		lk := strings.ToLower(k)
+		got, ok := md[lk]
+		if !ok || got != v {
+			return status.Errorf(codes.Unauthenticated, "missing/invalid header %s", k)
+		}
+	}
+	return nil
 }

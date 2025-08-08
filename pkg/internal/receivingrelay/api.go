@@ -143,6 +143,10 @@ func (rr *ReceivingRelay[T]) Listen(listenForever bool, retryInSeconds int) erro
 	}
 
 	rr.NotifyLoggers(types.InfoLevel, "%s, address: %s, level: INFO, result: SUCCESS, event: Listen => TCP listener created, starting gRPC server", rr.componentMetadata, rr.Address)
+
+	// Attach policy + custom auth interceptors (chain unary + stream) before creating the server.
+	opts = rr.appendAuthServerOptions(opts)
+
 	s := grpc.NewServer(opts...)
 	relay.RegisterRelayServiceServer(s, rr)
 
@@ -449,4 +453,64 @@ func UnwrapPayload[T any](wrappedPayload *relay.WrappedPayload, decryptionKey st
 	}
 
 	return nil
+}
+
+// --- New auth-related methods ---
+
+// SetAuthenticationOptions sets expected auth mode and parameters (mirrors proto MessageMetadata.authentication).
+func (rr *ReceivingRelay[T]) SetAuthenticationOptions(opts *relay.AuthenticationOptions) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetAuthenticationOptions", rr.componentMetadata))
+	}
+	rr.authOptions = opts
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetAuthenticationOptions, new: %+v",
+		rr.componentMetadata, rr.Address, opts,
+	)
+}
+
+// SetAuthInterceptor installs a gRPC unary interceptor for authentication/authorization.
+// Typical usage: validate Bearer tokens (JWT/JWKS or introspection) or enforce mTLS authz.
+func (rr *ReceivingRelay[T]) SetAuthInterceptor(interceptor grpc.UnaryServerInterceptor) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetAuthInterceptor", rr.componentMetadata))
+	}
+	rr.authUnary = interceptor
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetAuthInterceptor, installed: %t",
+		rr.componentMetadata, rr.Address, interceptor != nil,
+	)
+}
+
+// SetStaticHeaders defines constant metadata keys/values that must be present in incoming requests.
+// Useful for enforcing tenant IDs or fixed routing headers prior to payload processing.
+func (rr *ReceivingRelay[T]) SetStaticHeaders(h map[string]string) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetStaticHeaders", rr.componentMetadata))
+	}
+	rr.staticHeaders = make(map[string]string, len(h))
+	for k, v := range h {
+		rr.staticHeaders[k] = v
+	}
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetStaticHeaders, keys: %d",
+		rr.componentMetadata, rr.Address, len(rr.staticHeaders),
+	)
+}
+
+// SetDynamicAuthValidator registers a per-request validation callback that runs before payload processing.
+// Return an error to reject the request (e.g., missing scope/audience, header mismatch, custom policy).
+func (rr *ReceivingRelay[T]) SetDynamicAuthValidator(fn func(ctx context.Context, md map[string]string) error) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetDynamicAuthValidator", rr.componentMetadata))
+	}
+	rr.dynamicAuthValidator = fn
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetDynamicAuthValidator, installed: %t",
+		rr.componentMetadata, rr.Address, fn != nil,
+	)
 }

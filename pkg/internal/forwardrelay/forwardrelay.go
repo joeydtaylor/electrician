@@ -42,7 +42,7 @@ import (
 // It manages the transmission of data between relay nodes, providing reliability and efficiency
 // in distributed systems communication.
 type ForwardRelay[T any] struct {
-	Targets            []string                  // Address of the receiving relay.
+	Targets            []string                  // Addresses of the receiving relay(s).
 	Input              []types.Receiver[T]       // List of receivers for incoming data.
 	ctx                context.Context           // Context for managing relay operations.
 	cancel             context.CancelFunc        // Function to cancel relay operations.
@@ -51,10 +51,18 @@ type ForwardRelay[T any] struct {
 	loggersLock        *sync.Mutex               // Mutex for loggers slice access control.
 	TlsConfig          *types.TLSConfig          // TLS configuration for secure communication.
 	PerformanceOptions *relay.PerformanceOptions // Performance options for relay operations.
-	// ----- New fields for Security -----
+
+	// ----- Security (content encryption) -----
 	SecurityOptions *relay.SecurityOptions // Security options (e.g. AES-GCM).
 	EncryptionKey   string                 // Encryption key for secure communication.
-	// -----------------------------------
+
+	// ----- Authentication (transport/application layer) -----
+	authOptions    *relay.AuthenticationOptions                // Auth hints to send in proto metadata.
+	tokenSource    types.OAuth2TokenSource                     // Optional OAuth2 per-RPC token source.
+	staticHeaders  map[string]string                           // Constant gRPC metadata headers.
+	dynamicHeaders func(ctx context.Context) map[string]string // Per-request metadata callback.
+
+	// ----- Runtime State -----
 	isRunning            int32        // Atomic flag indicating running state.
 	tlsCredentials       atomic.Value // Atomic value for TLS credentials.
 	tlsCredentialsUpdate sync.Mutex   // Mutex for TLS credentials update.

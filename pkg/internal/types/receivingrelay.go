@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
+	"google.golang.org/grpc"
 )
 
 // ReceivingRelay defines the operations for a Receiving Relay, which is responsible for
@@ -79,4 +80,12 @@ type ReceivingRelay[T any] interface {
 	// all resources are released, all ongoing data receptions are gracefully shut down,
 	// and the system is cleaned up properly.
 	Stop()
+
+	// --- New auth-related hooks (optional) ---
+
+	// --- Auth (optional) ---
+	SetAuthenticationOptions(*relay.AuthenticationOptions)
+	SetAuthInterceptor(grpc.UnaryServerInterceptor) // <-- fix here
+	SetStaticHeaders(map[string]string)
+	SetDynamicAuthValidator(func(ctx context.Context, md map[string]string) error)
 }

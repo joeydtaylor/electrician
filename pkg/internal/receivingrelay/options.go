@@ -21,118 +21,223 @@
 package receivingrelay
 
 import (
+	"context"
+
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // WithAddress returns an option for setting the network address of a ReceivingRelay.
-// This is crucial for defining where the ReceivingRelay will listen for incoming data.
-//
-// Parameters:
-//   - address: A string specifying the network address.
-//
-// Returns:
-//
-//	An option that sets the address when applied to a ReceivingRelay.
 func WithAddress[T any](address string) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.SetAddress(address)
-	}
+	return func(rr types.ReceivingRelay[T]) { rr.SetAddress(address) }
 }
 
-// WithOutput configures a ReceivingRelay with one or more output conduits.
-// These outputs are typically where processed data is sent after being received.
-//
-// Parameters:
-//   - output: A variadic slice of Submitter[T] instances representing the output conduits.
-//
-// Returns:
-//
-//	An option that connects the specified outputs to the ReceivingRelay.
+// WithOutput configures output conduits.
 func WithOutput[T any](output ...types.Submitter[T]) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.ConnectOutput(output...)
-	}
+	return func(rr types.ReceivingRelay[T]) { rr.ConnectOutput(output...) }
 }
 
-// WithTLSConfig sets the TLS configuration for securing the connections of a ReceivingRelay.
-// This option is essential for ensuring encrypted communication.
-//
-// Parameters:
-//   - config: A pointer to a types.TLSConfig struct containing TLS settings.
-//
-// Returns:
-//
-//	An option that configures TLS settings when applied to a ReceivingRelay.
+// WithTLSConfig sets TLS configuration.
 func WithTLSConfig[T any](config *types.TLSConfig) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.SetTLSConfig(config)
-	}
+	return func(rr types.ReceivingRelay[T]) { rr.SetTLSConfig(config) }
 }
 
-// WithBufferSize adjusts the buffer size of the internal data channel of a ReceivingRelay.
-// This can impact how much incoming data can be buffered before being processed.
-//
-// Parameters:
-//   - bufferSize: The size of the buffer as a uint32.
-//
-// Returns:
-//
-//	An option that sets the buffer size when applied to a ReceivingRelay.
+// WithBufferSize adjusts the internal data channel buffer size.
 func WithBufferSize[T any](bufferSize uint32) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.SetDataChannel(bufferSize)
-	}
+	return func(rr types.ReceivingRelay[T]) { rr.SetDataChannel(bufferSize) }
 }
 
-// WithLogger attaches one or more loggers to a ReceivingRelay.
-// These loggers are used for recording operational events and errors.
-//
-// Parameters:
-//   - logger: A variadic slice of Logger interfaces.
-//
-// Returns:
-//
-//	An option that connects loggers to the ReceivingRelay.
+// WithLogger attaches one or more loggers.
 func WithLogger[T any](logger ...types.Logger) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.ConnectLogger(logger...)
-	}
+	return func(rr types.ReceivingRelay[T]) { rr.ConnectLogger(logger...) }
 }
 
-// WithComponentMetadata configures a ReceivingRelay component with custom metadata, including a name and an identifier.
-// This function provides an option to set these metadata properties, which can be used for identification,
-// logging, or other purposes where metadata is needed for a ReceivingRelay. It uses the SetComponentMetadata method
-// internally to apply these settings. If the ReceivingRelay's configuration is frozen (indicating that the component
-// has started operation and its configuration should no longer be changed), attempting to set metadata
-// will result in a panic. This ensures the integrity of component configurations during runtime.
-//
-// Parameters:
-//   - name: The name to set for the ReceivingRelay component, used for identification and logging.
-//   - id: The unique identifier to set for the ReceivingRelay component, used for unique identification across systems.
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ReceivingRelay[T]], which when called with a ReceivingRelay component,
-//	sets the specified name and id in the component's metadata.
+// WithComponentMetadata sets name and ID metadata.
 func WithComponentMetadata[T any](name string, id string) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.SetComponentMetadata(name, id)
+	return func(rr types.ReceivingRelay[T]) { rr.SetComponentMetadata(name, id) }
+}
+
+// WithDecryptionKey sets the decryption key (e.g., AES-GCM).
+func WithDecryptionKey[T any](key string) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetDecryptionKey(key) }
+}
+
+// WithAuthenticationOptions configures expected auth mode/parameters.
+func WithAuthenticationOptions[T any](opts *relay.AuthenticationOptions) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetAuthenticationOptions(opts) }
+}
+
+// WithAuthInterceptor installs a gRPC unary auth interceptor.
+func WithAuthInterceptor[T any](interceptor grpc.UnaryServerInterceptor) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetAuthInterceptor(interceptor) }
+}
+
+// WithStaticHeaders enforces constant metadata on incoming requests.
+func WithStaticHeaders[T any](headers map[string]string) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetStaticHeaders(headers) }
+}
+
+// WithDynamicAuthValidator registers a per-request validation callback.
+func WithDynamicAuthValidator[T any](fn func(ctx context.Context, md map[string]string) error) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetDynamicAuthValidator(fn) }
+}
+
+// ============================================================================
+// OAuth2 / Auth constructors (server-side) — keep builder thin; expose here.
+// ============================================================================
+
+// NewOAuth2JWTOptions builds JWT validation settings for resource servers.
+func NewOAuth2JWTOptions(
+	issuer string,
+	jwksURI string,
+	audiences []string,
+	scopes []string,
+	jwksCacheSeconds int32,
+) *relay.OAuth2Options {
+	return &relay.OAuth2Options{
+		AcceptJwt:             true,
+		AcceptIntrospection:   false,
+		Issuer:                issuer,
+		JwksUri:               jwksURI,
+		RequiredAudience:      cloneStrings(audiences),
+		RequiredScopes:        cloneStrings(scopes),
+		JwksCacheSeconds:      jwksCacheSeconds,
+		ForwardBearerToken:    false,
+		ForwardMetadataKey:    "",
+		IntrospectionUrl:      "",
+		IntrospectionAuthType: "",
 	}
 }
 
-// WithDecryptionKey sets the decryption key for a ReceivingRelay.
-// This key is used to decrypt incoming AES-GCM payloads, relying on
-// the metadata in the WrappedPayload to determine if/when decryption is needed.
-//
-// Parameters:
-//   - key: The decryption key (e.g., for AES-GCM).
-//
-// Returns:
-//
-//	A function conforming to types.Option[types.ReceivingRelay[T]] which,
-//	when applied to a ReceivingRelay, calls SetDecryptionKey.
-func WithDecryptionKey[T any](key string) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) {
-		rr.SetDecryptionKey(key)
+// NewOAuth2IntrospectionOptions builds RFC 7662 introspection settings.
+func NewOAuth2IntrospectionOptions(
+	introspectionURL string,
+	authType string, // "basic" | "bearer" | "none"
+	clientID string,
+	clientSecret string,
+	bearerToken string,
+	introspectionCacheSeconds int32,
+) *relay.OAuth2Options {
+	return &relay.OAuth2Options{
+		AcceptJwt:                 false,
+		AcceptIntrospection:       true,
+		IntrospectionUrl:          introspectionURL,
+		IntrospectionAuthType:     authType,
+		IntrospectionClientId:     clientID,
+		IntrospectionClientSecret: clientSecret,
+		IntrospectionBearerToken:  bearerToken,
+		IntrospectionCacheSeconds: introspectionCacheSeconds,
 	}
+}
+
+// NewOAuth2Forwarding controls forwarding of inbound bearer tokens to downstream services.
+func NewOAuth2Forwarding(forward bool, forwardMetadataKey string) *relay.OAuth2Options {
+	return &relay.OAuth2Options{
+		ForwardBearerToken: forward,
+		ForwardMetadataKey: forwardMetadataKey,
+	}
+}
+
+// MergeOAuth2Options merges non-zero fields from src into dst (uses proto clone to avoid mutex copy).
+func MergeOAuth2Options(dst *relay.OAuth2Options, src *relay.OAuth2Options) *relay.OAuth2Options {
+	if dst == nil {
+		return cloneOAuth2(src)
+	}
+	if src == nil {
+		return dst
+	}
+	if src.AcceptJwt {
+		dst.AcceptJwt = true
+	}
+	if src.AcceptIntrospection {
+		dst.AcceptIntrospection = true
+	}
+	if src.Issuer != "" {
+		dst.Issuer = src.Issuer
+	}
+	if src.JwksUri != "" {
+		dst.JwksUri = src.JwksUri
+	}
+	if len(src.RequiredAudience) > 0 {
+		dst.RequiredAudience = cloneStrings(src.RequiredAudience)
+	}
+	if len(src.RequiredScopes) > 0 {
+		dst.RequiredScopes = cloneStrings(src.RequiredScopes)
+	}
+	if src.IntrospectionUrl != "" {
+		dst.IntrospectionUrl = src.IntrospectionUrl
+	}
+	if src.IntrospectionAuthType != "" {
+		dst.IntrospectionAuthType = src.IntrospectionAuthType
+	}
+	if src.IntrospectionClientId != "" {
+		dst.IntrospectionClientId = src.IntrospectionClientId
+	}
+	if src.IntrospectionClientSecret != "" {
+		dst.IntrospectionClientSecret = src.IntrospectionClientSecret
+	}
+	if src.IntrospectionBearerToken != "" {
+		dst.IntrospectionBearerToken = src.IntrospectionBearerToken
+	}
+	if src.JwksCacheSeconds != 0 {
+		dst.JwksCacheSeconds = src.JwksCacheSeconds
+	}
+	if src.IntrospectionCacheSeconds != 0 {
+		dst.IntrospectionCacheSeconds = src.IntrospectionCacheSeconds
+	}
+	if src.ForwardMetadataKey != "" || src.ForwardBearerToken {
+		dst.ForwardBearerToken = src.ForwardBearerToken
+		dst.ForwardMetadataKey = src.ForwardMetadataKey
+	}
+	return dst
+}
+
+// NewAuthenticationOptionsOAuth2 composes AuthenticationOptions for OAuth2.
+func NewAuthenticationOptionsOAuth2(oauth *relay.OAuth2Options) *relay.AuthenticationOptions {
+	return &relay.AuthenticationOptions{
+		Enabled: true,
+		Mode:    relay.AuthMode_AUTH_OAUTH2,
+		Oauth2:  oauth,
+	}
+}
+
+// NewAuthenticationOptionsMTLS composes AuthenticationOptions for mTLS-only.
+func NewAuthenticationOptionsMTLS(allowedPrincipals []string, trustDomain string) *relay.AuthenticationOptions {
+	return &relay.AuthenticationOptions{
+		Enabled: true,
+		Mode:    relay.AuthMode_AUTH_MUTUAL_TLS,
+		Mtls: &relay.MTLSOptions{
+			AllowedPrincipals: cloneStrings(allowedPrincipals),
+			TrustDomain:       trustDomain,
+		},
+	}
+}
+
+// NewAuthenticationOptionsNone composes a disabled auth options object.
+func NewAuthenticationOptionsNone() *relay.AuthenticationOptions {
+	return &relay.AuthenticationOptions{
+		Enabled: false,
+		Mode:    relay.AuthMode_AUTH_NONE,
+	}
+}
+
+// -------------------- small internals --------------------
+
+func cloneStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+// cloneOAuth2 avoids copying proto internal mutexes by using proto.Clone.
+func cloneOAuth2(in *relay.OAuth2Options) *relay.OAuth2Options {
+	if in == nil {
+		return nil
+	}
+	return proto.Clone(in).(*relay.OAuth2Options)
 }

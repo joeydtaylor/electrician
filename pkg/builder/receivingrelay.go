@@ -4,7 +4,9 @@ import (
 	"context"
 
 	rr "github.com/joeydtaylor/electrician/pkg/internal/receivingrelay"
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
+	"google.golang.org/grpc"
 )
 
 // NewReceivingRelay creates a new ReceivingRelay with specified options.
@@ -56,15 +58,78 @@ func ReceivingRelayWithTLSConfig[T any](config *types.TLSConfig) types.Option[ty
 }
 
 // ReceivingRelayWithDecryptionKey sets the decryption key for the ReceivingRelay.
-// This key is used to decrypt AES-GCM payloads, relying on inbound metadata to
-// determine whether decryption is needed.
-//
-// Parameters:
-//   - key: The decryption key.
-//
-// Returns:
-//
-//	A functional option that calls SetDecryptionKey on the ReceivingRelay.
 func ReceivingRelayWithDecryptionKey[T any](key string) types.Option[types.ReceivingRelay[T]] {
 	return rr.WithDecryptionKey[T](key)
+}
+
+// -------------------- New auth-related wrappers --------------------
+
+// ReceivingRelayWithAuthenticationOptions provides expected auth mode/parameters (proto hints).
+func ReceivingRelayWithAuthenticationOptions[T any](opts *relay.AuthenticationOptions) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithAuthenticationOptions[T](opts)
+}
+
+// ReceivingRelayWithAuthInterceptor installs a gRPC unary auth interceptor.
+func ReceivingRelayWithAuthInterceptor[T any](interceptor grpc.UnaryServerInterceptor) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithAuthInterceptor[T](interceptor)
+}
+
+// ReceivingRelayWithStaticHeaders enforces constant metadata keys/values.
+func ReceivingRelayWithStaticHeaders[T any](headers map[string]string) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithStaticHeaders[T](headers)
+}
+
+// ReceivingRelayWithDynamicAuthValidator registers a per-request validation callback.
+func ReceivingRelayWithDynamicAuthValidator[T any](fn func(ctx context.Context, md map[string]string) error) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithDynamicAuthValidator[T](fn)
+}
+
+// -------------------- OAuth2 translators (prefixed to avoid collision) --------------------
+
+// NewReceivingRelayOAuth2JWTOptions builds JWT validation settings for resource servers.
+func NewReceivingRelayOAuth2JWTOptions(
+	issuer string,
+	jwksURI string,
+	audiences []string,
+	scopes []string,
+	jwksCacheSeconds int32,
+) *relay.OAuth2Options {
+	return rr.NewOAuth2JWTOptions(issuer, jwksURI, audiences, scopes, jwksCacheSeconds)
+}
+
+// NewReceivingRelayOAuth2IntrospectionOptions builds RFC 7662 introspection settings.
+func NewReceivingRelayOAuth2IntrospectionOptions(
+	introspectionURL string,
+	authType string, // "basic" | "bearer" | "none"
+	clientID string,
+	clientSecret string,
+	bearerToken string,
+	introspectionCacheSeconds int32,
+) *relay.OAuth2Options {
+	return rr.NewOAuth2IntrospectionOptions(introspectionURL, authType, clientID, clientSecret, bearerToken, introspectionCacheSeconds)
+}
+
+// NewReceivingRelayOAuth2Forwarding toggles forwarding of the inbound bearer token to downstream services.
+func NewReceivingRelayOAuth2Forwarding(forward bool, forwardMetadataKey string) *relay.OAuth2Options {
+	return rr.NewOAuth2Forwarding(forward, forwardMetadataKey)
+}
+
+// NewReceivingRelayMergeOAuth2Options merges non-zero fields from src into dst.
+func NewReceivingRelayMergeOAuth2Options(dst *relay.OAuth2Options, src *relay.OAuth2Options) *relay.OAuth2Options {
+	return rr.MergeOAuth2Options(dst, src)
+}
+
+// NewReceivingRelayAuthenticationOptionsOAuth2 composes AuthenticationOptions for OAuth2.
+func NewReceivingRelayAuthenticationOptionsOAuth2(oauth *relay.OAuth2Options) *relay.AuthenticationOptions {
+	return rr.NewAuthenticationOptionsOAuth2(oauth)
+}
+
+// NewReceivingRelayAuthenticationOptionsMTLS composes AuthenticationOptions for mTLS-only.
+func NewReceivingRelayAuthenticationOptionsMTLS(allowedPrincipals []string, trustDomain string) *relay.AuthenticationOptions {
+	return rr.NewAuthenticationOptionsMTLS(allowedPrincipals, trustDomain)
+}
+
+// NewReceivingRelayAuthenticationOptionsNone composes a disabled auth options object.
+func NewReceivingRelayAuthenticationOptionsNone() *relay.AuthenticationOptions {
+	return rr.NewAuthenticationOptionsNone()
 }
