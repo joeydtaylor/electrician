@@ -32,7 +32,7 @@ func main() {
 	// Build the ForwardRelay with the wire as input
 	forwardRelay := builder.NewForwardRelay(
 		ctx,
-		builder.ForwardRelayWithTarget[Feedback]("localhost:50051"),
+		builder.ForwardRelayWithTarget[Feedback]("localhost:50052"),
 		builder.ForwardRelayWithInput(wire),
 		builder.ForwardRelayWithLogger[Feedback](logger),
 	)
