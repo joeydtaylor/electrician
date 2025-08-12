@@ -55,7 +55,7 @@ func main() {
 	// Receiving Relay that uses the second conduit
 	receivingRelay := builder.NewReceivingRelay(
 		ctx,
-		builder.ReceivingRelayWithAddress[Feedback]("localhost:50051"),
+		builder.ReceivingRelayWithAddress[Feedback]("localhost:50059"),
 		builder.ReceivingRelayWithBufferSize[Feedback](10000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
 		builder.ReceivingRelayWithOutput(sentimentWire),
