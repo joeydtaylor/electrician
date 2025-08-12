@@ -14,59 +14,67 @@ import (
 )
 
 // S3Client[T] concrete implementation (read + write in one component).
+// Back-compat: preserves existing NDJSON fields while adding pluggable format handles.
 type S3Client[T any] struct {
-	// meta / lifecycle
+	// --- meta / lifecycle ---
 	componentMetadata types.ComponentMetadata
 	ctx               context.Context
 	cancel            context.CancelFunc
 	isServing         int32 // atomic
 
-	// logging / sensors
+	// --- logging / sensors ---
 	loggers     []types.Logger
 	loggersLock sync.Mutex
 	sensors     []types.Sensor[T]
 	sensorLock  sync.Mutex
 
-	// deps
+	// --- deps ---
 	cli    *s3.Client
 	bucket string
 
-	// writer naming/layout
+	// --- writer naming/layout ---
 	prefixTemplate string // e.g. "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/"
-	fileNameTmpl   string // e.g. "{ts}-{ulid}.ndjson"
+	fileNameTmpl   string // basename; extension derived from format (default "{ts}-{ulid}")
 
-	// format for structured records
-	format         string // "ndjson" (MVP) | "parquet" (later)
-	compression    string // ndjson: "gzip" | ""
-	ndjsonMime     string // default "application/x-ndjson"
-	ndjsonGzipMime string // default "application/x-ndjson" with Content-Encoding: gzip
+	// --- format (pluggable) ---
+	// Selection by name (e.g., "ndjson","parquet","raw") and resolved handler.
+	formatName  string
+	formatOpts  map[string]string // encoder knobs
+	format      types.Format[T]   // nil => use legacy NDJSON path
+	ndjsonMime  string            // legacy defaults
+	ndjsonEncGz bool              // legacy gzip toggle
 
-	// raw writer options (single object, pre-encoded parquet or other binary)
+	// --- BYTES passthrough (raw/parquet single-object) ---
 	rawWriterExt         string // default ".parquet"
-	rawWriterContentType string // default "application/octet-stream" (override to "application/octet-stream" or Parquet types)
+	rawWriterContentType string // default "application/octet-stream"
 
-	// SSE
+	// --- SSE ---
 	sseMode string // "" | "AES256" | "aws:kms"
 	kmsKey  string
 
-	// writer batching (structured NDJSON path)
+	// --- writer batching (record-oriented encoders) ---
 	batchMaxRecords int
 	batchMaxBytes   int
 	batchMaxAge     time.Duration
 
-	// writer state
+	// --- writer state ---
 	buf       *bytes.Buffer
 	count     int
 	lastFlush time.Time
 
-	// reader config/state
+	// --- reader config/state ---
 	listPrefix       string
 	listStartAfter   string
 	listPageSize     int32
 	listPollInterval time.Duration
+
+	// reader-side format
+	readerFormatName string
+	readerFormatOpts map[string]string
+	readerFormat     types.Format[T]
 }
 
-// NewS3ClientAdapter mirrors your constructor pattern; options mutate the concrete impl.
+// NewS3ClientAdapter mirrors the public constructor; options mutate the concrete impl.
 func NewS3ClientAdapter[T any](ctx context.Context, options ...types.S3ClientOption[T]) types.S3ClientAdapter[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -79,29 +87,54 @@ func NewS3ClientAdapter[T any](ctx context.Context, options ...types.S3ClientOpt
 		},
 		loggers: make([]types.Logger, 0),
 		sensors: make([]types.Sensor[T], 0),
-		// writer defaults
+
+		// --- writer defaults ---
 		prefixTemplate: "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/",
-		fileNameTmpl:   "{ts}-{ulid}.ndjson",
-		format:         "ndjson",
-		compression:    "gzip",
-		ndjsonMime:     "application/x-ndjson",
-		ndjsonGzipMime: "application/x-ndjson",
+		fileNameTmpl:   "{ts}-{ulid}", // extension added by format
+
+		// default to NDJSON (back-compat path)
+		formatName: "ndjson",
+		formatOpts: map[string]string{
+			"gzip": "true",
+		},
+		ndjsonMime:  "application/x-ndjson",
+		ndjsonEncGz: true,
+
 		// raw write defaults (Parquet-friendly)
 		rawWriterExt:         ".parquet",
 		rawWriterContentType: "application/octet-stream",
+
 		// batching defaults
 		batchMaxRecords: 50_000,
 		batchMaxBytes:   128 << 20, // 128 MiB
 		batchMaxAge:     60 * time.Second,
-		// reader defaults
+
+		// --- reader defaults ---
 		listPageSize:     1000,
 		listPollInterval: 5 * time.Second,
-		// buffer
-		buf: bytes.NewBuffer(make([]byte, 0, 1<<20)), // 1 MiB
+		readerFormatName: "ndjson",
+		readerFormatOpts: map[string]string{"gzip": "auto"},
+		listPrefix:       "",
+		listStartAfter:   "",
+		// --- buffer ---
+		buf: bytes.NewBuffer(make([]byte, 0, 1<<20)), // 1 MiB initial cap
 	}
 
 	for _, opt := range options {
 		opt(a)
 	}
+
+	// Derive implicit content-type/extension defaults for raw/parquet if caller set formatName.
+	switch a.formatName {
+	case "parquet":
+		if a.rawWriterExt == "" {
+			a.rawWriterExt = ".parquet"
+		}
+		if a.rawWriterContentType == "" {
+			// Most users prefer "application/parquet"; keeping octet-stream default elsewhere.
+			a.rawWriterContentType = "application/parquet"
+		}
+	}
+
 	return a
 }

@@ -32,12 +32,32 @@ func (a *S3Client[T]) SetWriterConfig(c types.S3WriterConfig) {
 		a.fileNameTmpl = c.FileNameTmpl
 	}
 	if c.Format != "" {
-		a.format = strings.ToLower(c.Format)
+		a.formatName = strings.ToLower(c.Format)
 	}
+	// merge encoder knobs
+	if len(c.FormatOptions) > 0 {
+		if a.formatOpts == nil {
+			a.formatOpts = make(map[string]string, len(c.FormatOptions))
+		}
+		for k, v := range c.FormatOptions {
+			a.formatOpts[k] = v
+		}
+	}
+	// legacy compression hint (NDJSON only)
 	if c.Compression != "" {
-		a.compression = strings.ToLower(c.Compression)
+		a.ndjsonEncGz = strings.EqualFold(c.Compression, "gzip")
+		if a.ndjsonEncGz {
+			if a.formatOpts == nil {
+				a.formatOpts = map[string]string{}
+			}
+			a.formatOpts["gzip"] = "true"
+		}
 	}
+
+	// SSE
 	a.sseMode, a.kmsKey = c.SSEMode, c.KMSKeyID
+
+	// batching
 	if c.BatchMaxRecords > 0 {
 		a.batchMaxRecords = c.BatchMaxRecords
 	}
@@ -46,6 +66,14 @@ func (a *S3Client[T]) SetWriterConfig(c types.S3WriterConfig) {
 	}
 	if c.BatchMaxAge > 0 {
 		a.batchMaxAge = c.BatchMaxAge
+	}
+
+	// raw passthrough defaults/overrides
+	if c.RawExtension != "" {
+		a.rawWriterExt = c.RawExtension
+	}
+	if c.RawContentType != "" {
+		a.rawWriterContentType = c.RawContentType
 	}
 }
 
@@ -58,11 +86,25 @@ func (a *S3Client[T]) SetReaderConfig(c types.S3ReaderConfig) {
 	if c.ListInterval > 0 {
 		a.listPollInterval = c.ListInterval
 	}
+
 	if c.Format != "" {
-		a.format = strings.ToLower(c.Format)
+		a.readerFormatName = strings.ToLower(c.Format)
 	}
-	if c.Compression != "" {
-		a.compression = strings.ToLower(c.Compression)
+	// merge decoder knobs
+	if len(c.FormatOptions) > 0 {
+		if a.readerFormatOpts == nil {
+			a.readerFormatOpts = make(map[string]string, len(c.FormatOptions))
+		}
+		for k, v := range c.FormatOptions {
+			a.readerFormatOpts[k] = v
+		}
+	}
+	// legacy compression hint (NDJSON only)
+	if c.Compression != "" && strings.EqualFold(c.Compression, "gzip") {
+		if a.readerFormatOpts == nil {
+			a.readerFormatOpts = map[string]string{}
+		}
+		a.readerFormatOpts["gzip"] = "true"
 	}
 }
 

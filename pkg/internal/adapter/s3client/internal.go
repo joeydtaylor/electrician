@@ -1,3 +1,4 @@
+// pkg/internal/adapter/s3client/internal.go
 package s3client
 
 import (
@@ -19,11 +20,17 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// writeOne appends one NDJSON record (Parquet can plug in later).
+// writeOne appends one record for legacy NDJSON mode.
+// If/when a.format (types.Format[T]) is wired, this will be replaced by the pluggable encoder path.
 func (a *S3Client[T]) writeOne(v T) error {
-	if a.format != "ndjson" {
-		return fmt.Errorf("format %q not implemented", a.format)
+	// Legacy NDJSON only (record-oriented)
+	if a.format != nil && a.formatName != "ndjson" {
+		return fmt.Errorf("record encoder for format %q not wired yet", a.formatName)
 	}
+	if a.formatName != "ndjson" {
+		return fmt.Errorf("format %q not implemented for record-oriented writes; use ServeWriterRaw for bytes", a.formatName)
+	}
+
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -34,22 +41,31 @@ func (a *S3Client[T]) writeOne(v T) error {
 	return nil
 }
 
+// flush uploads the buffered records as a single object.
+// Legacy path supports NDJSON (+ optional gzip). Extension and content-type are derived.
 func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 	if a.count == 0 {
 		return nil
 	}
-	key := a.renderKey(now)
+	if a.formatName != "ndjson" {
+		return fmt.Errorf("flush: record-oriented encoder for format %q not implemented", a.formatName)
+	}
+
+	ext := ".ndjson"
+	ct := a.ndjsonMime
+	key := a.renderKey(now) + ext
 
 	var body io.Reader = bytes.NewReader(a.buf.Bytes())
 	var gz bytes.Buffer
 
 	put := &s3api.PutObjectInput{
-		Bucket: &a.bucket,
-		Key:    &key,
+		Bucket:      &a.bucket,
+		Key:         &key,
+		ContentType: aws.String(ct),
 	}
 
 	// compression (ndjson)
-	if strings.EqualFold(a.compression, "gzip") {
+	if a.ndjsonEncGz || strings.EqualFold(a.formatOpts["gzip"], "true") {
 		zw := gzip.NewWriter(&gz)
 		if _, err := io.Copy(zw, body); err != nil {
 			return err
@@ -86,16 +102,36 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 }
 
 // flushRaw uploads a.buf bytes as-is (no extra compression), honoring SSE.
+// Extension and content type come from raw defaults or the parquet preset.
 func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 	if a.buf.Len() == 0 {
 		return nil
 	}
-	key := a.renderKey(now)
+
+	ext := a.rawWriterExt
+	if ext == "" {
+		if a.formatName == "parquet" {
+			ext = ".parquet"
+		} else {
+			ext = ".bin"
+		}
+	}
+	ct := a.rawWriterContentType
+	if ct == "" {
+		if a.formatName == "parquet" {
+			ct = "application/parquet"
+		} else {
+			ct = "application/octet-stream"
+		}
+	}
+
+	key := a.renderKey(now) + ext
 
 	put := &s3api.PutObjectInput{
-		Bucket: &a.bucket,
-		Key:    &key,
-		Body:   bytes.NewReader(a.buf.Bytes()),
+		Bucket:      &a.bucket,
+		Key:         &key,
+		Body:        bytes.NewReader(a.buf.Bytes()),
+		ContentType: aws.String(ct),
 	}
 
 	// server-side encryption
@@ -141,6 +177,9 @@ func (a *S3Client[T]) renderKey(now time.Time) string {
 		prefix += "/"
 	}
 	name := a.fileNameTmpl
+	if name == "" {
+		name = "{ts}-{ulid}"
+	}
 	for k, v := range repl {
 		name = strings.ReplaceAll(name, k, v)
 	}
