@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3api "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
@@ -76,6 +77,43 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 	}
 
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Flush, key: %s, records: %d, bytes: %d",
+		a.componentMetadata, key, a.count, a.buf.Len())
+
+	a.buf.Reset()
+	a.count = 0
+	a.lastFlush = now
+	return nil
+}
+
+// flushRaw uploads a.buf bytes as-is (no extra compression), honoring SSE.
+func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
+	if a.buf.Len() == 0 {
+		return nil
+	}
+	key := a.renderKey(now)
+
+	put := &s3api.PutObjectInput{
+		Bucket: &a.bucket,
+		Key:    &key,
+		Body:   bytes.NewReader(a.buf.Bytes()),
+	}
+
+	// server-side encryption
+	switch strings.ToLower(a.sseMode) {
+	case "aes256":
+		put.ServerSideEncryption = s3types.ServerSideEncryptionAes256
+	case "aws:kms":
+		put.ServerSideEncryption = s3types.ServerSideEncryptionAwsKms
+		if a.kmsKey != "" {
+			put.SSEKMSKeyId = &a.kmsKey
+		}
+	}
+
+	if _, err := a.cli.PutObject(ctx, put); err != nil {
+		return err
+	}
+
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: FlushRaw, key: %s, chunks: %d, bytes: %d",
 		a.componentMetadata, key, a.count, a.buf.Len())
 
 	a.buf.Reset()

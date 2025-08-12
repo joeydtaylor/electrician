@@ -114,13 +114,16 @@ func (a *S3Client[T]) NotifyLoggers(level types.LogLevel, format string, args ..
 }
 
 func (a *S3Client[T]) GetComponentMetadata() types.ComponentMetadata { return a.componentMetadata }
+
 func (a *S3Client[T]) SetComponentMetadata(name, id string) {
 	a.componentMetadata = types.ComponentMetadata{Name: name, ID: id}
 }
-func (a *S3Client[T]) Name() string { return "S3_CLIENT" }
-func (a *S3Client[T]) Stop()        { a.cancel() }
 
-// ---------- writer: channel → S3 ----------
+func (a *S3Client[T]) Name() string { return "S3_CLIENT" }
+
+func (a *S3Client[T]) Stop() { a.cancel() }
+
+// ---------- writer: channel → S3 (structured) ----------
 
 func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 	if a.cli == nil || a.bucket == "" {
@@ -135,7 +138,8 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 	defer tick.Stop()
 
 	a.lastFlush = time.Now()
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeWriter, bucket: %s, prefixTpl: %s", a.componentMetadata, a.bucket, a.prefixTemplate)
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeWriter, bucket: %s, prefixTpl: %s",
+		a.componentMetadata, a.bucket, a.prefixTemplate)
 
 	for {
 		select {
@@ -172,6 +176,59 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 	}
 }
 
+// ---------- writer: channel → S3 (raw bytes; parquet/anything) ----------
+
+func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) error {
+	if a.cli == nil || a.bucket == "" {
+		return fmt.Errorf("s3client: ServeWriterRaw requires client and bucket")
+	}
+	if !atomic.CompareAndSwapInt32(&a.isServing, 0, 1) {
+		return nil
+	}
+	defer atomic.StoreInt32(&a.isServing, 0)
+
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+
+	a.lastFlush = time.Now()
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeWriterRaw, bucket: %s, prefixTpl: %s",
+		a.componentMetadata, a.bucket, a.prefixTemplate)
+
+	for {
+		select {
+		case <-ctx.Done():
+			if a.buf.Len() > 0 {
+				_ = a.flushRaw(ctx, time.Now())
+			}
+			return nil
+
+		case chunk, ok := <-in:
+			if !ok {
+				if a.buf.Len() > 0 {
+					_ = a.flushRaw(ctx, time.Now())
+				}
+				return nil
+			}
+			if len(chunk) > 0 {
+				a.buf.Write(chunk)
+				a.count++ // count chunks; primarily for thresholds/metrics
+			}
+			if a.count >= a.batchMaxRecords || a.buf.Len() >= a.batchMaxBytes {
+				if err := a.flushRaw(ctx, time.Now()); err != nil {
+					return err
+				}
+			}
+
+		case now := <-tick.C:
+			if a.buf.Len() > 0 && now.Sub(a.lastFlush) >= a.batchMaxAge {
+				if err := a.flushRaw(ctx, now); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
 // ---------- reader: S3 → submit(T) ----------
 
 func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
@@ -188,6 +245,9 @@ func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 	if err != nil {
 		return types.HttpResponse[[]T]{}, err
 	}
+	if len(lo.Contents) == 0 {
+		return types.HttpResponse[[]T]{StatusCode: 204, Body: nil}, nil
+	}
 
 	var out []T
 	for _, obj := range lo.Contents {
@@ -201,13 +261,15 @@ func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 		rc := get.Body
 		var r io.Reader = rc
 
+		// If gzip-encoded, wrap but ensure we close both gzip and body.
+		var gz *gzip.Reader
 		if get.ContentEncoding != nil && strings.EqualFold(*get.ContentEncoding, "gzip") {
-			gr, e := gzip.NewReader(rc)
-			if e != nil {
-				rc.Close()
-				return types.HttpResponse[[]T]{}, e
+			gz, err = gzip.NewReader(rc)
+			if err != nil {
+				_ = rc.Close()
+				return types.HttpResponse[[]T]{}, err
 			}
-			r = gr
+			r = gz
 		}
 
 		sc := bufio.NewScanner(r)
@@ -218,10 +280,16 @@ func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 			}
 			var v T
 			if err := json.Unmarshal([]byte(line), &v); err != nil {
-				rc.Close()
+				if gz != nil {
+					_ = gz.Close()
+				}
+				_ = rc.Close()
 				return types.HttpResponse[[]T]{}, err
 			}
 			out = append(out, v)
+		}
+		if gz != nil {
+			_ = gz.Close()
 		}
 		_ = rc.Close()
 
@@ -242,10 +310,25 @@ func (a *S3Client[T]) Serve(ctx context.Context, submit func(context.Context, T)
 	}
 	defer atomic.StoreInt32(&a.isServing, 0)
 
+	// One-shot mode if no poll interval set.
+	if a.listPollInterval <= 0 {
+		resp, err := a.Fetch()
+		if err != nil {
+			return err
+		}
+		for _, v := range resp.Body {
+			if err := submit(ctx, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	tick := time.NewTicker(a.listPollInterval)
 	defer tick.Stop()
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeReader, prefix: %s", a.componentMetadata, a.listPrefix)
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeReader, prefix: %s",
+		a.componentMetadata, a.listPrefix)
 
 	for {
 		select {

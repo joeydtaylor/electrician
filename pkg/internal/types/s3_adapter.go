@@ -1,3 +1,4 @@
+// pkg/internal/types/s3_adapter.go
 package types
 
 import (
@@ -17,15 +18,36 @@ type S3ClientDeps struct {
 // Writer config (format + batching + layout)
 type S3WriterConfig struct {
 	PrefixTemplate string // e.g. "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/"
-	Format         string // "ndjson" | "parquet" (ndjson MVP)
-	Compression    string // ndjson: "gzip"|"" ; parquet: "lz4"|"" (future)
-	SSEMode        string // "" | "AES256" | "aws:kms"
-	KMSKeyID       string // used when SSEMode=="aws:kms"
 
+	// Format controls write mode:
+	//   - "ndjson": adapter batches records (T) and writes line-delimited JSON files
+	//   - "parquet" or "raw": adapter expects complete file payloads ([]byte) via ServeWriterRaw
+	Format string
+
+	// Compression hint (used by NDJSON path; typically "" for parquet/raw)
+	// ndjson: "gzip"|"" ; parquet: "lz4"|"" (future hint only)
+	Compression string
+
+	// Server-side encryption
+	SSEMode  string // "" | "AES256" | "aws:kms"
+	KMSKeyID string // used when SSEMode=="aws:kms"
+
+	// NDJSON batching thresholds
 	BatchMaxRecords int           // default 50_000
 	BatchMaxBytes   int           // default 128<<20
 	BatchMaxAge     time.Duration // default 60s
-	FileNameTmpl    string        // default "{ts}-{ulid}.ndjson" or ".parquet"
+
+	// Filename template for NDJSON mode; parquet/raw will still use prefix layout
+	// and may override extension (see RawExtension).
+	// Default NDJSON: "{ts}-{ulid}.ndjson"
+	FileNameTmpl string
+
+	// ---- RAW / Parquet single-object write settings ----
+	// When Format in {"parquet","raw"} and using ServeWriterRaw:
+	// - RawContentType defaults to "application/x-parquet" for "parquet", otherwise "application/octet-stream"
+	// - RawExtension   defaults to ".parquet" for "parquet", otherwise ".bin"
+	RawContentType string
+	RawExtension   string
 }
 
 // Reader config (selection + decode)
@@ -33,8 +55,8 @@ type S3ReaderConfig struct {
 	Prefix        string        // list under this prefix
 	StartAfterKey string        // simple cursor
 	PageSize      int32         // default 1000
-	Format        string        // "ndjson" | "parquet"
-	Compression   string        // if needed to read
+	Format        string        // "ndjson" | "parquet" (parquet typically handled outside adapter)
+	Compression   string        // if needed to read (ndjson gzip)
 	ListInterval  time.Duration // poll interval for tailing, optional
 }
 
@@ -44,7 +66,7 @@ type S3WriterAdapter[T any] interface {
 	SetWriterConfig(S3WriterConfig)
 
 	// Lifecycle
-	Serve(ctx context.Context, in <-chan T) error // blocking worker
+	Serve(ctx context.Context, in <-chan T) error // NDJSON batching writer
 	Stop()
 
 	// Introspection / hooks
@@ -60,7 +82,7 @@ type S3ReaderAdapter[T any] interface {
 	SetS3ClientDeps(S3ClientDeps)
 	SetReaderConfig(S3ReaderConfig)
 
-	// Serve pulls S3 objects -> emits T (Decode is adapter-owned)
+	// Serve pulls S3 objects -> emits T (Decode is adapter-owned for NDJSON)
 	Serve(ctx context.Context, submit func(context.Context, T) error) error
 	Stop()
 
@@ -83,8 +105,13 @@ type S3ClientAdapter[T any] interface {
 	SetWriterConfig(S3WriterConfig)
 	SetReaderConfig(S3ReaderConfig)
 
-	// writer
+	// writer (NDJSON batching)
 	ServeWriter(ctx context.Context, in <-chan T) error
+
+	// writer (RAW single-object mode: one []byte -> one S3 object)
+	// Use when Format is "parquet" or "raw".
+	ServeWriterRaw(ctx context.Context, in <-chan []byte) error
+
 	// reader (same signature style as HTTPClientAdapter)
 	Serve(ctx context.Context, submit func(context.Context, T) error) error
 	Fetch() (HttpResponse[[]T], error)

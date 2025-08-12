@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
@@ -27,30 +25,29 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
-		if service == s3.ServiceID {
-			return aws.Endpoint{URL: "http://localhost:4566", HostnameImmutable: true}, nil
-		}
-		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-	})
-	awsCfg, err := config.LoadDefaultConfig(
+	// Assume role against LocalStack using builder helper
+	cli, err := builder.NewS3ClientAssumeRole(
 		ctx,
-		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(resolver),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
+		"us-east-1",
+		"arn:aws:iam::000000000000:role/exodus-dev-role",
+		"electrician-reader",
+		15*time.Minute,
+		"", // externalID (optional)
+		aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")), // source creds to call STS
+		"http://localhost:4566", // endpoint override for LocalStack
+		true,                    // force path-style
 	)
 	if err != nil {
 		panic(err)
 	}
-	cli := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = true })
 
 	const bucket = "steeze-dev"
-	const prefix = "feedback/demo/" // match writer
+	const prefix = "feedback/demo/"
 
 	reader := builder.NewS3ClientAdapter[Feedback](
 		ctx,
 		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, bucket),
-		builder.S3ClientAdapterWithReaderListSettings[Feedback](prefix, "", 1000, 0),
+		builder.S3ClientAdapterWithReaderListSettings[Feedback](prefix, "", 1000, 0), // one-shot (no polling)
 		builder.S3ClientAdapterWithFormat[Feedback]("ndjson", ""),
 	)
 

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
@@ -24,46 +23,45 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// LocalStack S3 client with static creds
-	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
-		if service == s3.ServiceID {
-			return aws.Endpoint{URL: "http://localhost:4566", HostnameImmutable: true}, nil
-		}
-		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-	})
-	awsCfg, err := config.LoadDefaultConfig(
+	// Assume role against LocalStack using builder helper
+	cli, err := builder.NewS3ClientAssumeRole(
 		ctx,
-		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(resolver),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
+		"us-east-1",
+		"arn:aws:iam::000000000000:role/exodus-dev-role",
+		"electrician-writer",
+		15*time.Minute,
+		"", // externalID (optional)
+		aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")), // source creds to call STS
+		"http://localhost:4566", // endpoint override for LocalStack
+		true,                    // force path-style for LocalStack/MinIO
 	)
 	if err != nil {
 		panic(err)
 	}
-	cli := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = true })
 
 	const bucket = "steeze-dev"
-	const prefix = "feedback/demo/" // scope writes here
+	const prefix = "feedback/demo/"
 
+	// Ensure bucket exists (idempotent for LocalStack)
 	_, _ = cli.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 
-	// seed
+	// Seed data
 	records := []Feedback{
 		{CustomerID: "cust-001", Content: "I love this", Tags: []string{"raw"}},
 		{CustomerID: "cust-002", Content: "Not great", IsNegative: true},
 		{CustomerID: "cust-003", Content: "Absolutely fantastic!"},
 	}
 
-	// writer: NDJSON, no compression, scoped prefix, small batch
+	// Writer: NDJSON, small batch, specific prefix
 	writer := builder.NewS3ClientAdapter[Feedback](
 		ctx,
 		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, bucket),
-		builder.S3ClientAdapterWithFormat[Feedback]("ndjson", ""),
-		builder.S3ClientAdapterWithBatchSettings[Feedback](1000, 1<<20, 1*time.Second),
+		builder.S3ClientAdapterWithFormat[Feedback]("ndjson", ""), // no gzip for demo; set "gzip" if you like
+		builder.S3ClientAdapterWithBatchSettings[Feedback](1000, 1<<20, time.Second),
 		builder.S3ClientAdapterWithWriterPrefixTemplate[Feedback](prefix),
 	)
 
-	// channel feed; skip zero-values
+	// Feed the channel
 	ch := make(chan Feedback, len(records))
 	go func() {
 		defer close(ch)

@@ -1,3 +1,4 @@
+// pkg/internal/adapter/s3client/s3client.go
 package s3client
 
 import (
@@ -12,7 +13,7 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// S3ClientAdapter[T] concrete implementation (read + write in one component).
+// S3Client[T] concrete implementation (read + write in one component).
 type S3Client[T any] struct {
 	// meta / lifecycle
 	componentMetadata types.ComponentMetadata
@@ -34,15 +35,21 @@ type S3Client[T any] struct {
 	prefixTemplate string // e.g. "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/"
 	fileNameTmpl   string // e.g. "{ts}-{ulid}.ndjson"
 
-	// format
-	format      string // "ndjson" (MVP) | "parquet" (later)
-	compression string // ndjson: "gzip" | ""
+	// format for structured records
+	format         string // "ndjson" (MVP) | "parquet" (later)
+	compression    string // ndjson: "gzip" | ""
+	ndjsonMime     string // default "application/x-ndjson"
+	ndjsonGzipMime string // default "application/x-ndjson" with Content-Encoding: gzip
+
+	// raw writer options (single object, pre-encoded parquet or other binary)
+	rawWriterExt         string // default ".parquet"
+	rawWriterContentType string // default "application/octet-stream" (override to "application/octet-stream" or Parquet types)
 
 	// SSE
 	sseMode string // "" | "AES256" | "aws:kms"
 	kmsKey  string
 
-	// writer batching
+	// writer batching (structured NDJSON path)
 	batchMaxRecords int
 	batchMaxBytes   int
 	batchMaxAge     time.Duration
@@ -70,18 +77,27 @@ func NewS3ClientAdapter[T any](ctx context.Context, options ...types.S3ClientOpt
 			ID:   utils.GenerateUniqueHash(),
 			Type: "S3_CLIENT",
 		},
-		loggers:          make([]types.Logger, 0),
-		sensors:          make([]types.Sensor[T], 0),
-		prefixTemplate:   "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/",
-		fileNameTmpl:     "{ts}-{ulid}.ndjson",
-		format:           "ndjson",
-		compression:      "gzip",
-		batchMaxRecords:  50_000,
-		batchMaxBytes:    128 << 20, // 128 MiB
-		batchMaxAge:      60 * time.Second,
+		loggers: make([]types.Logger, 0),
+		sensors: make([]types.Sensor[T], 0),
+		// writer defaults
+		prefixTemplate: "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/",
+		fileNameTmpl:   "{ts}-{ulid}.ndjson",
+		format:         "ndjson",
+		compression:    "gzip",
+		ndjsonMime:     "application/x-ndjson",
+		ndjsonGzipMime: "application/x-ndjson",
+		// raw write defaults (Parquet-friendly)
+		rawWriterExt:         ".parquet",
+		rawWriterContentType: "application/octet-stream",
+		// batching defaults
+		batchMaxRecords: 50_000,
+		batchMaxBytes:   128 << 20, // 128 MiB
+		batchMaxAge:     60 * time.Second,
+		// reader defaults
 		listPageSize:     1000,
 		listPollInterval: 5 * time.Second,
-		buf:              bytes.NewBuffer(make([]byte, 0, 1<<20)), // 1 MiB
+		// buffer
+		buf: bytes.NewBuffer(make([]byte, 0, 1<<20)), // 1 MiB
 	}
 
 	for _, opt := range options {
