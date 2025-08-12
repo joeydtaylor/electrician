@@ -506,3 +506,30 @@ func (fr *ForwardRelay[T]) SetDynamicHeaders(fn func(ctx context.Context) map[st
 	fr.dynamicHeaders = fn
 	fr.NotifyLoggers(types.DebugLevel, "component: %v, level: DEBUG, result: SUCCESS, event: SetDynamicHeaders, installed: %t", fr.componentMetadata, fn != nil)
 }
+
+// ForwardRelayWithAuthRequired is an optional builder option to toggle the
+// per-RPC bearer requirement at construction time.
+func ForwardRelayWithAuthRequired[T any](required bool) types.Option[types.ForwardRelay[T]] {
+	return func(c types.ForwardRelay[T]) {
+		if fr, ok := c.(*ForwardRelay[T]); ok {
+			fr.authRequired = required
+		}
+	}
+}
+
+// SetAuthRequired flips whether a valid bearer token is required before any
+// gRPC call when OAuth2 is configured. Must be called before Start().
+func (fr *ForwardRelay[T]) SetAuthRequired(required bool) {
+	if atomic.LoadInt32(&fr.configFrozen) == 1 {
+		panic("attempted to modify frozen configuration of started component: SetAuthRequired")
+	}
+	fr.authRequired = required
+	fr.NotifyLoggers(types.DebugLevel,
+		"component: %v, level: DEBUG, result: SUCCESS, event: SetAuthRequired, required: %t",
+		fr.componentMetadata, fr.authRequired)
+}
+
+// GetAuthRequired reports the current setting.
+func (fr *ForwardRelay[T]) GetAuthRequired() bool {
+	return fr.authRequired
+}

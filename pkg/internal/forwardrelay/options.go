@@ -76,6 +76,18 @@ func WithDynamicHeaders[T any](fn func(ctx context.Context) map[string]string) t
 	return func(fr types.ForwardRelay[T]) { fr.SetDynamicHeaders(fn) }
 }
 
+// WithAuthRequired toggles whether a valid bearer token is REQUIRED before any gRPC call
+// when OAuth2 is configured. If `required` is true and no token is available (or token
+// acquisition fails), Submit() should fail fast without sending. Useful to relax during
+// local testing, but keep it true in prod.
+func WithAuthRequired[T any](required bool) types.Option[types.ForwardRelay[T]] {
+	return func(c types.ForwardRelay[T]) {
+		if fr, ok := c.(*ForwardRelay[T]); ok {
+			fr.authRequired = required
+		}
+	}
+}
+
 // ============================================================================
 // OAuth2 / Auth builders (kept close to forwardrelay; builder package stays thin)
 // ============================================================================

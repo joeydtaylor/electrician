@@ -1,28 +1,5 @@
 // Package receivingrelay implements the internal mechanisms for a data relay system that focuses on receiving,
 // processing, and securely transmitting data to subsequent stages within a distributed service architecture.
-// This package specifically handles the low-level operations including data decompression, secure communication
-// setup using TLS, and efficient data streaming through gRPC.
-
-// The primary functionalities include decompressing incoming data payloads that have been compressed using
-// various standard algorithms like gzip, snappy, zstd, brotli, and lz4. This ensures that the system can handle
-// diverse data formats and compression techniques used in modern distributed systems.
-
-// Additionally, this package takes responsibility for setting up and managing TLS configurations for secure
-// data transmission. This includes loading X509 key pairs and CA certificates, configuring server names, and
-// ensuring that all transmitted data adheres to specified security protocols.
-
-// The combination of gRPC for networking and advanced compression and security techniques makes this package
-// a critical component of the receiving relay's infrastructure, ensuring data integrity and confidentiality
-// while facilitating high-throughput data processing capabilities.
-
-// The internal.go file contains the detailed implementations of these functionalities, focusing on:
-// - Data decompression based on the specified algorithms.
-// - Dynamic loading of TLS credentials based on configuration.
-// - Preparation and management of server options for secure and reliable data reception.
-
-// These utilities are designed to be robust and efficient, making them suitable for high-performance
-// scenarios typical in microservices and cloud-native environments where data security and efficiency are paramount.
-
 package receivingrelay
 
 import (
@@ -71,18 +48,7 @@ const (
 	ENCRYPTION_AES_GCM relay.EncryptionSuite = 1
 )
 
-// decompressData takes a byte slice and a compression algorithm identifier, and returns a decompressed
-// byte buffer. This function is vital for processing data that has been compressed according to various
-// algorithms such as gzip, snappy, zstd, brotli, and lz4. Each compression type is handled according
-// to its specific library requirements and capabilities.
-//
-// Parameters:
-//   - data: The compressed data as a byte slice.
-//   - algorithm: The compression algorithm used, as defined by relay.CompressionAlgorithm.
-//
-// Returns:
-//   - *bytes.Buffer: The decompressed data.
-//   - error: Error encountered during decompression, if any.
+// decompressData returns a reader buffer with the decompressed payload according to the algorithm.
 func decompressData(data []byte, algorithm relay.CompressionAlgorithm) (*bytes.Buffer, error) {
 	var b bytes.Buffer
 	var r io.Reader
@@ -116,73 +82,9 @@ func decompressData(data []byte, algorithm relay.CompressionAlgorithm) (*bytes.B
 	return &b, nil
 }
 
-// loadTLSCredentials loads the TLS credentials for a ReceivingRelay from the provided TLSConfig.
-// This method is critical for setting up secure communications using TLS. It includes detailed error
-// handling and logging, which are crucial for diagnosing issues related to TLS configuration and
-// certificate management. The method loads a X509 key pair and CA certificates from the file system,
-// and prepares a tls.Config with these certificates.
-//
-// If TLS is not enabled in the configuration, the method logs a warning and returns an error indicating
-// that TLS is disabled. This method assumes that TLS credentials (certificate and key files) are necessary
-// for the operation of the ReceivingRelay and are properly formatted and accessible.
-//
-// Parameters:
-//   - config: A pointer to a types.TLSConfig containing the necessary TLS settings such as certificate
-//     and key file locations, and the expected server name for the certificate.
-//
-// Returns:
-//   - credentials.TransportCredentials: The loaded transport credentials on success.
-//   - error: An error object detailing what went wrong during loading, if anything.
+// loadTLSCredentials builds server-side transport credentials from rr.TlsConfig.
 func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credentials.TransportCredentials, error) {
-	if config.UseTLS {
-		cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
-		if err != nil {
-			rr.NotifyLoggers(
-				types.ErrorLevel,
-				"Component: %s, address: %s, event: loadTLSCredentials, error: %v => Failed to load key pair",
-				rr.componentMetadata, rr.Address, err,
-			)
-			return nil, err
-		}
-
-		certPool := x509.NewCertPool()
-		ca, err := os.ReadFile(config.CAFile)
-		if err != nil {
-			rr.NotifyLoggers(
-				types.ErrorLevel,
-				"Component: %s, address: %s, event: loadTLSCredentials, error: %v => Failed to read CA file",
-				rr.componentMetadata, rr.Address, err,
-			)
-			return nil, err
-		}
-		if ok := certPool.AppendCertsFromPEM(ca); !ok {
-			rr.NotifyLoggers(
-				types.ErrorLevel,
-				"Component: %s, address: %s, event: loadTLSCredentials, error: %v => Failed to append CA certificate",
-				rr.componentMetadata, rr.Address, err,
-			)
-			return nil, fmt.Errorf("failed to append CA certificate")
-		}
-
-		// Set Min and Max TLS versions (defaulting to TLS 1.2 - 1.3 if unspecified)
-		minTLSVersion := config.MinTLSVersion
-		if minTLSVersion == 0 {
-			minTLSVersion = tls.VersionTLS12
-		}
-
-		maxTLSVersion := config.MaxTLSVersion
-		if maxTLSVersion == 0 {
-			maxTLSVersion = tls.VersionTLS13
-		}
-
-		return credentials.NewTLS(&tls.Config{
-			ServerName:   config.SubjectAlternativeName, // Ensure this matches the certificate name
-			Certificates: []tls.Certificate{cert},
-			RootCAs:      certPool,
-			MinVersion:   minTLSVersion,
-			MaxVersion:   maxTLSVersion,
-		}), nil
-	} else {
+	if !config.UseTLS {
 		rr.NotifyLoggers(
 			types.WarnLevel,
 			"Component: %s, address: %s, event: loadTLSCredentials => TLS IS DISABLED!",
@@ -190,39 +92,73 @@ func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (creden
 		)
 		return nil, fmt.Errorf("TLS is disabled")
 	}
-}
 
-// decryptData checks SecurityOptions. If encryption is enabled and AES-GCM is selected,
-// it extracts the nonce (the first gcm.NonceSize() bytes) and decrypts the remainder.
-// Otherwise, it returns data as-is (no decryption).
-func decryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
-	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != ENCRYPTION_AES_GCM {
-		// No encryption needed or not AES-GCM.
-		return data, nil
+	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
+	if err != nil {
+		rr.NotifyLoggers(
+			types.ErrorLevel,
+			"Component: %s, address: %s, event: loadTLSCredentials, error: %v => Failed to load key pair",
+			rr.componentMetadata, rr.Address, err,
+		)
+		return nil, err
 	}
 
-	// Convert key string to bytes (16, 24, or 32 bytes for AES-128/192/256).
-	aesKey := []byte(key)
+	certPool := x509.NewCertPool()
+	ca, err := os.ReadFile(config.CAFile)
+	if err != nil {
+		rr.NotifyLoggers(
+			types.ErrorLevel,
+			"Component: %s, address: %s, event: loadTLSCredentials, error: %v => Failed to read CA file",
+			rr.componentMetadata, rr.Address, err,
+		)
+		return nil, err
+	}
+	if ok := certPool.AppendCertsFromPEM(ca); !ok {
+		rr.NotifyLoggers(
+			types.ErrorLevel,
+			"Component: %s, address: %s, event: loadTLSCredentials => Failed to append CA certificate",
+			rr.componentMetadata, rr.Address,
+		)
+		return nil, fmt.Errorf("failed to append CA certificate")
+	}
 
+	minTLSVersion := config.MinTLSVersion
+	if minTLSVersion == 0 {
+		minTLSVersion = tls.VersionTLS12
+	}
+	maxTLSVersion := config.MaxTLSVersion
+	if maxTLSVersion == 0 {
+		maxTLSVersion = tls.VersionTLS13
+	}
+
+	return credentials.NewTLS(&tls.Config{
+		ServerName:   config.SubjectAlternativeName,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      certPool,
+		MinVersion:   minTLSVersion,
+		MaxVersion:   maxTLSVersion,
+	}), nil
+}
+
+// decryptData checks SecurityOptions. If AES-GCM enabled, returns plaintext (nonce||ciphertext input).
+func decryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byte, error) {
+	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != ENCRYPTION_AES_GCM {
+		return data, nil
+	}
+	aesKey := []byte(key) // caller supplies raw 16/24/32-byte key (or string with those bytes)
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, fmt.Errorf("decryptData: invalid AES key: %w", err)
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("decryptData: failed to create GCM: %w", err)
 	}
-
 	nonceSize := gcm.NonceSize()
 	if len(data) < nonceSize {
 		return nil, errors.New("decryptData: ciphertext too short for nonce")
 	}
-
-	// Split out the nonce (first nonceSize bytes) from the rest (the actual ciphertext).
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-
-	// Decrypt
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decryptData: GCM decryption failed: %w", err)
@@ -231,6 +167,18 @@ func decryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byt
 }
 
 // -------------------- NEW: auth policy + interceptor wiring --------------------
+
+func (rr *ReceivingRelay[T]) maybePolicyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if rr.authRequired {
+		return err
+	}
+	// soft-fail: log and continue
+	rr.NotifyLoggers(types.WarnLevel, "component: %s, address: %s, level: WARN, event: Auth => soft-failing policy error: %v", rr.componentMetadata, rr.Address, err)
+	return nil
+}
 
 // buildUnaryPolicyInterceptor enforces static headers and the dynamic auth validator for unary RPCs.
 func (rr *ReceivingRelay[T]) buildUnaryPolicyInterceptor() grpc.UnaryServerInterceptor {
@@ -243,13 +191,17 @@ func (rr *ReceivingRelay[T]) buildUnaryPolicyInterceptor() grpc.UnaryServerInter
 
 		// Static headers
 		if err := rr.checkStaticHeaders(mdMap); err != nil {
-			return nil, err
+			if e := rr.maybePolicyError(err); e != nil {
+				return nil, e
+			}
 		}
 
 		// Dynamic validator
 		if rr.dynamicAuthValidator != nil {
 			if err := rr.dynamicAuthValidator(ctx, mdMap); err != nil {
-				return nil, status.Errorf(codes.Unauthenticated, "auth validation failed: %v", err)
+				if e := rr.maybePolicyError(status.Errorf(codes.Unauthenticated, "auth validation failed: %v", err)); e != nil {
+					return nil, e
+				}
 			}
 		}
 
@@ -269,13 +221,17 @@ func (rr *ReceivingRelay[T]) buildStreamPolicyInterceptor() grpc.StreamServerInt
 
 		// Static headers
 		if err := rr.checkStaticHeaders(mdMap); err != nil {
-			return err
+			if e := rr.maybePolicyError(err); e != nil {
+				return e
+			}
 		}
 
 		// Dynamic validator
 		if rr.dynamicAuthValidator != nil {
 			if err := rr.dynamicAuthValidator(ctx, mdMap); err != nil {
-				return status.Errorf(codes.Unauthenticated, "auth validation failed: %v", err)
+				if e := rr.maybePolicyError(status.Errorf(codes.Unauthenticated, "auth validation failed: %v", err)); e != nil {
+					return e
+				}
 			}
 		}
 
@@ -299,9 +255,16 @@ func (rr *ReceivingRelay[T]) appendAuthServerOptions(opts []grpc.ServerOption) [
 		opts = append(opts, grpc.ChainUnaryInterceptor(unaryChain...))
 	}
 
-	// Stream chain
+	// Stream chain: policy + user-provided
+	var streamChain []grpc.StreamServerInterceptor
 	if p := rr.buildStreamPolicyInterceptor(); p != nil {
-		opts = append(opts, grpc.ChainStreamInterceptor(p))
+		streamChain = append(streamChain, p)
+	}
+	if rr.authStream != nil {
+		streamChain = append(streamChain, rr.authStream)
+	}
+	if len(streamChain) > 0 {
+		opts = append(opts, grpc.ChainStreamInterceptor(streamChain...))
 	}
 	return opts
 }

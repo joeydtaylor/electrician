@@ -69,11 +69,6 @@ func ReceivingRelayWithAuthenticationOptions[T any](opts *relay.AuthenticationOp
 	return rr.WithAuthenticationOptions[T](opts)
 }
 
-// ReceivingRelayWithAuthInterceptor installs a gRPC unary auth interceptor.
-func ReceivingRelayWithAuthInterceptor[T any](interceptor grpc.UnaryServerInterceptor) types.Option[types.ReceivingRelay[T]] {
-	return rr.WithAuthInterceptor[T](interceptor)
-}
-
 // ReceivingRelayWithStaticHeaders enforces constant metadata keys/values.
 func ReceivingRelayWithStaticHeaders[T any](headers map[string]string) types.Option[types.ReceivingRelay[T]] {
 	return rr.WithStaticHeaders[T](headers)
@@ -82,6 +77,25 @@ func ReceivingRelayWithStaticHeaders[T any](headers map[string]string) types.Opt
 // ReceivingRelayWithDynamicAuthValidator registers a per-request validation callback.
 func ReceivingRelayWithDynamicAuthValidator[T any](fn func(ctx context.Context, md map[string]string) error) types.Option[types.ReceivingRelay[T]] {
 	return rr.WithDynamicAuthValidator[T](fn)
+}
+
+// ReceivingRelayWithAuthInterceptors installs unary and stream interceptors
+// used to enforce/observe auth on inbound RPCs. Pass nil for either to skip it.
+func ReceivingRelayWithAuthInterceptors[T any](
+	unary grpc.UnaryServerInterceptor,
+	stream grpc.StreamServerInterceptor,
+) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) {
+		rr.SetAuthInterceptors(unary, stream)
+	}
+}
+
+// ReceivingRelayWithAuthRequired toggles strict auth enforcement. When false,
+// failed/absent credentials are logged and allowed (best-effort).
+func ReceivingRelayWithAuthRequired[T any](required bool) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) {
+		rr.SetAuthRequired(required)
+	}
 }
 
 // -------------------- OAuth2 translators (prefixed to avoid collision) --------------------

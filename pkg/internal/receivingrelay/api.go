@@ -514,3 +514,32 @@ func (rr *ReceivingRelay[T]) SetDynamicAuthValidator(fn func(ctx context.Context
 		rr.componentMetadata, rr.Address, fn != nil,
 	)
 }
+
+// SetAuthInterceptors installs both unary and stream interceptors for authentication/authorization.
+// Either argument may be nil to skip that interceptor type.
+func (rr *ReceivingRelay[T]) SetAuthInterceptors(unary grpc.UnaryServerInterceptor, stream grpc.StreamServerInterceptor) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetAuthInterceptors", rr.componentMetadata))
+	}
+	rr.authUnary = unary
+	rr.authStream = stream
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetAuthInterceptors, unary_installed: %t, stream_installed: %t",
+		rr.componentMetadata, rr.Address, unary != nil, stream != nil,
+	)
+}
+
+// SetAuthRequired toggles strict enforcement of authentication.
+// When true, failed/absent credentials will reject the request; when false, the server may log and allow.
+func (rr *ReceivingRelay[T]) SetAuthRequired(required bool) {
+	if atomic.LoadInt32(&rr.configFrozen) == 1 {
+		panic(fmt.Sprintf("attempted to modify frozen configuration of started component: %s, action=SetAuthRequired", rr.componentMetadata))
+	}
+	rr.authRequired = required
+	rr.NotifyLoggers(
+		types.DebugLevel,
+		"component: %s, address: %s, level: DEBUG, result: SUCCESS, event: SetAuthRequired, required: %t",
+		rr.componentMetadata, rr.Address, required,
+	)
+}

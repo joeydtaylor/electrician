@@ -24,6 +24,8 @@ extendedKeyUsage           = serverAuth, clientAuth
 subjectAltName             = @alt_names
 
 [alt_names]
-DNS.1                      = localhost
-DNS.2                      = hermes
-IP.1                       = 127.0.0.1
+DNS.1 = localhost
+DNS.2 = hermes
+DNS.3 = host.docker.internal
+DNS.4 = damocles
+IP.1  = 127.0.0.1

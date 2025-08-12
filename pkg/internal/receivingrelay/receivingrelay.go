@@ -13,70 +13,81 @@ import (
 // ReceivingRelay represents a component in a distributed system that receives data from forward relays
 // or similar data sources.
 type ReceivingRelay[T any] struct {
-	relay.UnimplementedRelayServiceServer // Embedding the unimplemented server
+	relay.UnimplementedRelayServiceServer // Embed unimplemented gRPC server
 
-	// Core lifecycle management
+	// ---- Lifecycle ----
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// Outbound data flow
+	// ---- Outbound data flow ----
 	Outputs []types.Submitter[T]
 
-	// Identifying info
+	// ---- Identity / config ----
 	componentMetadata types.ComponentMetadata
+	Address           string
 
-	// Where we listen for inbound data
-	Address string
-
-	// Channel through which received data is passed to the processing functions
+	// ---- Data channel ----
 	DataCh chan T
 
-	// Logging
+	// ---- Logging ----
 	Loggers     []types.Logger
 	loggersLock *sync.Mutex
 
-	// TLS for secure communication
+	// ---- TLS / runtime ----
 	TlsConfig    *types.TLSConfig
-	isRunning    int32 // Atomic, 1 if running
+	isRunning    int32 // set atomically elsewhere
 	configFrozen int32
 
-	// Content decryption (AES-GCM) for payloads, if enabled by metadata.
+	// ---- Content decryption (AES-GCM) ----
 	DecryptionKey string
 
-	// ---------------- Authentication / Authorization ----------------
-	// Optional auth hints mirrored from proto MessageMetadata.authentication.
+	// ---- Authentication / Authorization (optional) ----
 	authOptions *relay.AuthenticationOptions
 
-	// Optional unary interceptor to enforce OAuth2/mTLS auth before handler logic.
-	// Typical implementation validates Bearer via JWKS/introspection or checks client cert.
-	authUnary grpc.UnaryServerInterceptor
+	// Interceptors used to enforce/observe auth on inbound RPCs.
+	authUnary  grpc.UnaryServerInterceptor
+	authStream grpc.StreamServerInterceptor
 
-	// Optional constant metadata requirements (e.g., tenant headers).
+	// Static metadata expectations (tenant/correlation tags, etc.)
 	staticHeaders map[string]string
 
-	// Optional per-request validator. Runs early with incoming metadata.
-	// Return error to reject request (e.g., scope/audience check, header policy).
+	// Per-request validator hook (runs early with parsed metadata map).
 	dynamicAuthValidator func(ctx context.Context, md map[string]string) error
+
+	// Strictness toggle: when false, auth failures can be logged and allowed (best-effort).
+	authRequired bool
 }
 
 // NewReceivingRelay initializes and returns a new instance of ReceivingRelay with configuration options applied.
 func NewReceivingRelay[T any](ctx context.Context, options ...types.Option[types.ReceivingRelay[T]]) types.ReceivingRelay[T] {
 	ctx, cancel := context.WithCancel(ctx)
+
 	rr := &ReceivingRelay[T]{
 		ctx:    ctx,
 		cancel: cancel,
-		DataCh: make(chan T),
+
+		// Buffered a bit so slow outputs don't immediately stall handlers; tune later if needed.
+		DataCh: make(chan T, 1024),
 
 		componentMetadata: types.ComponentMetadata{
 			ID:   utils.GenerateUniqueHash(),
 			Type: "RECEIVING_RELAY",
 		},
 
-		Loggers:       make([]types.Logger, 0),
-		loggersLock:   new(sync.Mutex),
-		DecryptionKey: "",
-
-		// auth fields default to nil/zero; optional features are off unless configured.
+		Loggers:              make([]types.Logger, 0),
+		loggersLock:          new(sync.Mutex),
+		DecryptionKey:        "",
+		staticHeaders:        make(map[string]string),
+		authRequired:         true, // default to strict; can be relaxed via option
+		authUnary:            nil,
+		authStream:           nil,
+		authOptions:          nil,
+		TlsConfig:            nil,
+		Outputs:              nil,
+		Address:              "",
+		isRunning:            0,
+		configFrozen:         0,
+		dynamicAuthValidator: nil,
 	}
 
 	// Apply provided options
@@ -84,12 +95,13 @@ func NewReceivingRelay[T any](ctx context.Context, options ...types.Option[types
 		option(rr)
 	}
 
-	// If Outputs are configured, automatically forward data from DataCh to each output
-	if rr.Outputs != nil {
+	// If Outputs are configured, forward DataCh to each output.
+	if len(rr.Outputs) > 0 {
 		go func() {
 			for data := range rr.DataCh {
-				for _, output := range rr.Outputs {
-					output.Submit(ctx, data)
+				for _, out := range rr.Outputs {
+					// Intentionally ignore errors here; handlers should log on failure.
+					_ = out.Submit(ctx, data)
 				}
 			}
 		}()

@@ -67,6 +67,7 @@ type ForwardRelay[T any] struct {
 	tlsCredentials       atomic.Value // Atomic value for TLS credentials.
 	tlsCredentialsUpdate sync.Mutex   // Mutex for TLS credentials update.
 	configFrozen         int32        // Indicates whether the relay's configuration has been frozen.
+	authRequired         bool
 }
 
 // NewForwardRelay creates a new forward relay instance with the specified context and options.
@@ -90,6 +91,7 @@ func NewForwardRelay[T any](ctx context.Context, options ...types.Option[types.F
 		},
 		SecurityOptions: nil, // No security by default
 		EncryptionKey:   "",  // No key by default
+		authRequired:    true,
 	}
 
 	// Apply any user-provided options
