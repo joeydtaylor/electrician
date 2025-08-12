@@ -191,7 +191,6 @@ func (a *S3Client[T]) renderKey(now time.Time) string {
 
 // parquetRowsFromBody chooses in-memory vs spill-to-disk based on a threshold knob.
 // types.S3ReaderConfig.FormatOptions["spill_threshold_bytes"] can override (default 64 MiB).
-// internal.go — drop-in replacement
 func (a *S3Client[T]) parquetRowsFromBody(get *s3api.GetObjectOutput) ([]T, error) {
 	const def int64 = 64 << 20 // 64 MiB default spill threshold
 	thr := def

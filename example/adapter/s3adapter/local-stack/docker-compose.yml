@@ -5,7 +5,7 @@ services:
     ports:
       - "4566:4566"                    # AWS edge (S3/STS/IAM)
     environment:
-      - SERVICES=s3,sts,iam
+      - SERVICES=s3,sts,iam,kms
       - AWS_DEFAULT_REGION=us-east-1
       - DEBUG=0
     healthcheck:

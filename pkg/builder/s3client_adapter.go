@@ -213,3 +213,26 @@ func NewS3ClientWebIdentity(
 
 	return s3.NewFromConfig(assumed, func(o *s3.Options) { o.UsePathStyle = forcePathStyle }), nil
 }
+
+// Writer format options (merged; does not clobber other writer config)
+func S3ClientAdapterWithWriterFormatOptions[T any](opts map[string]string) types.S3ClientOption[T] {
+	// shallow copy to avoid external mutation
+	cp := make(map[string]string, len(opts))
+	for k, v := range opts {
+		cp[k] = v
+	}
+	return s3ClientAdapter.WithWriterConfig[T](types.S3WriterConfig{
+		FormatOptions: cp,
+	})
+}
+
+// Reader format options (merged; does not clobber other reader config)
+func S3ClientAdapterWithReaderFormatOptions[T any](opts map[string]string) types.S3ClientOption[T] {
+	cp := make(map[string]string, len(opts))
+	for k, v := range opts {
+		cp[k] = v
+	}
+	return s3ClientAdapter.WithReaderConfig[T](types.S3ReaderConfig{
+		FormatOptions: cp,
+	})
+}

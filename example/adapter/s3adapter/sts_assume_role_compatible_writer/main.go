@@ -52,33 +52,36 @@ func main() {
 		{CustomerID: "cust-003", Content: "Absolutely fantastic!"},
 	}
 
-	// Build Parquet file in memory
 	var buf bytes.Buffer
-	writer := parquet.NewGenericWriter[Feedback](
+	pw := parquet.NewGenericWriter[Feedback](
 		&buf,
-		parquet.Compression(&parquet.Snappy), // Snappy compression
+		parquet.Compression(&parquet.Snappy), // or &parquet.Zstd / &parquet.Gzip
 	)
-	if _, err := writer.Write(records); err != nil {
+	if _, err := pw.Write(records); err != nil {
 		panic(err)
 	}
-	if err := writer.Close(); err != nil {
+	if err := pw.Close(); err != nil {
 		panic(err)
 	}
 
-	// Configure S3 adapter for parquet (ServeWriterRaw path)
-	s3Writer := builder.NewS3ClientAdapter[Feedback](
+	writer := builder.NewS3ClientAdapter[Feedback](
 		ctx,
 		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, bucket),
 		builder.S3ClientAdapterWithFormat[Feedback]("parquet", ""),
 		builder.S3ClientAdapterWithBatchSettings[Feedback](1, 64<<20, time.Second),
 		builder.S3ClientAdapterWithWriterPrefixTemplate[Feedback](prefix),
+		// SSE-KMS (alias ARN works in LocalStack)
+		builder.S3ClientAdapterWithSSE[Feedback](
+			"aws:kms",
+			"arn:aws:kms:us-east-1:000000000000:alias/electrician-dev",
+		),
 	)
 
 	raw := make(chan []byte, 1)
 	raw <- buf.Bytes()
 	close(raw)
 
-	if err := s3Writer.ServeWriterRaw(ctx, raw); err != nil {
+	if err := writer.ServeWriterRaw(ctx, raw); err != nil {
 		panic(err)
 	}
 }

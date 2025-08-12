@@ -274,7 +274,6 @@ func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) erro
 
 // ---------- reader: S3 → submit(T) ----------
 
-// api.go — drop-in replacement
 func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 	if a.cli == nil || a.bucket == "" {
 		return types.HttpResponse[[]T]{}, fmt.Errorf("s3client: Fetch requires client and bucket")
@@ -370,7 +369,7 @@ func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 			_ = rc.Close()
 		}
 
-		// pagination (IsTruncated is *bool)
+		// pagination (IsTruncated is *bool in v2)
 		if aws.ToBool(lo.IsTruncated) && lo.NextContinuationToken != nil {
 			in.ContinuationToken = lo.NextContinuationToken
 			continue

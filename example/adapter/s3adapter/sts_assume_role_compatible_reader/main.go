@@ -1,20 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-
-	parquet "github.com/parquet-go/parquet-go"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
@@ -49,75 +43,33 @@ func main() {
 	const bucket = "steeze-dev"
 	const prefix = "feedback/demo/"
 
-	// List objects under prefix
-	lo, err := cli.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
+	reader := builder.NewS3ClientAdapter[Feedback](
+		ctx,
+		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, bucket),
+		builder.S3ClientAdapterWithReaderListSettings[Feedback](prefix, "", 1000, 0), // one-shot
+		builder.S3ClientAdapterWithFormat[Feedback]("parquet", ""),
+		// spill to disk if object > 128 MiB
+		builder.S3ClientAdapterWithReaderFormatOptions[Feedback](map[string]string{
+			"spill_threshold_bytes": "134217728",
+		}),
+		// SSE-KMS is transparent on reads; no extra option needed here.
+	)
+
+	resp, err := reader.Fetch()
 	if err != nil {
 		panic(err)
 	}
 
-	var out []Feedback
-
-	for _, obj := range lo.Contents {
-		if obj.Key == nil {
-			continue
-		}
-		key := *obj.Key
-		if !strings.EqualFold(filepath.Ext(key), ".parquet") {
-			continue
-		}
-
-		get, err := cli.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
-		if err != nil {
-			panic(err)
-		}
-
-		// Load object into memory; bytes.Reader satisfies io.ReaderAt.
-		data, err := io.ReadAll(get.Body)
-		_ = get.Body.Close()
-		if err != nil {
-			panic(err)
-		}
-		br := bytes.NewReader(data)
-
-		// NewGenericReader requires a ReaderAt (bytes.Reader OK). Some versions also take size.
-		gr := parquet.NewGenericReader[Feedback](br /*, int64(len(data)) optional in older API */)
-
-		batch := make([]Feedback, 1024)
-		for {
-			n, rErr := gr.Read(batch)
-			if n > 0 {
-				out = append(out, batch[:n]...)
-			}
-			if rErr == io.EOF {
-				break
-			}
-			if rErr != nil {
-				_ = gr.Close()
-				panic(rErr)
-			}
-		}
-		if err := gr.Close(); err != nil {
-			panic(err)
-		}
-	}
-
-	// Example transform: uppercase content, drop empties
-	filtered := make([]Feedback, 0, len(out))
-	for _, r := range out {
+	out := make([]Feedback, 0, len(resp.Body))
+	for _, r := range resp.Body {
 		if r.CustomerID == "" && r.Content == "" {
 			continue
 		}
 		r.Content = strings.ToUpper(r.Content)
-		filtered = append(filtered, r)
+		out = append(out, r)
 	}
 
-	b, err := json.MarshalIndent(filtered, "", "  ")
+	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		panic(err)
 	}
