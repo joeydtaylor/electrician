@@ -120,7 +120,7 @@ func main() {
 		ctx,
 		builder.ForwardRelayWithLogger[EDRData](logger),
 		builder.ForwardRelayWithInput(tipOffNotifierWire),
-		builder.ForwardRelayWithTarget[EDRData]("localhost:50051", "localhost:50052"),
+		builder.ForwardRelayWithTarget[EDRData]("localhost:50250", "localhost:50252"),
 		builder.ForwardRelayWithTLSConfig[EDRData](tlsConfig),
 	)
 

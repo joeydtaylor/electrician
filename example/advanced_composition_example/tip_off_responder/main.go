@@ -71,7 +71,7 @@ func main() {
 	// Receiving relays for different purposes
 	responderService := builder.NewReceivingRelay(
 		ctx,
-		builder.ReceivingRelayWithAddress[EDRData]("localhost:50051"),
+		builder.ReceivingRelayWithAddress[EDRData]("localhost:50250"),
 		builder.ReceivingRelayWithLogger[EDRData](logger),
 		builder.ReceivingRelayWithOutput(threatWire),
 		builder.ReceivingRelayWithTLSConfig[EDRData](tlsConfig),
@@ -79,7 +79,7 @@ func main() {
 
 	dataLakeService := builder.NewReceivingRelay(
 		ctx,
-		builder.ReceivingRelayWithAddress[EDRData]("localhost:50052"),
+		builder.ReceivingRelayWithAddress[EDRData]("localhost:50252"),
 		builder.ReceivingRelayWithLogger[EDRData](logger),
 		builder.ReceivingRelayWithOutput(dataLakeWire),
 		builder.ReceivingRelayWithTLSConfig[EDRData](tlsConfig),
