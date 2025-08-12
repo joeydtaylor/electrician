@@ -8,13 +8,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3api "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
@@ -184,4 +187,70 @@ func (a *S3Client[T]) renderKey(now time.Time) string {
 		name = strings.ReplaceAll(name, k, v)
 	}
 	return path.Join(prefix, name)
+}
+
+// parquetRowsFromBody chooses in-memory vs spill-to-disk based on a threshold knob.
+// types.S3ReaderConfig.FormatOptions["spill_threshold_bytes"] can override (default 64 MiB).
+// internal.go — drop-in replacement
+func (a *S3Client[T]) parquetRowsFromBody(get *s3api.GetObjectOutput) ([]T, error) {
+	const def int64 = 64 << 20 // 64 MiB default spill threshold
+	thr := def
+	if s, ok := a.readerFormatOpts["spill_threshold_bytes"]; ok {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil && v > 0 {
+			thr = v
+		}
+	}
+
+	// Prefer ContentLength when available; otherwise fall back to buffering.
+	if get.ContentLength != nil && *get.ContentLength > thr {
+		// Spill to temp file and use ReaderAt.
+		f, err := os.CreateTemp("", "electrician-parquet-*")
+		if err != nil {
+			_ = get.Body.Close()
+			return nil, err
+		}
+		defer func() {
+			_ = f.Close()
+			_ = os.Remove(f.Name())
+		}()
+		if _, err := io.Copy(f, get.Body); err != nil {
+			_ = get.Body.Close()
+			return nil, err
+		}
+		_ = get.Body.Close()
+
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+		return a.readParquetAllFromReaderAt(f)
+	}
+
+	// Small object: buffer in memory.
+	data, err := io.ReadAll(get.Body)
+	_ = get.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	return a.readParquetAllFromReaderAt(bytes.NewReader(data))
+}
+
+func (a *S3Client[T]) readParquetAllFromReaderAt(ra io.ReaderAt) ([]T, error) {
+	gr := parquet.NewGenericReader[T](ra) // size not required in current API
+	defer gr.Close()
+
+	out := make([]T, 0, 1024)
+	batch := make([]T, 1024)
+	for {
+		n, err := gr.Read(batch)
+		if n > 0 {
+			out = append(out, batch[:n]...)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
