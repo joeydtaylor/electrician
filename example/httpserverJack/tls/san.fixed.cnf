@@ -18,7 +18,7 @@ subjectAltName             = @alt_names
 [v3_req]
 subjectKeyIdentifier       = hash
 authorityKeyIdentifier     = keyid:always,issuer
-basicConstraints           = CA:false
+basicConstraints = CA:false
 keyUsage                   = digitalSignature, keyEncipherment
 extendedKeyUsage           = serverAuth, clientAuth
 subjectAltName             = @alt_names
