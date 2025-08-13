@@ -236,3 +236,19 @@ func S3ClientAdapterWithReaderFormatOptions[T any](opts map[string]string) types
 		FormatOptions: cp,
 	})
 }
+
+// Connect one or more wires as streaming inputs to the S3 adapter.
+// Later call ServeWriterFromWires(ctx) on the adapter to start streaming.
+func S3ClientAdapterWithWire[T any](wires ...types.Wire[T]) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithWire[T](wires...)
+}
+
+// Reader-side format (e.g., "parquet" or "ndjson") and optional compression (gzip for ndjson).
+func S3ClientAdapterWithReaderFormat[T any](format, compression string) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithReaderFormat[T](format, compression)
+}
+
+// Writer basename template (extension comes from format).
+func S3ClientAdapterWithWriterFileNameTemplate[T any](tmpl string) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithWriterFileNameTemplate[T](tmpl)
+}

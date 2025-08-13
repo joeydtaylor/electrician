@@ -17,31 +17,164 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3api "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/parquet-go/parquet-go"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
+	parquet "github.com/parquet-go/parquet-go"
 )
 
 // writeOne appends one record for legacy NDJSON mode.
-// If/when a.format (types.Format[T]) is wired, this will be replaced by the pluggable encoder path.
+// For other formats, use ServeWriterRaw and feed fully-built bytes (e.g., Parquet).
 func (a *S3Client[T]) writeOne(v T) error {
-	// Legacy NDJSON only (record-oriented)
-	if a.format != nil && a.formatName != "ndjson" {
-		return fmt.Errorf("record encoder for format %q not wired yet", a.formatName)
-	}
-	if a.formatName != "ndjson" {
-		return fmt.Errorf("format %q not implemented for record-oriented writes; use ServeWriterRaw for bytes", a.formatName)
+	// Only NDJSON is supported for record-oriented writes here.
+	if !strings.EqualFold(a.formatName, "ndjson") {
+		return fmt.Errorf("record-oriented writes only support ndjson; got %q (use ServeWriterRaw for %q)", a.formatName, a.formatName)
 	}
 
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	a.buf.Write(b)
-	a.buf.WriteByte('\n')
+	_, _ = a.buf.Write(b)
+	_ = a.buf.WriteByte('\n')
 	a.count++
 	return nil
+}
+
+// parquetRoller turns a stream of T into rolling Parquet files.
+// Each roll emits a []byte to 'out' (which ServeWriterRaw uploads).
+func (a *S3Client[T]) parquetRoller(
+	ctx context.Context,
+	in <-chan T,
+	out chan<- []byte,
+	window time.Duration,
+	maxRecords int,
+	compression parquet.WriterOption,
+) error {
+	var (
+		buf   bytes.Buffer
+		pw    *parquet.GenericWriter[T]
+		count int
+	)
+
+	newWriter := func() *parquet.GenericWriter[T] {
+		return parquet.NewGenericWriter[T](&buf, compression)
+	}
+	pw = newWriter()
+
+	flush := func() error {
+		if count == 0 {
+			return nil
+		}
+		if err := pw.Close(); err != nil {
+			return err
+		}
+		// hand off a stable copy
+		out <- append([]byte(nil), buf.Bytes()...)
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ParquetFlush, records: %d, bytes: %d",
+			a.componentMetadata, count, buf.Len())
+		buf.Reset()
+		count = 0
+		pw = newWriter()
+		return nil
+	}
+
+	if window <= 0 {
+		window = 60 * time.Second
+	}
+	if maxRecords <= 0 {
+		maxRecords = 50_000
+	}
+
+	tick := time.NewTicker(window)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			_ = flush()
+			close(out)
+			return nil
+
+		case <-tick.C:
+			if err := flush(); err != nil {
+				close(out)
+				return err
+			}
+
+		case ev, ok := <-in:
+			if !ok {
+				err := flush()
+				close(out)
+				return err
+			}
+			if _, err := pw.Write([]T{ev}); err != nil {
+				close(out)
+				return err
+			}
+			count++
+			if count >= maxRecords {
+				if err := flush(); err != nil {
+					close(out)
+					return err
+				}
+			}
+		}
+	}
+}
+
+// pkg/internal/adapter/s3client/internal.go
+
+// choose parquet compression from formatOpts
+func (a *S3Client[T]) parquetCompressionFromOpts() parquet.WriterOption {
+	val := ""
+	if s, ok := a.formatOpts["compression"]; ok {
+		val = s
+	} else if s, ok := a.formatOpts["parquet_compression"]; ok {
+		val = s
+	}
+	switch strings.ToLower(val) {
+	case "zstd":
+		return parquet.Compression(&parquet.Zstd)
+	case "gzip", "gz":
+		return parquet.Compression(&parquet.Gzip)
+	default: // snappy + fallback
+		return parquet.Compression(&parquet.Snappy)
+	}
+}
+
+// roll parquet by time/record thresholds and emit []byte chunks
+func (a *S3Client[T]) startParquetStream(ctx context.Context, in <-chan T) error {
+	// Prefer explicit knobs; fallback to batch settings
+	window := 60 * time.Second
+	if s, ok := a.formatOpts["roll_window_ms"]; ok {
+		if ms, err := strconv.Atoi(s); err == nil && ms > 0 {
+			window = time.Duration(ms) * time.Millisecond
+		}
+	} else if a.batchMaxAge > 0 {
+		window = a.batchMaxAge
+	}
+	max := 50_000
+	if s, ok := a.formatOpts["roll_max_records"]; ok {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			max = n
+		}
+	} else if a.batchMaxRecords > 0 {
+		max = a.batchMaxRecords
+	}
+
+	comp := a.parquetCompressionFromOpts()
+	raw := make(chan []byte, 2)
+
+	go func() {
+		if err := a.parquetRoller(ctx, in, raw, window, max, comp); err != nil {
+			a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: parquetRoller, err: %v",
+				a.componentMetadata, err)
+		}
+	}()
+
+	// Each raw chunk -> one object (per ServeWriterRaw above)
+	return a.ServeWriterRaw(ctx, raw)
 }
 
 // flush uploads the buffered records as a single object.
@@ -252,4 +385,23 @@ func (a *S3Client[T]) readParquetAllFromReaderAt(ra io.ReaderAt) ([]T, error) {
 		}
 	}
 	return out, nil
+}
+
+// fanIn copies from src into dst until ctx is done or src closes.
+func (a *S3Client[T]) fanIn(ctx context.Context, dst chan<- T, src <-chan T) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case v, ok := <-src:
+			if !ok {
+				return
+			}
+			select {
+			case dst <- v:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 }

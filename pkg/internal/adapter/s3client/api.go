@@ -26,15 +26,19 @@ func (a *S3Client[T]) SetS3ClientDeps(d types.S3ClientDeps) {
 }
 
 func (a *S3Client[T]) SetWriterConfig(c types.S3WriterConfig) {
+	// naming/layout
 	if c.PrefixTemplate != "" {
 		a.prefixTemplate = c.PrefixTemplate
 	}
 	if c.FileNameTmpl != "" {
 		a.fileNameTmpl = c.FileNameTmpl
 	}
+
+	// format selection
 	if c.Format != "" {
 		a.formatName = strings.ToLower(c.Format)
 	}
+
 	// merge encoder knobs
 	if len(c.FormatOptions) > 0 {
 		if a.formatOpts == nil {
@@ -44,6 +48,7 @@ func (a *S3Client[T]) SetWriterConfig(c types.S3WriterConfig) {
 			a.formatOpts[k] = v
 		}
 	}
+
 	// legacy compression hint (NDJSON only)
 	if c.Compression != "" {
 		a.ndjsonEncGz = strings.EqualFold(c.Compression, "gzip")
@@ -75,6 +80,16 @@ func (a *S3Client[T]) SetWriterConfig(c types.S3WriterConfig) {
 	}
 	if c.RawContentType != "" {
 		a.rawWriterContentType = c.RawContentType
+	}
+
+	// If caller selected parquet, fill sensible raw defaults if still empty.
+	if strings.EqualFold(a.formatName, "parquet") {
+		if a.rawWriterExt == "" {
+			a.rawWriterExt = ".parquet"
+		}
+		if a.rawWriterContentType == "" {
+			a.rawWriterContentType = "application/parquet"
+		}
 	}
 }
 
@@ -221,6 +236,8 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 
 // ---------- writer: channel → S3 (raw bytes; parquet/anything) ----------
 
+// pkg/internal/adapter/s3client/s3client.go
+
 func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) error {
 	if a.cli == nil || a.bucket == "" {
 		return fmt.Errorf("s3client: ServeWriterRaw requires client and bucket")
@@ -230,43 +247,32 @@ func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) erro
 	}
 	defer atomic.StoreInt32(&a.isServing, 0)
 
-	tick := time.NewTicker(200 * time.Millisecond)
-	defer tick.Stop()
-
-	a.lastFlush = time.Now()
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeWriterRaw, bucket: %s, prefixTpl: %s",
 		a.componentMetadata, a.bucket, a.prefixTemplate)
 
 	for {
 		select {
 		case <-ctx.Done():
-			if a.buf.Len() > 0 {
-				_ = a.flushRaw(ctx, time.Now())
-			}
+			// no batching here; each chunk becomes its own object
 			return nil
 
 		case chunk, ok := <-in:
 			if !ok {
-				if a.buf.Len() > 0 {
-					_ = a.flushRaw(ctx, time.Now())
-				}
 				return nil
 			}
-			if len(chunk) > 0 {
-				a.buf.Write(chunk)
-				a.count++ // count chunks; primarily for thresholds/metrics
-			}
-			if a.count >= a.batchMaxRecords || a.buf.Len() >= a.batchMaxBytes {
-				if err := a.flushRaw(ctx, time.Now()); err != nil {
-					return err
-				}
+			if len(chunk) == 0 {
+				continue
 			}
 
-		case now := <-tick.C:
-			if a.buf.Len() > 0 && now.Sub(a.lastFlush) >= a.batchMaxAge {
-				if err := a.flushRaw(ctx, now); err != nil {
-					return err
-				}
+			// Write exactly one object per chunk
+			a.buf.Reset()
+			if _, err := a.buf.Write(chunk); err != nil {
+				return err
+			}
+			a.count = 1
+
+			if err := a.flushRaw(ctx, time.Now()); err != nil {
+				return err
 			}
 		}
 	}
@@ -434,5 +440,72 @@ func (a *S3Client[T]) Serve(ctx context.Context, submit func(context.Context, T)
 				}
 			}
 		}
+	}
+}
+
+// ConnectInput wires one or more Wire[T] outputs into this S3 client.
+// StartWriter will fan-in all connected wires and stream to S3.
+func (a *S3Client[T]) ConnectInput(ws ...types.Wire[T]) {
+	if len(ws) == 0 {
+		return
+	}
+	a.inputWires = append(a.inputWires, ws...)
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConnectInput, wires_added: %d, total_wires: %d",
+		a.componentMetadata, len(ws), len(a.inputWires))
+}
+
+// StartWriter starts streaming from all connected wires into S3.
+// - NDJSON: fan-in -> ServeWriter(ctx, mergedIn)
+// - Parquet: fan-in -> startParquetStream(ctx, mergedIn)  (defined in internal.go)
+// Returns immediately; the streaming runs in background goroutines.
+func (a *S3Client[T]) StartWriter(ctx context.Context) error {
+	if a.cli == nil || a.bucket == "" {
+		return fmt.Errorf("s3client: StartWriter requires client and bucket")
+	}
+	if len(a.inputWires) == 0 {
+		return fmt.Errorf("s3client: StartWriter requires at least one connected wire; call ConnectInput(...)")
+	}
+	if a.mergedIn == nil {
+		// buffer sized by record threshold; fall back to 1024
+		size := a.batchMaxRecords
+		if size <= 0 {
+			size = 1024
+		}
+		a.mergedIn = make(chan T, size)
+	}
+
+	// Fan-in all wire outputs into mergedIn
+	for _, w := range a.inputWires {
+		if w == nil {
+			continue
+		}
+		out := w.GetOutputChannel()
+		go a.fanIn(ctx, a.mergedIn, out)
+	}
+
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: StartWriter, format: %s, wires: %d, bucket: %s, prefixTpl: %s",
+		a.componentMetadata, a.formatName, len(a.inputWires), a.bucket, a.prefixTemplate)
+
+	switch strings.ToLower(a.formatName) {
+	case "", "ndjson":
+		// run ServeWriter in background; it handles batching/flush/ctx.Done
+		go func() {
+			if err := a.ServeWriter(ctx, a.mergedIn); err != nil {
+				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: ServeWriter, err: %v",
+					a.componentMetadata, err)
+			}
+		}()
+		return nil
+	case "parquet":
+		// stream parquet using helper in internal.go (roller -> ServeWriterRaw)
+		go func() {
+			if err := a.startParquetStream(ctx, a.mergedIn); err != nil {
+				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: startParquetStream, err: %v",
+					a.componentMetadata, err)
+			}
+		}()
+		return nil
+	default:
+		return fmt.Errorf("s3client: StartWriter unsupported format %q (use ndjson or parquet)", a.formatName)
 	}
 }

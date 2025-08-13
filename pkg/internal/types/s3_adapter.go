@@ -32,7 +32,7 @@ type S3WriterConfig struct {
 	// - "parquet"/"raw" (bytes passthrough): ServeWriterRaw(ctx, <-chan []byte)
 	Format string
 
-	// Additional encoder knobs passed to the selected format (preferred over Compression).
+	// Additional encoder knobs (preferred over Compression).
 	// e.g. {"gzip":"true"} for ndjson, {"compression":"zstd","row_group_bytes":"134217728"} for parquet.
 	FormatOptions map[string]string
 
@@ -91,8 +91,15 @@ type S3WriterAdapter[T any] interface {
 	SetS3ClientDeps(S3ClientDeps)
 	SetWriterConfig(S3WriterConfig)
 
+	// NEW: directly attach one or more wires as inputs (reads each wire's OutputChan)
+	ConnectInput(...Wire[T])
+
 	// Lifecycle (record-oriented writer via format encoder)
+	// 1) classic: provide a channel explicitly
 	Serve(ctx context.Context, in <-chan T) error
+	// 2) new: consume from previously connected wires
+	StartWriter(ctx context.Context) error
+
 	Stop()
 
 	// Introspection / hooks
@@ -134,13 +141,16 @@ type S3ClientAdapter[T any] interface {
 	SetWriterConfig(S3WriterConfig)
 	SetReaderConfig(S3ReaderConfig)
 
-	// writer (record-oriented via Encoder[T])
+	// --- WRITER ---
+	// record-oriented via Encoder[T] (classic explicit channel)
 	ServeWriter(ctx context.Context, in <-chan T) error
-
-	// writer (BYTES passthrough: one []byte -> one S3 object) for parquet/raw.
+	// BYTES passthrough: one []byte -> one S3 object (parquet/raw externalized)
 	ServeWriterRaw(ctx context.Context, in <-chan []byte) error
+	// NEW: attach input wires and then start consuming from them
+	ConnectInput(...Wire[T])
+	StartWriter(ctx context.Context) error
 
-	// reader
+	// --- READER ---
 	Serve(ctx context.Context, submit func(context.Context, T) error) error
 	Fetch() (HttpResponse[[]T], error)
 

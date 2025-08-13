@@ -14,7 +14,7 @@ import (
 )
 
 // S3Client[T] concrete implementation (read + write in one component).
-// Back-compat: preserves existing NDJSON fields while adding pluggable format handles.
+// Back-compat: preserves NDJSON defaults while adding pluggable format knobs and wire inputs.
 type S3Client[T any] struct {
 	// --- meta / lifecycle ---
 	componentMetadata types.ComponentMetadata
@@ -36,17 +36,16 @@ type S3Client[T any] struct {
 	prefixTemplate string // e.g. "organizations/{organizationId}/events/{yyyy}/{MM}/{dd}/{HH}/{mm}/"
 	fileNameTmpl   string // basename; extension derived from format (default "{ts}-{ulid}")
 
-	// --- format (pluggable) ---
-	// Selection by name (e.g., "ndjson","parquet","raw") and resolved handler.
+	// --- format (pluggable via name + options) ---
+	// Selection by name (e.g., "ndjson", "parquet", "raw")
 	formatName  string
-	formatOpts  map[string]string // encoder knobs
-	format      types.Format[T]   // nil => use legacy NDJSON path
-	ndjsonMime  string            // legacy defaults
+	formatOpts  map[string]string // encoder/format knobs
+	ndjsonMime  string            // legacy defaults for NDJSON
 	ndjsonEncGz bool              // legacy gzip toggle
 
 	// --- BYTES passthrough (raw/parquet single-object) ---
-	rawWriterExt         string // default ".parquet"
-	rawWriterContentType string // default "application/octet-stream"
+	rawWriterExt         string // default ".parquet" when formatName == "parquet"
+	rawWriterContentType string // default "application/octet-stream" or "application/parquet" for parquet
 
 	// --- SSE ---
 	sseMode string // "" | "AES256" | "aws:kms"
@@ -68,10 +67,13 @@ type S3Client[T any] struct {
 	listPageSize     int32
 	listPollInterval time.Duration
 
-	// reader-side format
+	// reader-side format selection
 	readerFormatName string
 	readerFormatOpts map[string]string
-	readerFormat     types.Format[T]
+
+	// --- inputs from Wire(s) (fan-in) ---
+	inputWires []types.Wire[T] // wires connected via ConnectInput(...)
+	mergedIn   chan T          // internal merged channel fed by fan-in goroutines
 }
 
 // NewS3ClientAdapter mirrors the public constructor; options mutate the concrete impl.
@@ -116,8 +118,13 @@ func NewS3ClientAdapter[T any](ctx context.Context, options ...types.S3ClientOpt
 		readerFormatOpts: map[string]string{"gzip": "auto"},
 		listPrefix:       "",
 		listStartAfter:   "",
+
 		// --- buffer ---
 		buf: bytes.NewBuffer(make([]byte, 0, 1<<20)), // 1 MiB initial cap
+
+		// --- wire fan-in ---
+		inputWires: make([]types.Wire[T], 0),
+		mergedIn:   nil, // allocated when ConnectInput or StartWriter is used
 	}
 
 	for _, opt := range options {
@@ -131,7 +138,7 @@ func NewS3ClientAdapter[T any](ctx context.Context, options ...types.S3ClientOpt
 			a.rawWriterExt = ".parquet"
 		}
 		if a.rawWriterContentType == "" {
-			// Most users prefer "application/parquet"; keeping octet-stream default elsewhere.
+			// Commonly preferred for parquet payloads
 			a.rawWriterContentType = "application/parquet"
 		}
 	}
