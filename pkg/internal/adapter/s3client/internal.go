@@ -6,8 +6,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"strconv"
@@ -22,6 +24,123 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 	parquet "github.com/parquet-go/parquet-go"
 )
+
+// --- retry knobs (sensible defaults; can be made configurable later) ---
+const (
+	defaultMaxAttempts   = 5
+	defaultBaseBackoff   = 100 * time.Millisecond
+	defaultMaxBackoff    = 3 * time.Second
+	defaultJitterEnabled = true
+)
+
+var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+
+func backoffDuration(attempt int) time.Duration {
+	// Exponential backoff (1, 2, 4, 8...) * base, clamped at max; full jitter (0..delay)
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := defaultBaseBackoff << (attempt - 1)
+	if d > defaultMaxBackoff {
+		d = defaultMaxBackoff
+	}
+	if defaultJitterEnabled {
+		return time.Duration(rng.Int63n(int64(d) + 1))
+	}
+	return d
+}
+
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Don't retry explicit cancel/overall deadline
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// Heuristic string checks that cover common S3 + network failure modes
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "throttl"), // Throttling, ThrottlingException
+		strings.Contains(msg, "slowdown"),
+		strings.Contains(msg, "timeout"),
+		strings.Contains(msg, "tempor"), // temporary network error
+		strings.Contains(msg, "connection reset"),
+		strings.Contains(msg, "eof"),
+		strings.Contains(msg, "internalerror"),
+		strings.Contains(msg, "service unavailable"),
+		strings.Contains(msg, "503"),
+		strings.Contains(msg, "500"):
+		return true
+	default:
+		return false
+	}
+}
+
+// putWithRetry performs PutObject with bounded retries + backoff + jitter.
+// It re-seeks the body before every attempt (Body must be an io.ReadSeeker).
+func (a *S3Client[T]) putWithRetry(
+	ctx context.Context,
+	put *s3api.PutObjectInput,
+	key string,
+	payloadSize int,
+) (time.Duration, error) {
+	var rs io.ReadSeeker
+	if r, ok := put.Body.(io.ReadSeeker); ok {
+		rs = r
+	} else {
+		return 0, fmt.Errorf("putWithRetry requires io.ReadSeeker body")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= defaultMaxAttempts; attempt++ {
+		// Reset the reader for this attempt
+		if _, err := rs.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+
+		// sensors: attempt (count every try)
+		a.forEachSensor(func(s types.Sensor[T]) {
+			s.InvokeOnS3PutAttempt(a.componentMetadata, a.bucket, key, payloadSize, a.sseMode, a.kmsKey)
+		})
+
+		start := time.Now()
+		_, err := a.cli.PutObject(ctx, put)
+		dur := time.Since(start)
+		if err == nil {
+			// sensors: success
+			a.forEachSensor(func(s types.Sensor[T]) {
+				s.InvokeOnS3PutSuccess(a.componentMetadata, a.bucket, key, payloadSize, dur)
+			})
+			return dur, nil
+		}
+
+		lastErr = err
+		a.NotifyLoggers(types.WarnLevel, "%s => level: WARN, event: PutObject, attempt: %d/%d, key: %s, err: %v",
+			a.componentMetadata, attempt, defaultMaxAttempts, key, err)
+
+		// Give up if non-retryable, final attempt, or context done
+		if !isRetryable(err) || attempt == defaultMaxAttempts || ctx.Err() != nil {
+			a.forEachSensor(func(s types.Sensor[T]) {
+				s.InvokeOnS3PutError(a.componentMetadata, a.bucket, key, payloadSize, err)
+			})
+			return 0, err
+		}
+
+		// Backoff w/ jitter (respect context)
+		sleep := backoffDuration(attempt)
+		select {
+		case <-time.After(sleep):
+		case <-ctx.Done():
+			a.forEachSensor(func(s types.Sensor[T]) {
+				s.InvokeOnS3PutError(a.componentMetadata, a.bucket, key, payloadSize, ctx.Err())
+			})
+			return 0, ctx.Err()
+		}
+	}
+	// Shouldn't reach here, but return lastErr defensively
+	return 0, lastErr
+}
 
 // writeOne appends one record for legacy NDJSON mode.
 // For other formats, use ServeWriterRaw and feed fully-built bytes (e.g., Parquet).
@@ -50,7 +169,7 @@ func (a *S3Client[T]) parquetRoller(
 	window time.Duration,
 	maxRecords int,
 	compression parquet.WriterOption,
-	compName string, // <- for sensor reporting
+	compName string, // for sensor reporting
 ) error {
 	var (
 		buf   bytes.Buffer
@@ -194,8 +313,7 @@ func (a *S3Client[T]) startParquetStream(ctx context.Context, in <-chan T) error
 	return a.ServeWriterRaw(ctx, raw)
 }
 
-// flush uploads the buffered records as a single object.
-// Legacy path supports NDJSON (+ optional gzip). Extension and content-type are derived.
+// flush uploads the buffered records as a single object (NDJSON path).
 func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 	if a.count == 0 {
 		return nil
@@ -208,33 +326,34 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 	ct := a.ndjsonMime
 	key := a.renderKey(now) + ext
 
-	var body io.Reader = bytes.NewReader(a.buf.Bytes())
+	// Build payload into bytes so we can rewind on retries
+	var payload []byte
 	var gz bytes.Buffer
 
-	put := &s3api.PutObjectInput{
-		Bucket:      &a.bucket,
-		Key:         &key,
-		ContentType: aws.String(ct),
-	}
-
-	// compression (ndjson)
-	var payloadSize int
 	if a.ndjsonEncGz || strings.EqualFold(a.formatOpts["gzip"], "true") {
 		zw := gzip.NewWriter(&gz)
-		if _, err := io.Copy(zw, body); err != nil {
+		if _, err := io.Copy(zw, bytes.NewReader(a.buf.Bytes())); err != nil {
 			return err
 		}
 		_ = zw.Close()
-		put.Body = bytes.NewReader(gz.Bytes())
-		put.ContentEncoding = aws.String("gzip")
-		payloadSize = gz.Len()
+		payload = gz.Bytes()
 	} else {
-		br := a.buf.Bytes()
-		put.Body = bytes.NewReader(br)
-		payloadSize = len(br)
+		payload = a.buf.Bytes()
 	}
 
-	// server-side encryption
+	// Prepare request
+	reader := bytes.NewReader(payload)
+	put := &s3api.PutObjectInput{
+		Bucket:      &a.bucket,
+		Key:         &key,
+		Body:        reader, // io.ReadSeeker
+		ContentType: aws.String(ct),
+	}
+	if a.ndjsonEncGz || strings.EqualFold(a.formatOpts["gzip"], "true") {
+		put.ContentEncoding = aws.String("gzip")
+	}
+
+	// SSE
 	switch strings.ToLower(a.sseMode) {
 	case "aes256":
 		put.ServerSideEncryption = s3types.ServerSideEncryptionAes256
@@ -245,28 +364,19 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		}
 	}
 
-	// sensors: key rendered + put attempt
+	// sensors: key rendered (once per object)
 	a.forEachSensor(func(s types.Sensor[T]) {
 		s.InvokeOnS3KeyRendered(a.componentMetadata, key)
-		s.InvokeOnS3PutAttempt(a.componentMetadata, a.bucket, key, payloadSize, a.sseMode, a.kmsKey)
 	})
 
-	start := time.Now()
-	_, err := a.cli.PutObject(ctx, put)
-	dur := time.Since(start)
+	// Put with retry (attempt/success/error sensors inside)
+	_, err := a.putWithRetry(ctx, put, key, len(payload))
 	if err != nil {
-		a.forEachSensor(func(s types.Sensor[T]) {
-			s.InvokeOnS3PutError(a.componentMetadata, a.bucket, key, payloadSize, err)
-		})
 		return err
 	}
 
-	a.forEachSensor(func(s types.Sensor[T]) {
-		s.InvokeOnS3PutSuccess(a.componentMetadata, a.bucket, key, payloadSize, dur)
-	})
-
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Flush, key: %s, records: %d, bytes: %d",
-		a.componentMetadata, key, a.count, a.buf.Len())
+		a.componentMetadata, key, a.count, len(payload))
 
 	a.buf.Reset()
 	a.count = 0
@@ -275,7 +385,6 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 }
 
 // flushRaw uploads a.buf bytes as-is (no extra compression), honoring SSE.
-// Extension and content type come from raw defaults or the parquet preset.
 func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 	if a.buf.Len() == 0 {
 		return nil
@@ -299,16 +408,19 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 	}
 
 	key := a.renderKey(now) + ext
-	payloadSize := a.buf.Len()
+
+	// Copy payload bytes so we can safely rewind on retries
+	payload := append([]byte(nil), a.buf.Bytes()...)
+	reader := bytes.NewReader(payload)
 
 	put := &s3api.PutObjectInput{
 		Bucket:      &a.bucket,
 		Key:         &key,
-		Body:        bytes.NewReader(a.buf.Bytes()),
+		Body:        reader, // io.ReadSeeker
 		ContentType: aws.String(ct),
 	}
 
-	// server-side encryption
+	// SSE
 	switch strings.ToLower(a.sseMode) {
 	case "aes256":
 		put.ServerSideEncryption = s3types.ServerSideEncryptionAes256
@@ -319,28 +431,19 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 		}
 	}
 
-	// sensors: key rendered + put attempt
+	// sensors: key rendered (once per object)
 	a.forEachSensor(func(s types.Sensor[T]) {
 		s.InvokeOnS3KeyRendered(a.componentMetadata, key)
-		s.InvokeOnS3PutAttempt(a.componentMetadata, a.bucket, key, payloadSize, a.sseMode, a.kmsKey)
 	})
 
-	start := time.Now()
-	_, err := a.cli.PutObject(ctx, put)
-	dur := time.Since(start)
+	// Put with retry (attempt/success/error sensors inside)
+	_, err := a.putWithRetry(ctx, put, key, len(payload))
 	if err != nil {
-		a.forEachSensor(func(s types.Sensor[T]) {
-			s.InvokeOnS3PutError(a.componentMetadata, a.bucket, key, payloadSize, err)
-		})
 		return err
 	}
 
-	a.forEachSensor(func(s types.Sensor[T]) {
-		s.InvokeOnS3PutSuccess(a.componentMetadata, a.bucket, key, payloadSize, dur)
-	})
-
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: FlushRaw, key: %s, chunks: %d, bytes: %d",
-		a.componentMetadata, key, a.count, a.buf.Len())
+		a.componentMetadata, key, a.count, len(payload))
 
 	a.buf.Reset()
 	a.count = 0
