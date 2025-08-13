@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,10 +33,15 @@ type Feedback struct {
 const (
 	AES256KeyHex     = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
 	defaultOrgID     = "4d948fa0-084e-490b-aad5-cfd01eeab79a"
-	assertJWTEnvName = "ASSERT_JWT" // for testing: export ASSERT_JWT="<your assert cookie JWT>"
-	bearerJWTEnvName = "BEARER_JWT" // for testing: export BEARER_JWT="<your bearer access token>"
-	orgIDEnvName     = "ORG_ID"     // for forcing org id explicitly
+	assertJWTEnvName = "ASSERT_JWT"
+	bearerJWTEnvName = "BEARER_JWT"
+	orgIDEnvName     = "ORG_ID"
 )
+
+func trueish(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "1" || s == "true" || s == "yes" || s == "y"
+}
 
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -53,7 +59,6 @@ func mustAES() string {
 }
 
 func base64URLDecode(s string) ([]byte, error) {
-	// add missing padding if any
 	if m := len(s) % 4; m != 0 {
 		s += strings.Repeat("=", 4-m)
 	}
@@ -73,7 +78,6 @@ func orgFromJWT(tok string) (string, bool) {
 	if err := json.Unmarshal(payloadB, &claims); err != nil {
 		return "", false
 	}
-	// try common keys
 	for _, k := range []string{"org", "org_id", "orgId", "organization"} {
 		if v, ok := claims[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
@@ -85,24 +89,35 @@ func orgFromJWT(tok string) (string, bool) {
 }
 
 func resolveOrgID() string {
-	// 1) explicit env override
 	if s := os.Getenv(orgIDEnvName); s != "" {
 		return s
 	}
-	// 2) ASSERT_JWT (cookie value without the "assert=" prefix)
 	if s := os.Getenv(assertJWTEnvName); s != "" {
 		if org, ok := orgFromJWT(s); ok {
 			return org
 		}
 	}
-	// 3) BEARER_JWT
 	if s := os.Getenv(bearerJWTEnvName); s != "" {
 		if org, ok := orgFromJWT(s); ok {
 			return org
 		}
 	}
-	// 4) fallback
 	return defaultOrgID
+}
+
+type s3Stats struct {
+	writerStarts    atomic.Int64
+	writerStops     atomic.Int64
+	keysRendered    atomic.Int64
+	putAttempts     atomic.Int64
+	putSuccesses    atomic.Int64
+	putErrors       atomic.Int64
+	bytesAttempted  atomic.Int64
+	bytesWritten    atomic.Int64
+	parquetRolls    atomic.Int64
+	recordsFlushed  atomic.Int64
+	lastCompression atomic.Value // string
+	lastError       atomic.Value // string
 }
 
 func main() {
@@ -151,7 +166,7 @@ func main() {
 	recvA := builder.NewReceivingRelay[Feedback](
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_A", "localhost:50053")),
-		builder.ReceivingRelayWithBufferSize[Feedback](1000),
+		builder.ReceivingRelayWithBufferSize[Feedback](1024),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
 		builder.ReceivingRelayWithOutput(wireA),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
@@ -163,7 +178,7 @@ func main() {
 	recvB := builder.NewReceivingRelay[Feedback](
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_B", "localhost:50054")),
-		builder.ReceivingRelayWithBufferSize[Feedback](1000),
+		builder.ReceivingRelayWithBufferSize[Feedback](1024),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
 		builder.ReceivingRelayWithOutput(wireB),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
@@ -198,41 +213,95 @@ func main() {
 	}
 
 	const bucket = "steeze-dev"
-	const kmsAliasArn = "arn:aws:kms:us-east-1:000000000000:alias/electrician-dev"
-
-	// derive org id from env/JWT
 	orgID := resolveOrgID()
 	logger.Info(fmt.Sprintf("using org id: %s", orgID))
-
-	// Prefix nested under org=<orgID>/...
 	prefix := fmt.Sprintf("org=%s/feedback/demo/{yyyy}/{MM}/{dd}/{HH}/{mm}/", orgID)
 
-	// Idempotent create for LocalStack
+	// Simulation toggles
+	simPutErr := trueish(os.Getenv("SIMULATE_S3_PUT_ERROR"))
+	simBadKMS := trueish(os.Getenv("SIMULATE_S3_BAD_KMS"))
+
+	// The bucket we actually write to (use a missing bucket when simulating)
+	effectiveBucket := bucket
+	if simPutErr {
+		effectiveBucket = bucket + "-missing"
+		logger.Warn(fmt.Sprintf("[SIM] forcing PutObject error by writing to non-existent bucket: %s", effectiveBucket))
+	}
+
+	// Create only the real bucket (not the simulated-missing one)
 	_, _ = cli.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 
-	// S3 adapter: Parquet + SSE-KMS
+	// ----------------------------
+	// Sensor that counts S3 events
+	// ----------------------------
+	var stats s3Stats
+	stats.lastCompression.Store("unknown")
+	stats.lastError.Store("")
+
+	s := builder.NewSensor[Feedback](
+		builder.SensorWithLogger[Feedback](logger),
+
+		// Writer lifecycle
+		builder.SensorWithOnS3WriterStartFunc[Feedback](func(_ builder.ComponentMetadata, _bkt, _pref, _fmt string) {
+			stats.writerStarts.Add(1)
+		}),
+		builder.SensorWithOnS3WriterStopFunc[Feedback](func(_ builder.ComponentMetadata) {
+			stats.writerStops.Add(1)
+		}),
+
+		// Key render / Put path
+		builder.SensorWithOnS3KeyRenderedFunc[Feedback](func(_ builder.ComponentMetadata, _key string) {
+			stats.keysRendered.Add(1)
+		}),
+		builder.SensorWithOnS3PutAttemptFunc[Feedback](func(_ builder.ComponentMetadata, _bkt, _key string, n int, _sse, _kms string) {
+			stats.putAttempts.Add(1)
+			stats.bytesAttempted.Add(int64(n))
+		}),
+		builder.SensorWithOnS3PutSuccessFunc[Feedback](func(_ builder.ComponentMetadata, _bkt, _key string, n int, _ time.Duration) {
+			stats.putSuccesses.Add(1)
+			stats.bytesWritten.Add(int64(n))
+		}),
+		builder.SensorWithOnS3PutErrorFunc[Feedback](func(_ builder.ComponentMetadata, _bkt, _key string, _ int, err error) {
+			stats.putErrors.Add(1)
+			if err != nil {
+				stats.lastError.Store(err.Error())
+			}
+		}),
+
+		// Parquet roller
+		builder.SensorWithOnS3ParquetRollFlushFunc[Feedback](func(_ builder.ComponentMetadata, recs int, _bytes int, comp string) {
+			stats.parquetRolls.Add(1)
+			stats.recordsFlushed.Add(int64(recs))
+			stats.lastCompression.Store(comp)
+		}),
+	)
+
+	// KMS alias (optionally bogus to simulate KMS failure)
+	kmsAliasArn := "arn:aws:kms:us-east-1:000000000000:alias/electrician-dev"
+	if simBadKMS {
+		kmsAliasArn = "arn:aws:kms:us-east-1:000000000000:alias/does-not-exist"
+		logger.Warn("[SIM] using bogus KMS alias to attempt KMS-related failure")
+	}
+
+	// S3 adapter: Parquet + SSE-KMS + Sensor
 	s3ad := builder.NewS3ClientAdapter[Feedback](
 		ctx,
-		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, bucket),
+		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, effectiveBucket),
+		builder.S3ClientAdapterWithSensor[Feedback](s),
 
-		// Parquet writer + key layout
 		builder.S3ClientAdapterWithFormat[Feedback]("parquet", ""),
 		builder.S3ClientAdapterWithWriterPrefixTemplate[Feedback](prefix),
 
-		// rolling thresholds (also used by parquet roller)
+		// keep rolls fast so you hit the error quickly
 		builder.S3ClientAdapterWithBatchSettings[Feedback](5000, 128<<20, 1*time.Second),
-
-		// codec knob
 		builder.S3ClientAdapterWithWriterFormatOptions[Feedback](map[string]string{
-			"parquet_compression": "snappy", // snappy|zstd|gzip
+			"parquet_compression": "snappy",
+			"roll_window_ms":      "1000",
+			"roll_max_records":    "5000",
 		}),
-
-		// SSE-KMS
 		builder.S3ClientAdapterWithSSE[Feedback]("aws:kms", kmsAliasArn),
 
-		// Fan-in both wires
 		builder.S3ClientAdapterWithWire[Feedback](wireA, wireB),
-
 		builder.S3ClientAdapterWithLogger[Feedback](logger),
 	)
 
@@ -262,5 +331,29 @@ func main() {
 	if ws, ok := s3ad.(hasStartWriter[Feedback]); ok {
 		ws.Stop()
 	}
+
+	// ---------
+	// Printout
+	// ---------
+	summary := map[string]any{
+		"orgId":           orgID,
+		"bucket":          effectiveBucket,
+		"prefixTemplate":  prefix,
+		"simulated":       map[string]any{"putError": simPutErr, "badKMS": simBadKMS},
+		"writerStarts":    stats.writerStarts.Load(),
+		"writerStops":     stats.writerStops.Load(),
+		"keysRendered":    stats.keysRendered.Load(),
+		"putAttempts":     stats.putAttempts.Load(),
+		"putSuccesses":    stats.putSuccesses.Load(),
+		"putErrors":       stats.putErrors.Load(),
+		"bytesAttempted":  stats.bytesAttempted.Load(),
+		"bytesWritten":    stats.bytesWritten.Load(),
+		"parquetRolls":    stats.parquetRolls.Load(),
+		"recordsFlushed":  stats.recordsFlushed.Load(),
+		"lastCompression": stats.lastCompression.Load(),
+		"lastError":       stats.lastError.Load(),
+	}
+	js, _ := json.MarshalIndent(summary, "", "  ")
+	fmt.Println(string(js))
 	fmt.Println("Done.")
 }

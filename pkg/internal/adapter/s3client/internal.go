@@ -50,6 +50,7 @@ func (a *S3Client[T]) parquetRoller(
 	window time.Duration,
 	maxRecords int,
 	compression parquet.WriterOption,
+	compName string, // <- for sensor reporting
 ) error {
 	var (
 		buf   bytes.Buffer
@@ -69,6 +70,12 @@ func (a *S3Client[T]) parquetRoller(
 		if err := pw.Close(); err != nil {
 			return err
 		}
+
+		// sensor: parquet roll flushed
+		a.forEachSensor(func(s types.Sensor[T]) {
+			s.InvokeOnS3ParquetRollFlush(a.componentMetadata, count, buf.Len(), compName)
+		})
+
 		// hand off a stable copy
 		out <- append([]byte(nil), buf.Bytes()...)
 		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ParquetFlush, records: %d, bytes: %d",
@@ -123,8 +130,6 @@ func (a *S3Client[T]) parquetRoller(
 	}
 }
 
-// pkg/internal/adapter/s3client/internal.go
-
 // choose parquet compression from formatOpts
 func (a *S3Client[T]) parquetCompressionFromOpts() parquet.WriterOption {
 	val := ""
@@ -141,6 +146,17 @@ func (a *S3Client[T]) parquetCompressionFromOpts() parquet.WriterOption {
 	default: // snappy + fallback
 		return parquet.Compression(&parquet.Snappy)
 	}
+}
+
+// name for parquet compression (for sensors/metrics)
+func (a *S3Client[T]) parquetCompressionNameFromOpts() string {
+	if s, ok := a.formatOpts["compression"]; ok {
+		return strings.ToLower(s)
+	}
+	if s, ok := a.formatOpts["parquet_compression"]; ok {
+		return strings.ToLower(s)
+	}
+	return "snappy"
 }
 
 // roll parquet by time/record thresholds and emit []byte chunks
@@ -164,10 +180,11 @@ func (a *S3Client[T]) startParquetStream(ctx context.Context, in <-chan T) error
 	}
 
 	comp := a.parquetCompressionFromOpts()
+	compName := a.parquetCompressionNameFromOpts()
 	raw := make(chan []byte, 2)
 
 	go func() {
-		if err := a.parquetRoller(ctx, in, raw, window, max, comp); err != nil {
+		if err := a.parquetRoller(ctx, in, raw, window, max, comp, compName); err != nil {
 			a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: parquetRoller, err: %v",
 				a.componentMetadata, err)
 		}
@@ -201,6 +218,7 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 	}
 
 	// compression (ndjson)
+	var payloadSize int
 	if a.ndjsonEncGz || strings.EqualFold(a.formatOpts["gzip"], "true") {
 		zw := gzip.NewWriter(&gz)
 		if _, err := io.Copy(zw, body); err != nil {
@@ -209,8 +227,11 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		_ = zw.Close()
 		put.Body = bytes.NewReader(gz.Bytes())
 		put.ContentEncoding = aws.String("gzip")
+		payloadSize = gz.Len()
 	} else {
-		put.Body = body
+		br := a.buf.Bytes()
+		put.Body = bytes.NewReader(br)
+		payloadSize = len(br)
 	}
 
 	// server-side encryption
@@ -224,9 +245,25 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		}
 	}
 
-	if _, err := a.cli.PutObject(ctx, put); err != nil {
+	// sensors: key rendered + put attempt
+	a.forEachSensor(func(s types.Sensor[T]) {
+		s.InvokeOnS3KeyRendered(a.componentMetadata, key)
+		s.InvokeOnS3PutAttempt(a.componentMetadata, a.bucket, key, payloadSize, a.sseMode, a.kmsKey)
+	})
+
+	start := time.Now()
+	_, err := a.cli.PutObject(ctx, put)
+	dur := time.Since(start)
+	if err != nil {
+		a.forEachSensor(func(s types.Sensor[T]) {
+			s.InvokeOnS3PutError(a.componentMetadata, a.bucket, key, payloadSize, err)
+		})
 		return err
 	}
+
+	a.forEachSensor(func(s types.Sensor[T]) {
+		s.InvokeOnS3PutSuccess(a.componentMetadata, a.bucket, key, payloadSize, dur)
+	})
 
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Flush, key: %s, records: %d, bytes: %d",
 		a.componentMetadata, key, a.count, a.buf.Len())
@@ -262,6 +299,7 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 	}
 
 	key := a.renderKey(now) + ext
+	payloadSize := a.buf.Len()
 
 	put := &s3api.PutObjectInput{
 		Bucket:      &a.bucket,
@@ -281,9 +319,25 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 		}
 	}
 
-	if _, err := a.cli.PutObject(ctx, put); err != nil {
+	// sensors: key rendered + put attempt
+	a.forEachSensor(func(s types.Sensor[T]) {
+		s.InvokeOnS3KeyRendered(a.componentMetadata, key)
+		s.InvokeOnS3PutAttempt(a.componentMetadata, a.bucket, key, payloadSize, a.sseMode, a.kmsKey)
+	})
+
+	start := time.Now()
+	_, err := a.cli.PutObject(ctx, put)
+	dur := time.Since(start)
+	if err != nil {
+		a.forEachSensor(func(s types.Sensor[T]) {
+			s.InvokeOnS3PutError(a.componentMetadata, a.bucket, key, payloadSize, err)
+		})
 		return err
 	}
+
+	a.forEachSensor(func(s types.Sensor[T]) {
+		s.InvokeOnS3PutSuccess(a.componentMetadata, a.bucket, key, payloadSize, dur)
+	})
 
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: FlushRaw, key: %s, chunks: %d, bytes: %d",
 		a.componentMetadata, key, a.count, a.buf.Len())

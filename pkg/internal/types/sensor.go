@@ -143,4 +143,47 @@ type Sensor[T any] interface {
 	InvokeOnSurgeProtectorDetachedBackups(ComponentMetadata, ComponentMetadata)
 	InvokeOnSurgeProtectorBackupWireSubmit(ComponentMetadata, T)
 	InvokeOnSurgeProtectorDrop(ComponentMetadata, T)
+
+	// S3 writer lifecycle
+	RegisterOnS3WriterStart(...func(ComponentMetadata, string /*bucket*/, string /*prefixTpl*/, string /*format*/))
+	RegisterOnS3WriterStop(...func(ComponentMetadata))
+
+	InvokeOnS3WriterStart(ComponentMetadata, string, string, string)
+	InvokeOnS3WriterStop(ComponentMetadata)
+
+	// Key generation
+	RegisterOnS3KeyRendered(...func(ComponentMetadata, string /*key*/))
+	InvokeOnS3KeyRendered(ComponentMetadata, string)
+
+	// PutObject
+	RegisterOnS3PutAttempt(...func(ComponentMetadata, string /*bucket*/, string /*key*/, int /*bytes*/, string /*sseMode*/, string /*kmsKey*/))
+	RegisterOnS3PutSuccess(...func(ComponentMetadata, string /*bucket*/, string /*key*/, int /*bytes*/, time.Duration /*dur*/))
+	RegisterOnS3PutError(...func(ComponentMetadata, string /*bucket*/, string /*key*/, int /*bytes*/, error))
+
+	InvokeOnS3PutAttempt(ComponentMetadata, string, string, int, string, string)
+	InvokeOnS3PutSuccess(ComponentMetadata, string, string, int, time.Duration)
+	InvokeOnS3PutError(ComponentMetadata, string, string, int, error)
+
+	// Parquet rolling (before upload)
+	RegisterOnS3ParquetRollFlush(...func(ComponentMetadata, int /*records*/, int /*bytes*/, string /*compression*/))
+	InvokeOnS3ParquetRollFlush(ComponentMetadata, int, int, string)
+
+	// Reader lifecycle + pages
+	RegisterOnS3ReaderListStart(...func(ComponentMetadata, string /*bucket*/, string /*prefix*/))
+	RegisterOnS3ReaderListPage(...func(ComponentMetadata, int /*objsInPage*/, bool /*isTruncated*/))
+	RegisterOnS3ReaderObject(...func(ComponentMetadata, string /*key*/, int64 /*size*/))
+	RegisterOnS3ReaderDecode(...func(ComponentMetadata, string /*key*/, int /*rows*/, string /*format*/))
+	RegisterOnS3ReaderSpillToDisk(...func(ComponentMetadata, int64 /*threshold*/, int64 /*objectBytes*/))
+	RegisterOnS3ReaderComplete(...func(ComponentMetadata, int /*objectsScanned*/, int /*rowsDecoded*/))
+
+	InvokeOnS3ReaderListStart(ComponentMetadata, string, string)
+	InvokeOnS3ReaderListPage(ComponentMetadata, int, bool)
+	InvokeOnS3ReaderObject(ComponentMetadata, string, int64)
+	InvokeOnS3ReaderDecode(ComponentMetadata, string, int, string)
+	InvokeOnS3ReaderSpillToDisk(ComponentMetadata, int64, int64)
+	InvokeOnS3ReaderComplete(ComponentMetadata, int, int)
+
+	// (Optional) billing sampling: raw inputs to cost model
+	RegisterOnS3BillingSample(...func(ComponentMetadata, string /*op: PUT|GET|LIST*/, int64 /*requestUnits*/, int64 /*bytes*/, string /*storageClass*/))
+	InvokeOnS3BillingSample(ComponentMetadata, string, int64, int64, string)
 }

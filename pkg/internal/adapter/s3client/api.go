@@ -135,6 +135,19 @@ func (a *S3Client[T]) ConnectSensor(s ...types.Sensor[T]) {
 	}
 }
 
+// small helper so we can fan out to sensors safely from any goroutine
+func (a *S3Client[T]) forEachSensor(fn func(types.Sensor[T])) {
+	a.sensorLock.Lock()
+	local := make([]types.Sensor[T], len(a.sensors))
+	copy(local, a.sensors)
+	a.sensorLock.Unlock()
+	for _, s := range local {
+		if s != nil {
+			fn(s)
+		}
+	}
+}
+
 func (a *S3Client[T]) ConnectLogger(l ...types.Logger) {
 	a.loggersLock.Lock()
 	defer a.loggersLock.Unlock()
@@ -179,7 +192,13 @@ func (a *S3Client[T]) SetComponentMetadata(name, id string) {
 
 func (a *S3Client[T]) Name() string { return "S3_CLIENT" }
 
-func (a *S3Client[T]) Stop() { a.cancel() }
+func (a *S3Client[T]) Stop() {
+	// signal writer-stop to any sensors
+	a.forEachSensor(func(s types.Sensor[T]) {
+		s.InvokeOnS3WriterStop(a.componentMetadata)
+	})
+	a.cancel()
+}
 
 // ---------- writer: channel → S3 (structured) ----------
 
@@ -235,8 +254,6 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 }
 
 // ---------- writer: channel → S3 (raw bytes; parquet/anything) ----------
-
-// pkg/internal/adapter/s3client/s3client.go
 
 func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) error {
 	if a.cli == nil || a.bucket == "" {
@@ -485,6 +502,11 @@ func (a *S3Client[T]) StartWriter(ctx context.Context) error {
 
 	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: StartWriter, format: %s, wires: %d, bucket: %s, prefixTpl: %s",
 		a.componentMetadata, a.formatName, len(a.inputWires), a.bucket, a.prefixTemplate)
+
+	// <- sensor hook: writer starting
+	a.forEachSensor(func(s types.Sensor[T]) {
+		s.InvokeOnS3WriterStart(a.componentMetadata, a.bucket, a.prefixTemplate, strings.ToLower(a.formatName))
+	})
 
 	switch strings.ToLower(a.formatName) {
 	case "", "ndjson":
