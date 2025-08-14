@@ -1,6 +1,8 @@
 package builder
 
 import (
+	"time"
+
 	"github.com/joeydtaylor/electrician/pkg/internal/sensor"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
@@ -221,4 +223,76 @@ func WithCircuitBreakerDropFunc[T any](callback ...func(c types.ComponentMetadat
 // NewSensor creates a new Sensor with specified options.
 func NewSensor[T any](options ...types.Option[types.Sensor[T]]) types.Sensor[T] {
 	return sensor.NewSensor[T](options...)
+}
+
+// ---------- S3 (Writer) ----------
+
+func SensorWithOnS3WriterStartFunc[T any](callback ...func(ComponentMetadata, string, string, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3WriterStartFunc[T](callback...)
+}
+
+func SensorWithOnS3WriterStopFunc[T any](callback ...func(ComponentMetadata)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3WriterStopFunc[T](callback...)
+}
+
+func SensorWithOnS3KeyRenderedFunc[T any](callback ...func(ComponentMetadata, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3KeyRenderedFunc[T](callback...)
+}
+
+// args: bucket, key, bytes, sseMode, kmsKey
+func SensorWithOnS3PutAttemptFunc[T any](callback ...func(ComponentMetadata, string, string, int, string, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3PutAttemptFunc[T](callback...)
+}
+
+// args: bucket, key, bytes, duration
+func SensorWithOnS3PutSuccessFunc[T any](callback ...func(ComponentMetadata, string, string, int, time.Duration)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3PutSuccessFunc[T](callback...)
+}
+
+// args: bucket, key, bytes, err
+func SensorWithOnS3PutErrorFunc[T any](callback ...func(ComponentMetadata, string, string, int, error)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3PutErrorFunc[T](callback...)
+}
+
+// args: records, bytes, compression
+func SensorWithOnS3ParquetRollFlushFunc[T any](callback ...func(ComponentMetadata, int, int, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ParquetRollFlushFunc[T](callback...)
+}
+
+// ---------- S3 (Reader) ----------
+
+func SensorWithOnS3ReaderListStartFunc[T any](callback ...func(ComponentMetadata, string, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ReaderListStartFunc[T](callback...)
+}
+
+// args: objectsInPage, isTruncated
+func SensorWithOnS3ReaderListPageFunc[T any](callback ...func(ComponentMetadata, int, bool)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ReaderListPageFunc[T](callback...)
+}
+
+// args: key, size
+func SensorWithOnS3ReaderObjectFunc[T any](callback ...func(ComponentMetadata, string, int64)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ReaderObjectFunc[T](callback...)
+}
+
+// args: key, rows, format
+func SensorWithOnS3ReaderDecodeFunc[T any](callback ...func(ComponentMetadata, string, int, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ReaderDecodeFunc[T](callback...)
+}
+
+// args: thresholdBytes, objectBytes
+func SensorWithOnS3ReaderSpillToDiskFunc[T any](callback ...func(ComponentMetadata, int64, int64)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ReaderSpillToDiskFunc[T](callback...)
+}
+
+// args: objectsScanned, rowsDecoded
+func SensorWithOnS3ReaderCompleteFunc[T any](callback ...func(ComponentMetadata, int, int)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3ReaderCompleteFunc[T](callback...)
+}
+
+// ---------- S3 (Billing sample) ----------
+
+// args: op, requestUnits, bytes, storageClass
+func SensorWithOnS3BillingSampleFunc[T any](callback ...func(ComponentMetadata, string, int64, int64, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnS3BillingSampleFunc[T](callback...)
 }

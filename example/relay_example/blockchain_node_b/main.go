@@ -35,7 +35,7 @@ func processBlock(block Block) (Block, error) {
 
 func main() {
 	fmt.Println("Starting Blockchain Node...")
-	fmt.Println("Listening for blocks on localhost:50051")
+	fmt.Println("Listening for blocks on localhost:50152")
 
 	// Set up cancellation context with signal handling for graceful shutdown.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -80,7 +80,7 @@ func main() {
 	// Receiving relay to listen for blocks from the hub.
 	receivingRelay := builder.NewReceivingRelay(
 		ctx,
-		builder.ReceivingRelayWithAddress[Block]("localhost:50052"), // Listen on port 50051.
+		builder.ReceivingRelayWithAddress[Block]("localhost:50152"), // Listen on port 50152.
 		builder.ReceivingRelayWithBufferSize[Block](1000),
 		builder.ReceivingRelayWithLogger[Block](logger),
 		builder.ReceivingRelayWithOutput(outputConduit),

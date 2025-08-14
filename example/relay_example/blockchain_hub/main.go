@@ -131,7 +131,7 @@ func main() {
 	forwardRelay := builder.NewForwardRelay(
 		ctx,
 		builder.ForwardRelayWithLogger[Block](logger),
-		builder.ForwardRelayWithTarget[Block]("localhost:50051", "localhost:50052"), // Node address.
+		builder.ForwardRelayWithTarget[Block]("localhost:50150", "localhost:50152"), // Node address.
 		builder.ForwardRelayWithInput(generatorWire),                                // Connect to the generator wire
 		builder.ForwardRelayWithTLSConfig[Block](tlsConfig),
 	)
@@ -140,7 +140,7 @@ func main() {
 	fmt.Println("Starting generator and relay...")
 	generatorWire.Start(ctx)
 	forwardRelay.Start(ctx)
-	fmt.Println("Generator and relay started. Sending blocks to node at localhost:50051")
+	fmt.Println("Generator and relay started. Sending blocks to node at localhost:50150 and localhost:50152...")
 
 	// Wait for processing to finish (or timeout).
 	<-ctx.Done()

@@ -89,6 +89,11 @@ func ForwardRelayWithDynamicHeaders[T any](fn func(ctx context.Context) map[stri
 	return fr.WithDynamicHeaders[T](fn)
 }
 
+// ForwardRelayWithAuthRequired mirrors forwardrelay.WithAuthRequired for builder callers.
+func ForwardRelayWithAuthRequired[T any](required bool) types.Option[types.ForwardRelay[T]] {
+	return fr.WithAuthRequired[T](required)
+}
+
 // -------------------- Constructors --------------------
 
 // NewForwardRelay creates a new ForwardRelay with specified options.

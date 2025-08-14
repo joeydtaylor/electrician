@@ -196,7 +196,7 @@ func encryptData(data []byte, secOpts *relay.SecurityOptions, key string) ([]byt
 // ---------------- Per-RPC auth/metadata helpers ----------------
 
 // buildPerRPCContext constructs outgoing metadata:
-// - Authorization: Bearer <token> (when tokenSource configured)
+// - Authorization: Bearer <token> (when tokenSource configured; omitted if fetch fails and authRequired==false)
 // - static headers (SetStaticHeaders)
 // - dynamic headers (SetDynamicHeaders)
 // - trace-id (generated if absent)
@@ -227,16 +227,20 @@ func (fr *ForwardRelay[T]) buildPerRPCContext(ctx context.Context) (context.Cont
 		}
 	}
 
-	// Authorization
+	// Authorization (best-effort if authRequired == false)
 	if fr.tokenSource != nil {
 		tok, err := fr.tokenSource.AccessToken(ctx)
-		if err != nil {
-			return ctx, fmt.Errorf("oauth token source error: %w", err)
+		if err != nil || tok == "" {
+			if fr.authRequired {
+				if err == nil {
+					err = fmt.Errorf("oauth token empty")
+				}
+				return ctx, fmt.Errorf("oauth token source error: %w", err)
+			}
+			// auth not required => proceed without Authorization
+		} else {
+			md.Set("authorization", "Bearer "+tok)
 		}
-		if tok == "" {
-			return ctx, fmt.Errorf("oauth token empty")
-		}
-		md.Set("authorization", "Bearer "+tok)
 	}
 
 	// Trace ID: set only if not present
@@ -247,9 +251,10 @@ func (fr *ForwardRelay[T]) buildPerRPCContext(ctx context.Context) (context.Cont
 	return metadata.NewOutgoingContext(ctx, md), nil
 }
 
-// makeDialOptions enforces TLS if OAuth2 is enabled, returns appropriate transport creds.
+// makeDialOptions enforces TLS iff OAuth2 is enabled AND authRequired==true.
+// Returns (creds, useInsecure, err).
 func (fr *ForwardRelay[T]) makeDialOptions() ([]credentials.TransportCredentials, bool, error) {
-	// Return: (creds, useInsecure, err)
+	// If TLS configured, use it.
 	if fr.TlsConfig != nil && fr.TlsConfig.UseTLS {
 		creds, err := fr.loadTLSCredentials(fr.TlsConfig)
 		if err != nil {
@@ -258,12 +263,12 @@ func (fr *ForwardRelay[T]) makeDialOptions() ([]credentials.TransportCredentials
 		return []credentials.TransportCredentials{creds}, false, nil
 	}
 
-	// No TLS configured
-	if fr.tokenSource != nil {
-		// Do not allow bearer over plaintext.
-		return nil, false, fmt.Errorf("oauth2 enabled but TLS is disabled; refuse to dial insecure")
+	// No TLS configured.
+	// If OAuth2 is enabled AND required, refuse plaintext.
+	if fr.tokenSource != nil && fr.authRequired {
+		return nil, false, fmt.Errorf("oauth2 enabled and required but TLS is disabled; refuse to dial insecure")
 	}
 
-	// Caller will choose grpc.WithInsecure() path.
+	// Dev-friendly path: no TLS; caller will use grpc.WithInsecure().
 	return nil, true, nil
 }

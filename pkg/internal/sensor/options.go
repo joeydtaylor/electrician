@@ -5,7 +5,11 @@
 // events such as OnStart or OnError, and configure custom metadata for Sensors.
 package sensor
 
-import "github.com/joeydtaylor/electrician/pkg/internal/types"
+import (
+	"time"
+
+	"github.com/joeydtaylor/electrician/pkg/internal/types"
+)
 
 // WithLogger creates an option to add a logger to a Sensor.
 //
@@ -393,4 +397,93 @@ func WithCircuitBreakerDropFunc[T any](callback ...func(c types.ComponentMetadat
 	return func(m types.Sensor[T]) {
 		m.RegisterOnCircuitBreakerDrop(callback...)
 	}
+}
+
+// ---------- S3: Writer lifecycle ----------
+
+// WithOnS3WriterStartFunc registers callbacks for when the S3 writer starts.
+// args: bucket, prefixTemplate, format
+func WithOnS3WriterStartFunc[T any](callback ...func(types.ComponentMetadata, string, string, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3WriterStart(callback...) }
+}
+
+// WithOnS3WriterStopFunc registers callbacks for when the S3 writer stops.
+func WithOnS3WriterStopFunc[T any](callback ...func(types.ComponentMetadata)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3WriterStop(callback...) }
+}
+
+// WithOnS3KeyRenderedFunc registers callbacks when an object key is rendered.
+// args: key
+func WithOnS3KeyRenderedFunc[T any](callback ...func(types.ComponentMetadata, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3KeyRendered(callback...) }
+}
+
+// WithOnS3PutAttemptFunc registers callbacks right before a PutObject attempt.
+// args: bucket, key, bytes, sseMode, kmsKey
+func WithOnS3PutAttemptFunc[T any](callback ...func(types.ComponentMetadata, string, string, int, string, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3PutAttempt(callback...) }
+}
+
+// WithOnS3PutSuccessFunc registers callbacks after a successful PutObject.
+// args: bucket, key, bytes, duration
+func WithOnS3PutSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, string, int, time.Duration)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3PutSuccess(callback...) }
+}
+
+// WithOnS3PutErrorFunc registers callbacks when PutObject fails.
+// args: bucket, key, bytes, err
+func WithOnS3PutErrorFunc[T any](callback ...func(types.ComponentMetadata, string, string, int, error)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3PutError(callback...) }
+}
+
+// WithOnS3ParquetRollFlushFunc registers callbacks when a parquet roll is flushed.
+// args: records, bytes, compression
+func WithOnS3ParquetRollFlushFunc[T any](callback ...func(types.ComponentMetadata, int, int, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ParquetRollFlush(callback...) }
+}
+
+// ---------- S3: Reader lifecycle ----------
+
+// WithOnS3ReaderListStartFunc registers callbacks when listing starts.
+// args: bucket, prefix
+func WithOnS3ReaderListStartFunc[T any](callback ...func(types.ComponentMetadata, string, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ReaderListStart(callback...) }
+}
+
+// WithOnS3ReaderListPageFunc registers callbacks per ListObjectsV2 page.
+// args: objectsInPage, isTruncated
+func WithOnS3ReaderListPageFunc[T any](callback ...func(types.ComponentMetadata, int, bool)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ReaderListPage(callback...) }
+}
+
+// WithOnS3ReaderObjectFunc registers callbacks for each object discovered.
+// args: key, size
+func WithOnS3ReaderObjectFunc[T any](callback ...func(types.ComponentMetadata, string, int64)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ReaderObject(callback...) }
+}
+
+// WithOnS3ReaderDecodeFunc registers callbacks after decoding an object.
+// args: key, rows, format
+func WithOnS3ReaderDecodeFunc[T any](callback ...func(types.ComponentMetadata, string, int, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ReaderDecode(callback...) }
+}
+
+// WithOnS3ReaderSpillToDiskFunc registers callbacks when a spill-to-disk happens.
+// args: thresholdBytes, objectBytes
+func WithOnS3ReaderSpillToDiskFunc[T any](callback ...func(types.ComponentMetadata, int64, int64)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ReaderSpillToDisk(callback...) }
+}
+
+// WithOnS3ReaderCompleteFunc registers callbacks when reading completes.
+// args: objectsScanned, rowsDecoded
+func WithOnS3ReaderCompleteFunc[T any](callback ...func(types.ComponentMetadata, int, int)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3ReaderComplete(callback...) }
+}
+
+// ---------- S3: Billing sample (optional) ----------
+
+// WithOnS3BillingSampleFunc registers callbacks for lightweight billing samples.
+// args: op, requestUnits, bytes, storageClass
+func WithOnS3BillingSampleFunc[T any](callback ...func(types.ComponentMetadata, string, int64, int64, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnS3BillingSample(callback...) }
 }

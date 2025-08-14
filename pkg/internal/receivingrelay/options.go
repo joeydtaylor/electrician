@@ -69,11 +69,6 @@ func WithAuthenticationOptions[T any](opts *relay.AuthenticationOptions) types.O
 	return func(rr types.ReceivingRelay[T]) { rr.SetAuthenticationOptions(opts) }
 }
 
-// WithAuthInterceptor installs a gRPC unary auth interceptor.
-func WithAuthInterceptor[T any](interceptor grpc.UnaryServerInterceptor) types.Option[types.ReceivingRelay[T]] {
-	return func(rr types.ReceivingRelay[T]) { rr.SetAuthInterceptor(interceptor) }
-}
-
 // WithStaticHeaders enforces constant metadata on incoming requests.
 func WithStaticHeaders[T any](headers map[string]string) types.Option[types.ReceivingRelay[T]] {
 	return func(rr types.ReceivingRelay[T]) { rr.SetStaticHeaders(headers) }
@@ -240,4 +235,23 @@ func cloneOAuth2(in *relay.OAuth2Options) *relay.OAuth2Options {
 		return nil
 	}
 	return proto.Clone(in).(*relay.OAuth2Options)
+}
+
+// WithAuthInterceptors installs unary and stream interceptors on the server.
+// Pass nil for either to skip that interceptor type.
+func WithAuthInterceptors[T any](
+	unary grpc.UnaryServerInterceptor,
+	stream grpc.StreamServerInterceptor,
+) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) {
+		rr.SetAuthInterceptors(unary, stream)
+	}
+}
+
+// WithAuthRequired toggles strict auth enforcement on the receiver.
+// When true, missing/invalid auth will reject requests; when false, it may log and allow.
+func WithAuthRequired[T any](required bool) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) {
+		rr.SetAuthRequired(required)
+	}
 }

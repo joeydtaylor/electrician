@@ -47,6 +47,30 @@ type Sensor[T any] struct {
 	OnCircuitBreakerAllow                 []func(sp types.ComponentMetadata)
 	OnCircuitBreakerDrop                  []func(sp types.ComponentMetadata, elem T)
 
+	// --- S3 writer/reader hooks ---
+
+	// Writer lifecycle
+	OnS3WriterStart []func(types.ComponentMetadata, string /*bucket*/, string /*prefixTpl*/, string /*format*/)
+	OnS3WriterStop  []func(types.ComponentMetadata)
+
+	// Object key + PUT lifecycle
+	OnS3KeyRendered      []func(types.ComponentMetadata, string /*key*/)
+	OnS3PutAttempt       []func(types.ComponentMetadata, string /*bucket*/, string /*key*/, int /*bytes*/, string /*sseMode*/, string /*kmsKey*/)
+	OnS3PutSuccess       []func(types.ComponentMetadata, string /*bucket*/, string /*key*/, int /*bytes*/, time.Duration /*dur*/)
+	OnS3PutError         []func(types.ComponentMetadata, string /*bucket*/, string /*key*/, int /*bytes*/, error)
+	OnS3ParquetRollFlush []func(types.ComponentMetadata, int /*records*/, int /*bytes*/, string /*compression*/)
+
+	// Reader lifecycle
+	OnS3ReaderListStart   []func(types.ComponentMetadata, string /*bucket*/, string /*prefix*/)
+	OnS3ReaderListPage    []func(types.ComponentMetadata, int /*objsInPage*/, bool /*isTruncated*/)
+	OnS3ReaderObject      []func(types.ComponentMetadata, string /*key*/, int64 /*size*/)
+	OnS3ReaderDecode      []func(types.ComponentMetadata, string /*key*/, int /*rows*/, string /*format*/)
+	OnS3ReaderSpillToDisk []func(types.ComponentMetadata, int64 /*threshold*/, int64 /*objectBytes*/)
+	OnS3ReaderComplete    []func(types.ComponentMetadata, int /*objectsScanned*/, int /*rowsDecoded*/)
+
+	// Optional: billing sampling (raw signals your Meter can price later)
+	OnS3BillingSample []func(types.ComponentMetadata, string /*op: PUT|GET|LIST*/, int64 /*requestUnits*/, int64 /*bytes*/, string /*storageClass*/)
+
 	callbackLock sync.Mutex
 	loggers      []types.Logger // Attached loggers for event logging.
 	loggersLock  sync.Mutex     // Mutex to ensure logger access is thread-safe.
@@ -101,6 +125,24 @@ func NewSensor[T any](options ...types.Option[types.Sensor[T]]) types.Sensor[T] 
 		OnResisterQueued:   make([]func(r types.ComponentMetadata, elem T), 0),
 		OnResisterRequeued: make([]func(r types.ComponentMetadata, elem T), 0),
 		OnResisterEmpty:    make([]func(r types.ComponentMetadata), 0),
+		// --- S3 writer/reader hooks ---
+		OnS3WriterStart: make([]func(types.ComponentMetadata, string, string, string), 0),
+		OnS3WriterStop:  make([]func(types.ComponentMetadata), 0),
+
+		OnS3KeyRendered:      make([]func(types.ComponentMetadata, string), 0),
+		OnS3PutAttempt:       make([]func(types.ComponentMetadata, string, string, int, string, string), 0),
+		OnS3PutSuccess:       make([]func(types.ComponentMetadata, string, string, int, time.Duration), 0),
+		OnS3PutError:         make([]func(types.ComponentMetadata, string, string, int, error), 0),
+		OnS3ParquetRollFlush: make([]func(types.ComponentMetadata, int, int, string), 0),
+
+		OnS3ReaderListStart:   make([]func(types.ComponentMetadata, string, string), 0),
+		OnS3ReaderListPage:    make([]func(types.ComponentMetadata, int, bool), 0),
+		OnS3ReaderObject:      make([]func(types.ComponentMetadata, string, int64), 0),
+		OnS3ReaderDecode:      make([]func(types.ComponentMetadata, string, int, string), 0),
+		OnS3ReaderSpillToDisk: make([]func(types.ComponentMetadata, int64, int64), 0),
+		OnS3ReaderComplete:    make([]func(types.ComponentMetadata, int, int), 0),
+
+		OnS3BillingSample: make([]func(types.ComponentMetadata, string, int64, int64, string), 0),
 	}
 
 	// Apply configuration options to the Sensor.

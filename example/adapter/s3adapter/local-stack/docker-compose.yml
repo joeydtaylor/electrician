@@ -1,0 +1,41 @@
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"                    # AWS edge (S3/STS/IAM)
+    environment:
+      - SERVICES=s3,sts,iam,kms
+      - AWS_DEFAULT_REGION=us-east-1
+      - DEBUG=0
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "curl -fsS http://localhost:4566/health || curl -fsS http://localhost:4566/_localstack/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 60
+    volumes:
+      - localstack-data:/var/lib/localstack
+      # Init scripts run after services are READY
+      - ./localstack-init/ready.d:/etc/localstack/init/ready.d:ro
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: redpanda
+    command:
+      - redpanda start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "9092:19092"                   # Kafka for host (use localhost:9092)
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+volumes:
+  localstack-data:
+  redpanda-data:
