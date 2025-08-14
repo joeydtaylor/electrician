@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -46,6 +47,24 @@ func trueish(s string) bool {
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envDurMs(k string, def time.Duration) time.Duration {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return time.Duration(n) * time.Millisecond
+		}
 	}
 	return def
 }
@@ -215,13 +234,21 @@ func main() {
 	const bucket = "steeze-dev"
 	orgID := resolveOrgID()
 	logger.Info(fmt.Sprintf("using org id: %s", orgID))
-	prefix := fmt.Sprintf("org=%s/feedback/demo/{yyyy}/{MM}/{dd}/{HH}/{mm}/", orgID)
 
-	// Simulation toggles
+	// Partitioning: default HOURLY (prod-ish). Set MINUTE_PARTITIONS=true for {mm}.
+	useMinute := trueish(os.Getenv("MINUTE_PARTITIONS"))
+	var prefix string
+	if useMinute {
+		prefix = fmt.Sprintf("org=%s/feedback/demo/{yyyy}/{MM}/{dd}/{HH}/{mm}/", orgID)
+	} else {
+		prefix = fmt.Sprintf("org=%s/feedback/demo/{yyyy}/{MM}/{dd}/{HH}/", orgID)
+	}
+
+	// Simulation toggles (default off in prod)
 	simPutErr := trueish(os.Getenv("SIMULATE_S3_PUT_ERROR"))
 	simBadKMS := trueish(os.Getenv("SIMULATE_S3_BAD_KMS"))
 
-	// The bucket we actually write to (use a missing bucket when simulating)
+	// Effective bucket (non-existent when simulating PUT errors)
 	effectiveBucket := bucket
 	if simPutErr {
 		effectiveBucket = bucket + "-missing"
@@ -241,7 +268,6 @@ func main() {
 	s := builder.NewSensor[Feedback](
 		builder.SensorWithLogger[Feedback](logger),
 
-		// Writer lifecycle
 		builder.SensorWithOnS3WriterStartFunc[Feedback](func(_ builder.ComponentMetadata, _bkt, _pref, _fmt string) {
 			stats.writerStarts.Add(1)
 		}),
@@ -249,7 +275,6 @@ func main() {
 			stats.writerStops.Add(1)
 		}),
 
-		// Key render / Put path
 		builder.SensorWithOnS3KeyRenderedFunc[Feedback](func(_ builder.ComponentMetadata, _key string) {
 			stats.keysRendered.Add(1)
 		}),
@@ -267,14 +292,21 @@ func main() {
 				stats.lastError.Store(err.Error())
 			}
 		}),
-
-		// Parquet roller
 		builder.SensorWithOnS3ParquetRollFlushFunc[Feedback](func(_ builder.ComponentMetadata, recs int, _bytes int, comp string) {
 			stats.parquetRolls.Add(1)
 			stats.recordsFlushed.Add(int64(recs))
 			stats.lastCompression.Store(comp)
 		}),
 	)
+
+	// ---------- Prod-ish knobs (with env overrides) ----------
+	// Targets: bigger Parquet files, fewer objects, better scan cost.
+	parquetCompression := strings.ToLower(envOr("PARQUET_COMPRESSION", "zstd")) // zstd|snappy|gzip
+	rollWindow := envInt("ROLL_WINDOW_MS", 300_000)                             // default 5 min
+	rollMaxRecords := envInt("ROLL_MAX_RECORDS", 250_000)                       // tune per row width & memory
+	batchMaxRecords := envInt("BATCH_MAX_RECORDS", 500_000)
+	batchMaxBytes := envInt("BATCH_MAX_BYTES_MB", 256) * (1 << 20) // MiB -> bytes
+	batchMaxAge := envDurMs("BATCH_MAX_AGE_MS", 5*time.Minute)
 
 	// KMS alias (optionally bogus to simulate KMS failure)
 	kmsAliasArn := "arn:aws:kms:us-east-1:000000000000:alias/electrician-dev"
@@ -292,16 +324,23 @@ func main() {
 		builder.S3ClientAdapterWithFormat[Feedback]("parquet", ""),
 		builder.S3ClientAdapterWithWriterPrefixTemplate[Feedback](prefix),
 
-		// keep rolls fast so you hit the error quickly
-		builder.S3ClientAdapterWithBatchSettings[Feedback](5000, 128<<20, 1*time.Second),
+		// Batch thresholds (also used by parquet roller defaults; explicit roll_* below win)
+		builder.S3ClientAdapterWithBatchSettings[Feedback](batchMaxRecords, batchMaxBytes, batchMaxAge),
+
+		// Parquet writer knobs
 		builder.S3ClientAdapterWithWriterFormatOptions[Feedback](map[string]string{
-			"parquet_compression": "snappy",
-			"roll_window_ms":      "1000",
-			"roll_max_records":    "5000",
+			"parquet_compression": parquetCompression,           // zstd (default), snappy, gzip
+			"roll_window_ms":      strconv.Itoa(rollWindow),     // e.g. 300000
+			"roll_max_records":    strconv.Itoa(rollMaxRecords), // e.g. 250000
+			// tip: for very high volume, consider adding sort/bloom options when supported
 		}),
+
+		// SSE-KMS
 		builder.S3ClientAdapterWithSSE[Feedback]("aws:kms", kmsAliasArn),
 
+		// Fan-in both wires
 		builder.S3ClientAdapterWithWire[Feedback](wireA, wireB),
+
 		builder.S3ClientAdapterWithLogger[Feedback](logger),
 	)
 
@@ -336,10 +375,18 @@ func main() {
 	// Printout
 	// ---------
 	summary := map[string]any{
-		"orgId":           orgID,
-		"bucket":          effectiveBucket,
-		"prefixTemplate":  prefix,
-		"simulated":       map[string]any{"putError": simPutErr, "badKMS": simBadKMS},
+		"orgId":            orgID,
+		"bucket":           effectiveBucket,
+		"prefixTemplate":   prefix,
+		"partitioning":     map[string]any{"minute": useMinute},
+		"compression":      parquetCompression,
+		"rollWindowMs":     rollWindow,
+		"rollMaxRecords":   rollMaxRecords,
+		"batchMaxRecords":  batchMaxRecords,
+		"batchMaxBytesMiB": batchMaxBytes / (1 << 20),
+		"batchMaxAgeMs":    int(batchMaxAge / time.Millisecond),
+		"simulated":        map[string]any{"putError": simPutErr, "badKMS": simBadKMS},
+
 		"writerStarts":    stats.writerStarts.Load(),
 		"writerStops":     stats.writerStops.Load(),
 		"keysRendered":    stats.keysRendered.Load(),
