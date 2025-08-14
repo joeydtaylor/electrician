@@ -11,9 +11,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
+
+/* ------------ data model (matches writer) ------------ */
 
 type Feedback struct {
 	CustomerID string   `parquet:"name=customerId, type=BYTE_ARRAY, convertedtype=UTF8" json:"customerId"`
@@ -23,6 +26,8 @@ type Feedback struct {
 	Tags       []string `parquet:"name=tags, type=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8" json:"tags,omitempty"`
 }
 
+/* ------------ env helpers & org resolution ------------ */
+
 const (
 	defaultOrgID     = "4d948fa0-084e-490b-aad5-cfd01eeab79a"
 	assertJWTEnvName = "ASSERT_JWT"
@@ -30,29 +35,12 @@ const (
 	orgIDEnvName     = "ORG_ID"
 )
 
-func hasTag(tags []string, want string) bool {
-	for _, t := range tags {
-		if strings.EqualFold(t, want) {
-			return true
-		}
+func getenv(k string) string {
+	v := strings.TrimSpace(strings.Trim(os.Getenv(k), `"`))
+	if v != "" {
+		return v
 	}
-	return false
-}
-
-func isTheCurlRecord(r Feedback) bool {
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.CustomerID)), "cli-") {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(r.Content), "works beautifully") {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(r.Category), "ux") {
-		return false
-	}
-	if r.IsNegative {
-		return false
-	}
-	return hasTag(r.Tags, "hermes")
+	return ""
 }
 
 func b64UrlDecodeRaw(s string) ([]byte, error) {
@@ -80,14 +68,6 @@ func orgFromJWT(tok string) (string, bool) {
 	return "", false
 }
 
-func getenv(k string) string {
-	v := strings.TrimSpace(strings.Trim(os.Getenv(k), `"`))
-	if v != "" {
-		return v
-	}
-	return ""
-}
-
 func resolveOrgID() string {
 	if v := getenv(orgIDEnvName); v != "" {
 		return v
@@ -105,9 +85,23 @@ func resolveOrgID() string {
 	return defaultOrgID
 }
 
+/* ------------ simple content filter ------------ */
+
+func containsFold(haystack, needle string) bool {
+	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+}
+
+/* ------------ main ------------ */
+
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// LocalStack / creds
+	endpoint := getenv("S3_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "http://localhost:4566"
+	}
 
 	cli, err := builder.NewS3ClientAssumeRole(
 		ctx,
@@ -117,26 +111,64 @@ func main() {
 		15*time.Minute,
 		"",
 		aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		"http://localhost:4566",
-		true,
+		endpoint,
+		true, // use_path_style
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	log := builder.NewLogger()
-	const bucket = "steeze-dev"
+	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
+	bucket := getenv("S3_BUCKET")
+	if bucket == "" {
+		bucket = "steeze-dev"
+	}
 
 	orgID := resolveOrgID()
-	prefix := fmt.Sprintf("org=%s/feedback/demo/", orgID)
-	fmt.Printf("scanning prefix: s3://%s/%s\n", bucket, prefix)
+	basePrefix := fmt.Sprintf("org=%s/feedback/demo/", orgID)
+	filter := getenv("FILTER_CONTENT_SUBSTR") // e.g. "great", "slow and buggy", "works beautifully"
 
+	fmt.Printf("scanning prefix: s3://%s/%s (endpoint=%s)\n", bucket, basePrefix, endpoint)
+	if filter != "" {
+		fmt.Printf("filter: content CONTAINS %q (case-insensitive)\n", filter)
+	}
+
+	// 1) Prove there are parquet objects with a raw List
+	var (
+		keys []string
+		cont *string
+	)
+	for {
+		out, err := cli.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(bucket),
+			Prefix:            aws.String(basePrefix),
+			ContinuationToken: cont,
+			MaxKeys:           aws.Int32(200),
+		})
+		if err != nil {
+			panic(err)
+		}
+		for _, o := range out.Contents {
+			k := aws.ToString(o.Key)
+			if strings.HasSuffix(strings.ToLower(k), ".parquet") {
+				keys = append(keys, k)
+			}
+		}
+		if aws.ToBool(out.IsTruncated) {
+			cont = out.NextContinuationToken
+			continue
+		}
+		break
+	}
+	fmt.Printf("found %d parquet objects under prefix (via ListObjectsV2)\n", len(keys))
+
+	// 2) Use builder’s reader to fetch ALL rows under the prefix in one shot.
+	//    NOTE: we pass ".parquet" as suffix so the adapter only reads parquet keys.
 	reader := builder.NewS3ClientAdapter[Feedback](
 		ctx,
 		builder.S3ClientAdapterWithClientAndBucket[Feedback](cli, bucket),
-		// one-shot scan under the org-scoped prefix
-		builder.S3ClientAdapterWithReaderListSettings[Feedback](prefix, "", 1000, 0),
-		// DO NOT force reader format; let it autodetect by .parquet extension
+		builder.S3ClientAdapterWithReaderListSettings[Feedback](basePrefix, ".parquet", 5000, 0),
+		// Let reader auto-detect parquet by extension. Optionally force:
 		// builder.S3ClientAdapterWithReaderFormat[Feedback]("parquet", ""),
 		builder.S3ClientAdapterWithReaderFormatOptions[Feedback](map[string]string{
 			"spill_threshold_bytes": "134217728", // 128 MiB
@@ -149,28 +181,38 @@ func main() {
 		panic(err)
 	}
 	if resp.StatusCode == 204 || len(resp.Body) == 0 {
-		fmt.Println("no rows found under prefix")
+		fmt.Println("no rows found under prefix (reader)")
 		return
 	}
 
 	total := 0
-	matches := make([]Feedback, 0, 8)
+	returned := 0
+	samples := make([]Feedback, 0, 5)
+
 	for _, r := range resp.Body {
+		// quick sanity for empty rows
 		if r.CustomerID == "" && r.Content == "" {
 			continue
 		}
 		total++
-		if isTheCurlRecord(r) {
-			matches = append(matches, r)
+		if filter == "" || containsFold(r.Content, filter) {
+			returned++
+			if len(samples) < 5 {
+				samples = append(samples, r)
+			}
 		}
 	}
 
-	fmt.Printf("scanned=%d, matches=%d\n", total, len(matches))
-	if len(matches) == 0 {
-		fmt.Println("no hermes CLI record found")
-		return
+	fmt.Printf("scanned=%d, returned=%d (filter=%q)\n", total, returned, filter)
+	if len(samples) > 0 {
+		out, _ := json.MarshalIndent(samples, "", "  ")
+		fmt.Println("sample matches:")
+		fmt.Println(string(out))
+	} else {
+		if filter == "" {
+			fmt.Println("no rows returned (try setting FILTER_CONTENT_SUBSTR, e.g. FILTER_CONTENT_SUBSTR=great)")
+		} else {
+			fmt.Println("no rows matched the filter")
+		}
 	}
-
-	out, _ := json.MarshalIndent(matches, "", "  ")
-	fmt.Println(string(out))
 }
