@@ -3,18 +3,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
-	kafka "github.com/segmentio/kafka-go"
-	"github.com/segmentio/kafka-go/sasl"
-	"github.com/segmentio/kafka-go/sasl/scram"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
@@ -50,10 +44,9 @@ func (a *agg) add(r Feedback) {
 	}
 }
 
-// --- hardcoded prod-ish config ----
+// --- prod-ish config (matches your compose) ----
 const (
-	// External TLS+SASL (matches compose external listener)
-	kBrokersCSV    = "127.0.0.1:19092"
+	kBrokersCSV    = "127.0.0.1:19092" // external TLS+SASL listener
 	kTLS           = true
 	kTLSServerName = "localhost"
 	kCACandidates  = "./tls/ca.crt,../tls/ca.crt,../../tls/ca.crt"
@@ -66,87 +59,41 @@ const (
 	kSASLMech = "SCRAM-SHA-256" // or SCRAM-SHA-512
 )
 
-func buildSASL(user, pass, mech string) (sasl.Mechanism, error) {
-	switch strings.ToUpper(mech) {
-	case "SCRAM-SHA-512", "SCRAM_SHA_512":
-		return scram.Mechanism(scram.SHA512, user, pass)
-	case "SCRAM-SHA-256", "SCRAM_SHA_256", "":
-		return scram.Mechanism(scram.SHA256, user, pass)
-	default:
-		return nil, fmt.Errorf("unsupported SASL mechanism: %s", mech)
-	}
-}
-
-func firstExisting(pathsCSV string) (string, error) {
-	for _, p := range strings.Split(pathsCSV, ",") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("no CA file found in: %s", pathsCSV)
-}
-
-func buildTLS(candidates, serverName string) (*tls.Config, error) {
-	caPath, err := firstExisting(candidates)
-	if err != nil {
-		return nil, err
-	}
-	pem, err := os.ReadFile(filepath.Clean(caPath))
-	if err != nil {
-		return nil, fmt.Errorf("read CA: %w", err)
-	}
-	cp := x509.NewCertPool()
-	if !cp.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("invalid CA PEM at %s", caPath)
-	}
-	return &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    cp,
-		ServerName: serverName,
-	}, nil
-}
-
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	mech, err := buildSASL(kSASLUser, kSASLPass, kSASLMech)
+	// --- Security (SASL + TLS) via builder helpers ---
+	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
-	var tlsCfg *tls.Config
+
+	var tlsCfg *tls.Config // created only if kTLS
 	if kTLS {
-		tlsCfg, err = buildTLS(kCACandidates, kTLSServerName)
+		tlsCfg, err = builder.TLSFromCAPathCSV(kCACandidates, kTLSServerName)
 		if err != nil {
 			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 			return
 		}
 	}
 
-	dialer := &kafka.Dialer{
-		Timeout:       10 * time.Second,
-		DualStack:     true,
-		SASLMechanism: mech,
-		TLS:           tlsCfg, // nil for SASL_PLAINTEXT
-	}
-
-	rc := kafka.ReaderConfig{
-		Brokers:        strings.Split(kBrokersCSV, ","),
-		GroupID:        kGroup,
-		GroupTopics:    []string{kTopic},
-		MinBytes:       1 << 10,  // 1 KiB
-		MaxBytes:       10 << 20, // 10 MiB
-		StartOffset:    kafka.LastOffset,
-		CommitInterval: 0, // manual/time-based commits via adapter
-		Dialer:         dialer,
-		// IsolationLevel: kafka.ReadCommitted, // uncomment if producers are transactional
-	}
-	kr := kafka.NewReader(rc)
+	// kafka-go Reader with secure dialer (TLS/SASL)
+	kr := builder.NewKafkaGoReaderSecure(
+		strings.Split(kBrokersCSV, ","),
+		kGroup,
+		[]string{kTopic},
+		tlsCfg,
+		mech,
+		10*time.Second, // dialer timeout
+		true,           // dual stack
+		// match your prior ReaderConfig knobs:
+		builder.KafkaGoReaderWithLatestStart(),
+		builder.KafkaGoReaderWithMinBytes(1<<10),
+		builder.KafkaGoReaderWithMaxBytes(10<<20),
+		builder.KafkaGoReaderWithCommitInterval(0), // disable driver auto-commit
+	)
 
 	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
 	s := builder.NewSensor[Feedback](
@@ -174,6 +121,7 @@ func main() {
 	reader := builder.NewKafkaClientAdapter[Feedback](
 		ctx,
 		builder.KafkaClientAdapterWithKafkaGoReader[Feedback](kr),
+		// adapter-level intent (sensors/behavior); underlying reader already set:
 		builder.KafkaClientAdapterWithReaderTopics[Feedback](kTopic),
 		builder.KafkaClientAdapterWithReaderGroup[Feedback](kGroup),
 		builder.KafkaClientAdapterWithReaderStartAt[Feedback]("latest", time.Time{}),

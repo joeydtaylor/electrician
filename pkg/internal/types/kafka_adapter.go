@@ -2,16 +2,29 @@ package types
 
 import (
 	"context"
+	"crypto/tls"
 	"time"
+
+	"github.com/segmentio/kafka-go/sasl"
 )
+
+// KafkaSecurity bundles TLS + SASL + ClientID for kafka-go.
+type KafkaSecurity struct {
+	SASL      sasl.Mechanism // nil => no SASL
+	TLS       *tls.Config    // nil => PLAINTEXT
+	ClientID  string         // optional
+	DialerTO  time.Duration  // optional (defaults 10s)
+	DualStack bool           // optional (defaults true)
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Common Kafka client wiring (no envs)
 ////////////////////////////////////////////////////////////////////////////////
 
-// KafkaClientDeps carries driver-specific handles and common connection info.
-// Intent: caller constructs any concrete producer/consumer (segmentio, confluent, franz-go, etc.)
-// and injects them here without the types package importing a driver.
+// pkg/internal/types/types.go  (section: KafkaClientDeps)
+
+// pkg/internal/types/kafka.go (or wherever your types live)
+
 type KafkaClientDeps struct {
 	// Connection
 	Brokers []string // e.g., []{"broker-1:9092","broker-2:9092"}
@@ -22,6 +35,9 @@ type KafkaClientDeps struct {
 
 	// Optional dead-letter topic for writer-side DLQ emission.
 	DLQTopic string
+
+	// Optional security bundle (TLS + SASL + client id, dialer prefs)
+	Security *KafkaSecurity // <--- add this line
 }
 
 ////////////////////////////////////////////////////////////////////////////////

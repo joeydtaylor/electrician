@@ -2,16 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
-
-	kafka "github.com/segmentio/kafka-go"
-	"github.com/segmentio/kafka-go/sasl"       // <- add this
-	"github.com/segmentio/kafka-go/sasl/scram" // and keep this
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
@@ -24,78 +18,53 @@ type Feedback struct {
 	Tags       []string `json:"tags,omitempty"`
 }
 
-// --- hardcoded dev "prod-like" settings ---
 const (
-	broker = "127.0.0.1:19092" // TLS+SASL listener from compose
-	topic  = "feedback-demo"
-
-	saslUser = "app"
-	saslPass = "app-secret"
-	saslMech = "SCRAM-SHA-256"
-
-	caFileRel1 = "../tls/ca.crt" // try both so you can run from repo root or subdir
-	caFileRel2 = "./tls/ca.crt"
+	broker       = "127.0.0.1:19092" // TLS+SASL listener from compose
+	topic        = "feedback-demo"
+	serverName   = "localhost"
+	saslUser     = "app"
+	saslPass     = "app-secret"
+	saslMech     = "SCRAM-SHA-256"
+	clientID     = "electrician-producer"
+	batchTimeout = 400 * time.Millisecond
 )
-
-// strict TLS (no InsecureSkipVerify)
-func loadTLS() (*tls.Config, error) {
-	var caPath string
-	if _, err := os.Stat(caFileRel1); err == nil {
-		caPath = caFileRel1
-	} else if _, err := os.Stat(caFileRel2); err == nil {
-		caPath = caFileRel2
-	} else {
-		return nil, fmt.Errorf("CA file not found (%s or %s)", caFileRel1, caFileRel2)
-	}
-
-	pem, err := os.ReadFile(filepath.Clean(caPath))
-	if err != nil {
-		return nil, fmt.Errorf("read CA: %w", err)
-	}
-	cp := x509.NewCertPool()
-	if !cp.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("invalid CA PEM at %s", caPath)
-	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: cp}, nil
-}
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
-
-	// --- SASL + TLS ---
-	var mech sasl.Mechanism // <- fix the type
-	switch saslMech {
-	case "SCRAM-SHA-256":
-		m, err := scram.Mechanism(scram.SHA256, saslUser, saslPass)
-		if err != nil {
-			panic(err)
-		}
-		mech = m
-	case "SCRAM-SHA-512":
-		m, err := scram.Mechanism(scram.SHA512, saslUser, saslPass)
-		if err != nil {
-			panic(err)
-		}
-		mech = m
-	default:
-		panic("unsupported SASL mechanism")
-	}
-
-	tlsCfg, err := loadTLS()
+	// ---- security (only builder helpers you exported) ----
+	tlsCfg, err := builder.TLSFromCAFilesStrict([]string{
+		"./tls/ca.crt",
+		"../tls/ca.crt",
+		"../../tls/ca.crt",
+	}, serverName)
 	if err != nil {
 		panic(err)
 	}
-
-	transport := &kafka.Transport{
-		SASL:     mech,
-		TLS:      tlsCfg,
-		ClientID: "electrician-producer",
+	mech, err := builder.SASLSCRAM(saslUser, saslPass, saslMech)
+	if err != nil {
+		panic(err)
 	}
+	sec := builder.NewKafkaSecurity(
+		builder.WithTLS(tlsCfg),
+		builder.WithSASL(mech),
+		builder.WithClientID(clientID),
+		// Dialer defaults (10s, DualStack=true) are fine for a writer Transport
+	)
 
-	// --- sensors ---
+	// ---- kafka-go writer (secured via NewKafkaGoWriterWithSecurity) ----
+	kw := builder.NewKafkaGoWriterWithSecurity(
+		[]string{broker},
+		topic,
+		sec,
+		builder.KafkaGoWriterWithLeastBytes(),
+		builder.KafkaGoWriterWithBatchTimeout(batchTimeout),
+	)
+	// (RequiredAcks defaults to All in NewKafkaGoWriter)
+
+	// ---- sensors/loggers (unchanged from your example) ----
+	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
 	s := builder.NewSensor[Feedback](
 		builder.SensorWithOnKafkaWriterStartFunc[Feedback](func(_ builder.ComponentMetadata, t, f string) {
 			fmt.Printf("[sensor] writer.start topic=%s format=%s\n", t, f)
@@ -111,18 +80,7 @@ func main() {
 		}),
 	)
 
-	// kafka-go Writer with SASL/TLS transport
-	kw := &kafka.Writer{
-		Addr:                   kafka.TCP(broker),
-		Topic:                  topic,
-		Balancer:               &kafka.LeastBytes{},
-		Transport:              transport,
-		RequiredAcks:           kafka.RequireAll,
-		AllowAutoTopicCreation: false,
-		Async:                  false,
-		BatchTimeout:           400 * time.Millisecond,
-	}
-
+	// ---- adapter wiring ----
 	w := builder.NewKafkaClientAdapter[Feedback](
 		ctx,
 		builder.KafkaClientAdapterWithKafkaGoWriter[Feedback](kw),
@@ -134,13 +92,13 @@ func main() {
 		builder.KafkaClientAdapterWithLogger[Feedback](log),
 	)
 
-	// send 2 demo records
+	// demo records
 	in := make(chan Feedback, 2)
 	in <- Feedback{CustomerID: "C-01", Content: "I love this", Tags: []string{"demo"}}
 	in <- Feedback{CustomerID: "C-02", Content: "Not great", IsNegative: true, Category: "ux"}
 	close(in)
 
 	if err := w.ServeWriter(ctx, in); err != nil {
-		fmt.Printf("writer error: %v\n", err)
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 	}
 }
