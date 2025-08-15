@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"net"
 	"os"
-	"strings"
+	"path/filepath"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl"       // <- add this
+	"github.com/segmentio/kafka-go/sasl/scram" // and keep this
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
@@ -21,58 +24,84 @@ type Feedback struct {
 	Tags       []string `json:"tags,omitempty"`
 }
 
-func envOr(k, def string) string {
-	v := strings.TrimSpace(os.Getenv(k))
-	if v == "" {
-		return def
-	}
-	return v
-}
+// --- hardcoded dev "prod-like" settings ---
+const (
+	broker = "127.0.0.1:19092" // TLS+SASL listener from compose
+	topic  = "feedback-demo"
 
-// best-effort wait so we don't race the broker start
-func waitForBroker(addr string, maxWait time.Duration) {
-	deadline := time.Now().Add(maxWait)
-	for {
-		c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
-			return
-		}
-		if time.Now().After(deadline) {
-			fmt.Printf("warning: broker %s not reachable yet: %v\n", addr, err)
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
+	saslUser = "app"
+	saslPass = "app-secret"
+	saslMech = "SCRAM-SHA-256"
+
+	caFileRel1 = "../tls/ca.crt" // try both so you can run from repo root or subdir
+	caFileRel2 = "./tls/ca.crt"
+)
+
+// strict TLS (no InsecureSkipVerify)
+func loadTLS() (*tls.Config, error) {
+	var caPath string
+	if _, err := os.Stat(caFileRel1); err == nil {
+		caPath = caFileRel1
+	} else if _, err := os.Stat(caFileRel2); err == nil {
+		caPath = caFileRel2
+	} else {
+		return nil, fmt.Errorf("CA file not found (%s or %s)", caFileRel1, caFileRel2)
 	}
+
+	pem, err := os.ReadFile(filepath.Clean(caPath))
+	if err != nil {
+		return nil, fmt.Errorf("read CA: %w", err)
+	}
+	cp := x509.NewCertPool()
+	if !cp.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("invalid CA PEM at %s", caPath)
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: cp}, nil
 }
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-
-	// Use IPv4 loopback to avoid ::1 issues on some setups
-	broker := envOr("BROKER", "127.0.0.1:19092")
-	topic := envOr("TOPIC", "feedback-demo")
-	waitForBroker(broker, 5*time.Second)
 
 	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
 
-	// --- sensors (writer path) ---
+	// --- SASL + TLS ---
+	var mech sasl.Mechanism // <- fix the type
+	switch saslMech {
+	case "SCRAM-SHA-256":
+		m, err := scram.Mechanism(scram.SHA256, saslUser, saslPass)
+		if err != nil {
+			panic(err)
+		}
+		mech = m
+	case "SCRAM-SHA-512":
+		m, err := scram.Mechanism(scram.SHA512, saslUser, saslPass)
+		if err != nil {
+			panic(err)
+		}
+		mech = m
+	default:
+		panic("unsupported SASL mechanism")
+	}
+
+	tlsCfg, err := loadTLS()
+	if err != nil {
+		panic(err)
+	}
+
+	transport := &kafka.Transport{
+		SASL:     mech,
+		TLS:      tlsCfg,
+		ClientID: "electrician-producer",
+	}
+
+	// --- sensors ---
 	s := builder.NewSensor[Feedback](
 		builder.SensorWithOnKafkaWriterStartFunc[Feedback](func(_ builder.ComponentMetadata, t, f string) {
 			fmt.Printf("[sensor] writer.start topic=%s format=%s\n", t, f)
 		}),
-		builder.SensorWithOnKafkaKeyRenderedFunc[Feedback](func(_ builder.ComponentMetadata, key []byte) {
-			fmt.Printf("[sensor] key.rendered len=%d\n", len(key))
-		}),
-		builder.SensorWithOnKafkaHeadersRenderedFunc[Feedback](func(_ builder.ComponentMetadata, hdrs []struct{ Key, Value string }) {
-			fmt.Printf("[sensor] headers.rendered n=%d\n", len(hdrs))
-		}),
 		builder.SensorWithOnKafkaBatchFlushFunc[Feedback](func(_ builder.ComponentMetadata, t string, recs, bytes int, comp string) {
 			fmt.Printf("[sensor] batch.flush topic=%s records=%d bytes=%d compression=%s\n", t, recs, bytes, comp)
-		}),
-		builder.SensorWithOnKafkaProduceAttemptFunc[Feedback](func(_ builder.ComponentMetadata, t string, p, keyB, valB int) {
-			fmt.Printf("[sensor] produce.attempt topic=%s p=%d keyB=%d valB=%d\n", t, p, keyB, valB)
 		}),
 		builder.SensorWithOnKafkaProduceSuccessFunc[Feedback](func(_ builder.ComponentMetadata, _ string, _ int, _ int64, _ time.Duration) {
 			fmt.Printf("[sensor] produce.success\n")
@@ -82,11 +111,16 @@ func main() {
 		}),
 	)
 
-	// segmentio writer (topic set here; adapter won’t double-set)
+	// kafka-go Writer with SASL/TLS transport
 	kw := &kafka.Writer{
-		Addr:     kafka.TCP(broker),
-		Topic:    topic,
-		Balancer: &kafka.LeastBytes{},
+		Addr:                   kafka.TCP(broker),
+		Topic:                  topic,
+		Balancer:               &kafka.LeastBytes{},
+		Transport:              transport,
+		RequiredAcks:           kafka.RequireAll,
+		AllowAutoTopicCreation: false,
+		Async:                  false,
+		BatchTimeout:           400 * time.Millisecond,
 	}
 
 	w := builder.NewKafkaClientAdapter[Feedback](
@@ -95,9 +129,7 @@ func main() {
 		builder.KafkaClientAdapterWithWriterFormat[Feedback]("ndjson", ""),
 		builder.KafkaClientAdapterWithWriterBatchSettings[Feedback](2, 1<<20, 500*time.Millisecond),
 		builder.KafkaClientAdapterWithWriterKeyTemplate[Feedback]("{customerId}"),
-		builder.KafkaClientAdapterWithWriterHeaderTemplates[Feedback](map[string]string{
-			"source": "demo-writer",
-		}),
+		builder.KafkaClientAdapterWithWriterHeaderTemplates[Feedback](map[string]string{"source": "demo-writer"}),
 		builder.KafkaClientAdapterWithSensor[Feedback](s),
 		builder.KafkaClientAdapterWithLogger[Feedback](log),
 	)
