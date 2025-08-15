@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
@@ -60,8 +63,18 @@ const (
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Consume until Ctrl+C (SIGINT/SIGTERM), then print summary
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Trap Ctrl+C
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		fmt.Println("\n[signal] interrupt received, shutting down...")
+		cancel()
+	}()
 
 	// --- Security (SASL + TLS) via builder helpers ---
 	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
@@ -88,7 +101,7 @@ func main() {
 		mech,
 		10*time.Second, // dialer timeout
 		true,           // dual stack
-		// match your prior ReaderConfig knobs:
+		// ReaderConfig-like knobs:
 		builder.KafkaGoReaderWithLatestStart(),
 		builder.KafkaGoReaderWithMinBytes(1<<10),
 		builder.KafkaGoReaderWithMaxBytes(10<<20),
@@ -135,11 +148,15 @@ func main() {
 	a := newAgg()
 	submit := func(_ context.Context, f Feedback) error { a.add(f); return nil }
 
-	if err := reader.Serve(ctx, submit); err != nil {
+	if err := reader.Serve(ctx, submit); err != nil && !errors.Is(err, context.Canceled) {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
 
+	printSummary(a)
+}
+
+func printSummary(a *agg) {
 	type kv struct {
 		k string
 		v int
@@ -155,10 +172,28 @@ func main() {
 		return cats[i].v > cats[j].v
 	})
 
-	fmt.Printf("\n=== Kafka summary ===\n")
+	var tags []kv
+	for k, v := range a.tagFreq {
+		tags = append(tags, kv{k, v})
+	}
+	sort.Slice(tags, func(i, j int) bool {
+		if tags[i].v == tags[j].v {
+			return tags[i].k < tags[j].k
+		}
+		return tags[i].v > tags[j].v
+	})
+
+	fmt.Printf("\n=== Kafka summary (since start) ===\n")
 	fmt.Printf("total=%d negatives=%d positives=%d\n", a.total, a.negCount, a.total-a.negCount)
 	fmt.Println("by_category:")
 	for _, c := range cats {
-		fmt.Printf("  - %-12s : %d\n", c.k, c.v)
+		fmt.Printf("  - %-16s : %d\n", c.k, c.v)
+	}
+	fmt.Println("top_tags:")
+	for i, t := range tags {
+		if i >= 15 {
+			break
+		}
+		fmt.Printf("  - %-16s : %d\n", t.k, t.v)
 	}
 }
