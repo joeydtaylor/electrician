@@ -12,7 +12,9 @@ require (
 	github.com/golang/snappy v0.0.4
 	github.com/klauspost/compress v1.17.9
 	github.com/mjibson/go-dsp v0.0.0-20180508042940-11479a337f12
+	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pierrec/lz4 v2.6.1+incompatible
+	github.com/segmentio/kafka-go v0.4.48
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.34.0
@@ -38,7 +40,6 @@ require (
 	github.com/frankban/quicktest v1.14.6 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/parquet-go/parquet-go v0.25.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.8.0 // indirect

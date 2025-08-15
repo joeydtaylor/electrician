@@ -186,4 +186,61 @@ type Sensor[T any] interface {
 	// (Optional) billing sampling: raw inputs to cost model
 	RegisterOnS3BillingSample(...func(ComponentMetadata, string /*op: PUT|GET|LIST*/, int64 /*requestUnits*/, int64 /*bytes*/, string /*storageClass*/))
 	InvokeOnS3BillingSample(ComponentMetadata, string, int64, int64, string)
+
+	// Kafka writer lifecycle
+	RegisterOnKafkaWriterStart(...func(ComponentMetadata, string /*topic*/, string /*format*/))
+	RegisterOnKafkaWriterStop(...func(ComponentMetadata))
+	InvokeOnKafkaWriterStart(ComponentMetadata, string, string)
+	InvokeOnKafkaWriterStop(ComponentMetadata)
+
+	// Kafka produce lifecycle
+	RegisterOnKafkaProduceAttempt(...func(ComponentMetadata, string /*topic*/, int /*partition*/, int /*keyBytes*/, int /*valueBytes*/))
+	RegisterOnKafkaProduceSuccess(...func(ComponentMetadata, string /*topic*/, int /*partition*/, int64 /*offset*/, time.Duration /*dur*/))
+	RegisterOnKafkaProduceError(...func(ComponentMetadata, string /*topic*/, int /*partition*/, error))
+	InvokeOnKafkaProduceAttempt(ComponentMetadata, string, int, int, int)
+	InvokeOnKafkaProduceSuccess(ComponentMetadata, string, int, int64, time.Duration)
+	InvokeOnKafkaProduceError(ComponentMetadata, string, int, error)
+
+	// Kafka writer batching/flush
+	RegisterOnKafkaBatchFlush(...func(ComponentMetadata, string /*topic*/, int /*records*/, int /*bytes*/, string /*compression*/))
+	InvokeOnKafkaBatchFlush(ComponentMetadata, string, int, int, string)
+
+	// Kafka record adornments
+	RegisterOnKafkaKeyRendered(...func(ComponentMetadata, []byte /*key*/))
+	RegisterOnKafkaHeadersRendered(...func(ComponentMetadata, []struct{ Key, Value string } /*headers*/))
+	InvokeOnKafkaKeyRendered(ComponentMetadata, []byte)
+	InvokeOnKafkaHeadersRendered(ComponentMetadata, []struct{ Key, Value string })
+
+	// Kafka consumer lifecycle & flow
+	RegisterOnKafkaConsumerStart(...func(ComponentMetadata, string /*group*/, []string /*topics*/, string /*startAt*/))
+	RegisterOnKafkaConsumerStop(...func(ComponentMetadata))
+	RegisterOnKafkaPartitionAssigned(...func(ComponentMetadata, string /*topic*/, int /*partition*/, int64 /*startOffset*/, int64 /*endOffset*/))
+	RegisterOnKafkaPartitionRevoked(...func(ComponentMetadata, string /*topic*/, int /*partition*/))
+	RegisterOnKafkaMessage(...func(ComponentMetadata, string /*topic*/, int /*partition*/, int64 /*offset*/, int /*keyBytes*/, int /*valueBytes*/))
+	RegisterOnKafkaDecode(...func(ComponentMetadata, string /*topic*/, int /*rows*/, string /*format*/))
+
+	InvokeOnKafkaConsumerStart(ComponentMetadata, string, []string, string)
+	InvokeOnKafkaConsumerStop(ComponentMetadata)
+	InvokeOnKafkaPartitionAssigned(ComponentMetadata, string, int, int64, int64)
+	InvokeOnKafkaPartitionRevoked(ComponentMetadata, string, int)
+	InvokeOnKafkaMessage(ComponentMetadata, string, int, int64, int, int)
+	InvokeOnKafkaDecode(ComponentMetadata, string, int, string)
+
+	// Kafka commits
+	RegisterOnKafkaCommitSuccess(...func(ComponentMetadata, string /*group*/, map[string]int64 /*topic@partition=>offset*/))
+	RegisterOnKafkaCommitError(...func(ComponentMetadata, string /*group*/, error))
+	InvokeOnKafkaCommitSuccess(ComponentMetadata, string, map[string]int64)
+	InvokeOnKafkaCommitError(ComponentMetadata, string, error)
+
+	// Kafka DLQ
+	RegisterOnKafkaDLQProduceAttempt(...func(ComponentMetadata, string /*dlqTopic*/, int /*partition*/, int /*keyBytes*/, int /*valueBytes*/))
+	RegisterOnKafkaDLQProduceSuccess(...func(ComponentMetadata, string /*dlqTopic*/, int /*partition*/, int64 /*offset*/, time.Duration /*dur*/))
+	RegisterOnKafkaDLQProduceError(...func(ComponentMetadata, string /*dlqTopic*/, int /*partition*/, error))
+	InvokeOnKafkaDLQProduceAttempt(ComponentMetadata, string, int, int, int)
+	InvokeOnKafkaDLQProduceSuccess(ComponentMetadata, string, int, int64, time.Duration)
+	InvokeOnKafkaDLQProduceError(ComponentMetadata, string, int, error)
+
+	// Kafka billing (optional)
+	RegisterOnKafkaBillingSample(...func(ComponentMetadata, string /*op: PRODUCE|CONSUME|COMMIT*/, int64 /*requestUnits*/, int64 /*bytes*/))
+	InvokeOnKafkaBillingSample(ComponentMetadata, string, int64, int64)
 }
