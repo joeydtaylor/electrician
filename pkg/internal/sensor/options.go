@@ -487,3 +487,119 @@ func WithOnS3ReaderCompleteFunc[T any](callback ...func(types.ComponentMetadata,
 func WithOnS3BillingSampleFunc[T any](callback ...func(types.ComponentMetadata, string, int64, int64, string)) types.Option[types.Sensor[T]] {
 	return func(m types.Sensor[T]) { m.RegisterOnS3BillingSample(callback...) }
 }
+
+// ---------- Kafka: Writer lifecycle ----------
+
+// WithOnKafkaWriterStartFunc registers callbacks when the Kafka writer starts.
+// args: topic, format
+func WithOnKafkaWriterStartFunc[T any](callback ...func(types.ComponentMetadata, string, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaWriterStart(callback...) }
+}
+
+// WithOnKafkaWriterStopFunc registers callbacks when the Kafka writer stops.
+func WithOnKafkaWriterStopFunc[T any](callback ...func(types.ComponentMetadata)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaWriterStop(callback...) }
+}
+
+// ---------- Kafka: Produce lifecycle ----------
+
+// args: topic, partition, keyBytes, valueBytes
+func WithOnKafkaProduceAttemptFunc[T any](callback ...func(types.ComponentMetadata, string, int, int, int)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaProduceAttempt(callback...) }
+}
+
+// args: topic, partition, offset, duration
+func WithOnKafkaProduceSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaProduceSuccess(callback...) }
+}
+
+// args: topic, partition, err
+func WithOnKafkaProduceErrorFunc[T any](callback ...func(types.ComponentMetadata, string, int, error)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaProduceError(callback...) }
+}
+
+// ---------- Kafka: Writer batching/flush ----------
+
+// args: topic, records, bytes, compression
+func WithOnKafkaBatchFlushFunc[T any](callback ...func(types.ComponentMetadata, string, int, int, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaBatchFlush(callback...) }
+}
+
+// ---------- Kafka: Record adornments ----------
+
+// args: key
+func WithOnKafkaKeyRenderedFunc[T any](callback ...func(types.ComponentMetadata, []byte)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaKeyRendered(callback...) }
+}
+
+// args: headers ([]struct{Key, Value string})
+func WithOnKafkaHeadersRenderedFunc[T any](callback ...func(types.ComponentMetadata, []struct{ Key, Value string })) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaHeadersRendered(callback...) }
+}
+
+// ---------- Kafka: Consumer lifecycle & flow ----------
+
+// args: group, topics, startAt
+func WithOnKafkaConsumerStartFunc[T any](callback ...func(types.ComponentMetadata, string, []string, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaConsumerStart(callback...) }
+}
+
+func WithOnKafkaConsumerStopFunc[T any](callback ...func(types.ComponentMetadata)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaConsumerStop(callback...) }
+}
+
+// args: topic, partition, startOffset, endOffset
+func WithOnKafkaPartitionAssignedFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, int64)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaPartitionAssigned(callback...) }
+}
+
+// args: topic, partition
+func WithOnKafkaPartitionRevokedFunc[T any](callback ...func(types.ComponentMetadata, string, int)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaPartitionRevoked(callback...) }
+}
+
+// args: topic, partition, offset, keyBytes, valueBytes
+func WithOnKafkaMessageFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, int, int)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaMessage(callback...) }
+}
+
+// args: topic, rows, format
+func WithOnKafkaDecodeFunc[T any](callback ...func(types.ComponentMetadata, string, int, string)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaDecode(callback...) }
+}
+
+// ---------- Kafka: Commits ----------
+
+// args: group, offsets
+func WithOnKafkaCommitSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, map[string]int64)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaCommitSuccess(callback...) }
+}
+
+// args: group, err
+func WithOnKafkaCommitErrorFunc[T any](callback ...func(types.ComponentMetadata, string, error)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaCommitError(callback...) }
+}
+
+// ---------- Kafka: DLQ ----------
+
+// args: dlqTopic, partition, keyBytes, valueBytes
+func WithOnKafkaDLQProduceAttemptFunc[T any](callback ...func(types.ComponentMetadata, string, int, int, int)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaDLQProduceAttempt(callback...) }
+}
+
+// args: dlqTopic, partition, offset, duration
+func WithOnKafkaDLQProduceSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaDLQProduceSuccess(callback...) }
+}
+
+// args: dlqTopic, partition, err
+func WithOnKafkaDLQProduceErrorFunc[T any](callback ...func(types.ComponentMetadata, string, int, error)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaDLQProduceError(callback...) }
+}
+
+// ---------- Kafka: Billing (optional) ----------
+
+// args: op, requestUnits, bytes
+func WithOnKafkaBillingSampleFunc[T any](callback ...func(types.ComponentMetadata, string, int64, int64)) types.Option[types.Sensor[T]] {
+	return func(m types.Sensor[T]) { m.RegisterOnKafkaBillingSample(callback...) }
+}

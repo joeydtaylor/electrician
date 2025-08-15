@@ -71,6 +71,42 @@ type Sensor[T any] struct {
 	// Optional: billing sampling (raw signals your Meter can price later)
 	OnS3BillingSample []func(types.ComponentMetadata, string /*op: PUT|GET|LIST*/, int64 /*requestUnits*/, int64 /*bytes*/, string /*storageClass*/)
 
+	// --- Kafka writer/reader hooks ---
+
+	// Writer lifecycle
+	OnKafkaWriterStart []func(types.ComponentMetadata, string /*topic*/, string /*format*/)
+	OnKafkaWriterStop  []func(types.ComponentMetadata)
+
+	// Produce lifecycle
+	OnKafkaProduceAttempt []func(types.ComponentMetadata, string /*topic*/, int /*partition*/, int /*keyBytes*/, int /*valueBytes*/)
+	OnKafkaProduceSuccess []func(types.ComponentMetadata, string /*topic*/, int /*partition*/, int64 /*offset*/, time.Duration /*dur*/)
+	OnKafkaProduceError   []func(types.ComponentMetadata, string /*topic*/, int /*partition*/, error)
+	OnKafkaBatchFlush     []func(types.ComponentMetadata, string /*topic*/, int /*records*/, int /*bytes*/, string /*compression*/)
+
+	// Record adornments
+	OnKafkaKeyRendered     []func(types.ComponentMetadata, []byte /*key*/)
+	OnKafkaHeadersRendered []func(types.ComponentMetadata, []struct{ Key, Value string } /*headers*/)
+
+	// Consumer lifecycle
+	OnKafkaConsumerStart     []func(types.ComponentMetadata, string /*group*/, []string /*topics*/, string /*startAt*/)
+	OnKafkaConsumerStop      []func(types.ComponentMetadata)
+	OnKafkaPartitionAssigned []func(types.ComponentMetadata, string /*topic*/, int /*partition*/, int64 /*startOffset*/, int64 /*endOffset*/)
+	OnKafkaPartitionRevoked  []func(types.ComponentMetadata, string /*topic*/, int /*partition*/)
+	OnKafkaMessage           []func(types.ComponentMetadata, string /*topic*/, int /*partition*/, int64 /*offset*/, int /*keyBytes*/, int /*valueBytes*/)
+	OnKafkaDecode            []func(types.ComponentMetadata, string /*topic*/, int /*rows*/, string /*format*/)
+
+	// Commits
+	OnKafkaCommitSuccess []func(types.ComponentMetadata, string /*group*/, map[string]int64 /*topic@partition=>offset*/)
+	OnKafkaCommitError   []func(types.ComponentMetadata, string /*group*/, error)
+
+	// DLQ
+	OnKafkaDLQProduceAttempt []func(types.ComponentMetadata, string /*dlqTopic*/, int /*partition*/, int /*keyBytes*/, int /*valueBytes*/)
+	OnKafkaDLQProduceSuccess []func(types.ComponentMetadata, string /*dlqTopic*/, int /*partition*/, int64 /*offset*/, time.Duration /*dur*/)
+	OnKafkaDLQProduceError   []func(types.ComponentMetadata, string /*dlqTopic*/, int /*partition*/, error)
+
+	// Billing
+	OnKafkaBillingSample []func(types.ComponentMetadata, string /*op: PRODUCE|CONSUME|COMMIT*/, int64 /*requestUnits*/, int64 /*bytes*/)
+
 	callbackLock sync.Mutex
 	loggers      []types.Logger // Attached loggers for event logging.
 	loggersLock  sync.Mutex     // Mutex to ensure logger access is thread-safe.
@@ -143,6 +179,34 @@ func NewSensor[T any](options ...types.Option[types.Sensor[T]]) types.Sensor[T] 
 		OnS3ReaderComplete:    make([]func(types.ComponentMetadata, int, int), 0),
 
 		OnS3BillingSample: make([]func(types.ComponentMetadata, string, int64, int64, string), 0),
+
+		// --- Kafka writer/reader hooks ---
+		OnKafkaWriterStart: make([]func(types.ComponentMetadata, string, string), 0),
+		OnKafkaWriterStop:  make([]func(types.ComponentMetadata), 0),
+
+		OnKafkaProduceAttempt: make([]func(types.ComponentMetadata, string, int, int, int), 0),
+		OnKafkaProduceSuccess: make([]func(types.ComponentMetadata, string, int, int64, time.Duration), 0),
+		OnKafkaProduceError:   make([]func(types.ComponentMetadata, string, int, error), 0),
+		OnKafkaBatchFlush:     make([]func(types.ComponentMetadata, string, int, int, string), 0),
+
+		OnKafkaKeyRendered:     make([]func(types.ComponentMetadata, []byte), 0),
+		OnKafkaHeadersRendered: make([]func(types.ComponentMetadata, []struct{ Key, Value string }), 0),
+
+		OnKafkaConsumerStart:     make([]func(types.ComponentMetadata, string, []string, string), 0),
+		OnKafkaConsumerStop:      make([]func(types.ComponentMetadata), 0),
+		OnKafkaPartitionAssigned: make([]func(types.ComponentMetadata, string, int, int64, int64), 0),
+		OnKafkaPartitionRevoked:  make([]func(types.ComponentMetadata, string, int), 0),
+		OnKafkaMessage:           make([]func(types.ComponentMetadata, string, int, int64, int, int), 0),
+		OnKafkaDecode:            make([]func(types.ComponentMetadata, string, int, string), 0),
+
+		OnKafkaCommitSuccess: make([]func(types.ComponentMetadata, string, map[string]int64), 0),
+		OnKafkaCommitError:   make([]func(types.ComponentMetadata, string, error), 0),
+
+		OnKafkaDLQProduceAttempt: make([]func(types.ComponentMetadata, string, int, int, int), 0),
+		OnKafkaDLQProduceSuccess: make([]func(types.ComponentMetadata, string, int, int64, time.Duration), 0),
+		OnKafkaDLQProduceError:   make([]func(types.ComponentMetadata, string, int, error), 0),
+
+		OnKafkaBillingSample: make([]func(types.ComponentMetadata, string, int64, int64), 0),
 	}
 
 	// Apply configuration options to the Sensor.

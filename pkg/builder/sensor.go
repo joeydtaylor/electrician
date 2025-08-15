@@ -296,3 +296,99 @@ func SensorWithOnS3ReaderCompleteFunc[T any](callback ...func(ComponentMetadata,
 func SensorWithOnS3BillingSampleFunc[T any](callback ...func(ComponentMetadata, string, int64, int64, string)) types.Option[types.Sensor[T]] {
 	return sensor.WithOnS3BillingSampleFunc[T](callback...)
 }
+
+// ---------- Kafka: Writer lifecycle ----------
+
+func SensorWithOnKafkaWriterStartFunc[T any](callback ...func(types.ComponentMetadata, string, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaWriterStartFunc[T](callback...)
+}
+
+func SensorWithOnKafkaWriterStopFunc[T any](callback ...func(types.ComponentMetadata)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaWriterStopFunc[T](callback...)
+}
+
+// ---------- Kafka: Produce lifecycle ----------
+
+func SensorWithOnKafkaProduceAttemptFunc[T any](callback ...func(types.ComponentMetadata, string, int, int, int)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaProduceAttemptFunc[T](callback...)
+}
+
+func SensorWithOnKafkaProduceSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaProduceSuccessFunc[T](callback...)
+}
+
+func SensorWithOnKafkaProduceErrorFunc[T any](callback ...func(types.ComponentMetadata, string, int, error)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaProduceErrorFunc[T](callback...)
+}
+
+// ---------- Kafka: Writer batching/flush ----------
+
+func SensorWithOnKafkaBatchFlushFunc[T any](callback ...func(types.ComponentMetadata, string, int, int, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaBatchFlushFunc[T](callback...)
+}
+
+// ---------- Kafka: Record adornments ----------
+
+func SensorWithOnKafkaKeyRenderedFunc[T any](callback ...func(types.ComponentMetadata, []byte)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaKeyRenderedFunc[T](callback...)
+}
+
+func SensorWithOnKafkaHeadersRenderedFunc[T any](callback ...func(types.ComponentMetadata, []struct{ Key, Value string })) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaHeadersRenderedFunc[T](callback...)
+}
+
+// ---------- Kafka: Consumer lifecycle & flow ----------
+
+func SensorWithOnKafkaConsumerStartFunc[T any](callback ...func(types.ComponentMetadata, string, []string, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaConsumerStartFunc[T](callback...)
+}
+
+func SensorWithOnKafkaConsumerStopFunc[T any](callback ...func(types.ComponentMetadata)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaConsumerStopFunc[T](callback...)
+}
+
+func SensorWithOnKafkaPartitionAssignedFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, int64)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaPartitionAssignedFunc[T](callback...)
+}
+
+func SensorWithOnKafkaPartitionRevokedFunc[T any](callback ...func(types.ComponentMetadata, string, int)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaPartitionRevokedFunc[T](callback...)
+}
+
+func SensorWithOnKafkaMessageFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, int, int)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaMessageFunc[T](callback...)
+}
+
+func SensorWithOnKafkaDecodeFunc[T any](callback ...func(types.ComponentMetadata, string, int, string)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaDecodeFunc[T](callback...)
+}
+
+// ---------- Kafka: Commits ----------
+
+func SensorWithOnKafkaCommitSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, map[string]int64)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaCommitSuccessFunc[T](callback...)
+}
+
+func SensorWithOnKafkaCommitErrorFunc[T any](callback ...func(types.ComponentMetadata, string, error)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaCommitErrorFunc[T](callback...)
+}
+
+// ---------- Kafka: DLQ ----------
+
+func SensorWithOnKafkaDLQProduceAttemptFunc[T any](callback ...func(types.ComponentMetadata, string, int, int, int)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaDLQProduceAttemptFunc[T](callback...)
+}
+
+func SensorWithOnKafkaDLQProduceSuccessFunc[T any](callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaDLQProduceSuccessFunc[T](callback...)
+}
+
+func SensorWithOnKafkaDLQProduceErrorFunc[T any](callback ...func(types.ComponentMetadata, string, int, error)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaDLQProduceErrorFunc[T](callback...)
+}
+
+// ---------- Kafka: Billing (optional) ----------
+
+func SensorWithOnKafkaBillingSampleFunc[T any](callback ...func(types.ComponentMetadata, string, int64, int64)) types.Option[types.Sensor[T]] {
+	return sensor.WithOnKafkaBillingSampleFunc[T](callback...)
+}

@@ -1,0 +1,101 @@
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports: ["4566:4566"]
+    environment:
+      - SERVICES=s3,sts,iam,kms
+      - AWS_DEFAULT_REGION=us-east-1
+      - DEBUG=0
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "curl -fsS http://localhost:4566/health || curl -fsS http://localhost:4566/_localstack/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 60
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - ./localstack-init/ready.d:/etc/localstack/init/ready.d:ro
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: redpanda
+    # ENTRYPOINT is already "rpk"; we just pass args
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      # listeners
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      # admin api
+      - --set redpanda.admin[0].address=0.0.0.0
+      - --set redpanda.admin[0].port=9644
+      # required for dev
+      - --set redpanda.developer_mode=true
+      # enable SASL
+      - --set redpanda.enable_sasl=true
+      # TLS only on the external listener
+      - --set redpanda.kafka_api_tls[0].name=external
+      - --set redpanda.kafka_api_tls[0].enabled=true
+      - --set redpanda.kafka_api_tls[0].require_client_auth=false
+      - --set redpanda.kafka_api_tls[0].cert_file=/etc/redpanda/tls/server.crt
+      - --set redpanda.kafka_api_tls[0].key_file=/etc/redpanda/tls/server.key
+      - --set redpanda.kafka_api_tls[0].truststore_file=/etc/redpanda/tls/ca.crt
+    ports:
+      - "19092:19092"   # external TLS+SASL
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+      - ./tls:/etc/redpanda/tls:ro
+
+  redpanda-seed:
+    image: redpandadata/redpanda:latest
+    container_name: redpanda-seed
+    depends_on:
+      - redpanda
+    entrypoint: /bin/bash
+    command:
+      - -lc
+      - |
+        set -euo pipefail
+
+        # Wait for Admin API (prefer rpk; fall back to curl if present)
+        for i in {1..240}; do
+          rpk cluster health --api-urls http://redpanda:9644 >/dev/null 2>&1 && break || \
+          curl -fsS http://redpanda:9644/v1/status/ready >/dev/null 2>&1 && break || \
+          curl -fsS http://redpanda:9644/v1/status/started >/dev/null 2>&1 && break || true
+          sleep 0.5
+        done
+
+        # 3) Create SCRAM user (idempotent)
+        rpk security user create app -p app-secret \
+          --mechanism SCRAM-SHA-256 \
+          --api-urls http://redpanda:9644 || true
+
+        # 4) Make it superuser (idempotent)
+        rpk cluster config set superusers '["app"]' \
+          --api-urls http://redpanda:9644 || true
+
+        # Wait for Kafka (SASL on internal)
+        for i in {1..240}; do
+          rpk cluster info --brokers redpanda:9092 \
+            --user app --password app-secret --sasl-mechanism SCRAM-SHA-256 >/dev/null 2>&1 && break
+          sleep 0.5
+        done
+
+        # 5) Create topic (idempotent)
+        rpk topic create feedback-demo --partitions 3 --replicas 1 \
+          --brokers redpanda:9092 \
+          --user app --password app-secret --sasl-mechanism SCRAM-SHA-256 || true
+
+        # 6) Verify
+        rpk topic list --brokers redpanda:9092 \
+          --user app --password app-secret --sasl-mechanism SCRAM-SHA-256
+    restart: "no"
+
+volumes:
+  localstack-data:
+  redpanda-data:
