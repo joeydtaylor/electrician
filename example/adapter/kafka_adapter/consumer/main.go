@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,52 +48,90 @@ func (a *agg) add(r Feedback) {
 	}
 }
 
-// --- prod-ish config (matches your compose) ----
+// --- prod-ish config (matches compose) ----
 const (
-	kBrokersCSV    = "127.0.0.1:19092" // external TLS+SASL listener
-	kTLS           = true
-	kTLSServerName = "localhost"
-	kCACandidates  = "./tls/ca.crt,../tls/ca.crt,../../tls/ca.crt"
+	kBrokersCSV           = "127.0.0.1:19092" // external TLS+mTLS listener
+	kTLSServerName        = "localhost"       // must match server cert SAN; use "redpanda" if that’s what you issued
+	kCACandidates         = "./tls/ca.crt,../tls/ca.crt,../../tls/ca.crt"
+	kClientCertCandidates = "./tls/client.crt,../tls/client.crt,../../tls/client.crt"
+	kClientKeyCandidates  = "./tls/client.key,../tls/client.key,../../tls/client.key"
 
 	kTopic = "feedback-demo"
 	kGroup = "feedback-demo-reader"
 
 	kSASLUser = "app"
 	kSASLPass = "app-secret"
-	kSASLMech = "SCRAM-SHA-256" // or SCRAM-SHA-512
+	kSASLMech = "SCRAM-SHA-256"
 )
 
+func firstExisting(csv string) (string, error) {
+	for _, p := range strings.Split(csv, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no file found in: %s", csv)
+}
+
+func buildTLSConfig() (*tls.Config, error) {
+	caPath, err := firstExisting(kCACandidates)
+	if err != nil {
+		return nil, err
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("failed adding CA to pool: %s", caPath)
+	}
+
+	certPath, err := firstExisting(kClientCertCandidates)
+	if err != nil {
+		return nil, err
+	}
+	keyPath, err := firstExisting(kClientKeyCandidates)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		ServerName:   kTLSServerName, // SNI + name verification
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{cert}, // mTLS: present client cert
+	}, nil
+}
+
 func main() {
-	// Consume until Ctrl+C (SIGINT/SIGTERM), then print summary
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Trap Ctrl+C
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sig
-		fmt.Println("\n[signal] interrupt received, shutting down...")
-		cancel()
-	}()
+	go func() { <-sig; fmt.Println("\n[signal] interrupt received, shutting down..."); cancel() }()
 
-	// --- Security (SASL + TLS) via builder helpers ---
 	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
 
-	var tlsCfg *tls.Config // created only if kTLS
-	if kTLS {
-		tlsCfg, err = builder.TLSFromCAPathCSV(kCACandidates, kTLSServerName)
-		if err != nil {
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
-			return
-		}
+	tlsCfg, err := buildTLSConfig()
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
+		return
 	}
 
-	// kafka-go Reader with secure dialer (TLS/SASL)
 	kr := builder.NewKafkaGoReaderSecure(
 		strings.Split(kBrokersCSV, ","),
 		kGroup,
@@ -101,40 +140,20 @@ func main() {
 		mech,
 		10*time.Second, // dialer timeout
 		true,           // dual stack
-		// ReaderConfig-like knobs:
 		builder.KafkaGoReaderWithLatestStart(),
 		builder.KafkaGoReaderWithMinBytes(1<<10),
 		builder.KafkaGoReaderWithMaxBytes(10<<20),
-		builder.KafkaGoReaderWithCommitInterval(0), // disable driver auto-commit
+		builder.KafkaGoReaderWithCommitInterval(0),
 	)
 
 	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
 	s := builder.NewSensor[Feedback](
 		builder.SensorWithLogger[Feedback](log),
-		builder.SensorWithOnStartFunc[Feedback](func(cm builder.ComponentMetadata) {
-			fmt.Printf("[sensor] start: %s (%s)\n", cm.Name, cm.ID)
-		}),
-		builder.SensorWithOnStopFunc[Feedback](func(cm builder.ComponentMetadata) {
-			fmt.Printf("[sensor] stop: %s (%s)\n", cm.Name, cm.ID)
-		}),
-		builder.SensorWithOnKafkaConsumerStartFunc[Feedback](func(cm builder.ComponentMetadata, group string, topics []string, startAt string) {
-			fmt.Printf("[sensor] consumer.start group=%s topics=%v startAt=%s\n", group, topics, startAt)
-		}),
-		builder.SensorWithOnKafkaMessageFunc[Feedback](func(cm builder.ComponentMetadata, t string, partition int, offset int64, keyBytes, valueBytes int) {
-			fmt.Printf("[sensor] message topic=%s p=%d off=%d keyB=%d valB=%d\n", t, partition, offset, keyBytes, valueBytes)
-		}),
-		builder.SensorWithOnKafkaCommitSuccessFunc[Feedback](func(cm builder.ComponentMetadata, group string, offsets map[string]int64) {
-			fmt.Printf("[sensor] commit.success group=%s offsets=%v\n", group, offsets)
-		}),
-		builder.SensorWithOnKafkaCommitErrorFunc[Feedback](func(cm builder.ComponentMetadata, group string, err error) {
-			fmt.Printf("[sensor] commit.error group=%s err=%v\n", group, err)
-		}),
 	)
 
 	reader := builder.NewKafkaClientAdapter[Feedback](
 		ctx,
 		builder.KafkaClientAdapterWithKafkaGoReader[Feedback](kr),
-		// adapter-level intent (sensors/behavior); underlying reader already set:
 		builder.KafkaClientAdapterWithReaderTopics[Feedback](kTopic),
 		builder.KafkaClientAdapterWithReaderGroup[Feedback](kGroup),
 		builder.KafkaClientAdapterWithReaderStartAt[Feedback]("latest", time.Time{}),
@@ -152,7 +171,6 @@ func main() {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
-
 	printSummary(a)
 }
 

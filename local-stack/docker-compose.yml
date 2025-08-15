@@ -28,24 +28,38 @@ services:
       - --memory=512M
       - --reserve-memory=0M
       - --node-id=0
-      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      # TLS listeners only: internal 9093, external 19092
+      - --kafka-addr=internal_tls://0.0.0.0:9093,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal_tls://redpanda:9093,external://localhost:19092
       - --set redpanda.admin[0].address=0.0.0.0
       - --set redpanda.admin[0].port=9644
       - --set redpanda.developer_mode=true
       - --set redpanda.enable_sasl=true
-      # TLS only on the external listener (19092); internal 9092 stays PLAINTEXT
-      - --set redpanda.kafka_api_tls[0].name=external
+      # TLS for internal listener (mTLS)
+      - --set redpanda.kafka_api_tls[0].name=internal_tls
       - --set redpanda.kafka_api_tls[0].enabled=true
-      - --set redpanda.kafka_api_tls[0].require_client_auth=false
+      - --set redpanda.kafka_api_tls[0].require_client_auth=true
       - --set redpanda.kafka_api_tls[0].cert_file=/etc/redpanda/tls/server.crt
       - --set redpanda.kafka_api_tls[0].key_file=/etc/redpanda/tls/server.key
       - --set redpanda.kafka_api_tls[0].truststore_file=/etc/redpanda/tls/ca.crt
+      # TLS for external listener (mTLS)
+      - --set redpanda.kafka_api_tls[1].name=external
+      - --set redpanda.kafka_api_tls[1].enabled=true
+      - --set redpanda.kafka_api_tls[1].require_client_auth=true
+      - --set redpanda.kafka_api_tls[1].cert_file=/etc/redpanda/tls/server.crt
+      - --set redpanda.kafka_api_tls[1].key_file=/etc/redpanda/tls/server.key
+      - --set redpanda.kafka_api_tls[1].truststore_file=/etc/redpanda/tls/ca.crt
+    # bind external listener to loopback only to avoid outside probes
     ports:
-      - "19092:19092"
+      - "127.0.0.1:19092:19092"
     volumes:
       - redpanda-data:/var/lib/redpanda/data
-      - ./tls:/etc/redpanda/tls:ro
+      - ./tls:/etc/redpanda/tls:ro   # ca.crt, server.crt, server.key, client.crt, client.key
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --api-urls http://localhost:9644 >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
     networks: [steeze-edge]
 
   redpanda-seed:
@@ -66,17 +80,34 @@ services:
           --api-urls http://redpanda:9644 || true
         rpk cluster config set superusers '["app"]' \
           --api-urls http://redpanda:9644 || true
+        # TLS bootstrap on 9093 with mTLS + SASL
         for i in {1..240}; do
-          rpk cluster info --brokers redpanda:9092 \
+          rpk cluster info \
+            --brokers redpanda:9093 \
+            --tls-enabled \
+            --tls-truststore /etc/redpanda/tls/ca.crt \
+            --tls-cert /etc/redpanda/tls/client.crt \
+            --tls-key /etc/redpanda/tls/client.key \
             --user app --password app-secret --sasl-mechanism SCRAM-SHA-256 >/dev/null 2>&1 && break
           sleep 0.5
         done
         rpk topic create feedback-demo --partitions 3 --replicas 1 \
-          --brokers redpanda:9092 \
+          --brokers redpanda:9093 \
+          --tls-enabled \
+          --tls-truststore /etc/redpanda/tls/ca.crt \
+          --tls-cert /etc/redpanda/tls/client.crt \
+          --tls-key /etc/redpanda/tls/client.key \
           --user app --password app-secret --sasl-mechanism SCRAM-SHA-256 || true
-        rpk topic list --brokers redpanda:9092 \
+        rpk topic list \
+          --brokers redpanda:9093 \
+          --tls-enabled \
+          --tls-truststore /etc/redpanda/tls/ca.crt \
+          --tls-cert /etc/redpanda/tls/client.crt \
+          --tls-key /etc/redpanda/tls/client.key \
           --user app --password app-secret --sasl-mechanism SCRAM-SHA-256
     restart: "no"
+    volumes:
+      - ./tls:/etc/redpanda/tls:ro
     networks: [steeze-edge]
 
 volumes:
