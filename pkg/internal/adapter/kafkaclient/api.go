@@ -142,6 +142,8 @@ func (a *KafkaClient[T]) ConnectLogger(l ...types.Logger) {
 	a.loggersLock.Lock()
 	a.loggers = append(a.loggers, l...)
 	a.loggersLock.Unlock()
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConnectLogger, total_loggers: %d",
+		a.componentMetadata, len(a.loggers))
 }
 
 func (a *KafkaClient[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
@@ -190,6 +192,7 @@ func (a *KafkaClient[T]) Stop() {
 		// Consumer stop
 		s.InvokeOnKafkaConsumerStop(a.componentMetadata)
 	})
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Stop", a.componentMetadata)
 	a.cancel()
 }
 
@@ -219,6 +222,8 @@ func (a *KafkaClient[T]) StartWriter(ctx context.Context) error {
 	a.forEachSensor(func(s types.Sensor[T]) {
 		s.InvokeOnKafkaWriterStart(a.componentMetadata, a.wTopic, a.wFormat)
 	})
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStart, topic: %s, format: %s",
+		a.componentMetadata, a.wTopic, a.wFormat)
 
 	// allocate merged channel based on batch size
 	if a.mergedIn == nil {
@@ -241,10 +246,11 @@ func (a *KafkaClient[T]) StartWriter(ctx context.Context) error {
 	// start background producer loop (stub)
 	go func() {
 		defer atomic.StoreInt32(&a.isServingWriter, 0)
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: StartWriter, topic: %s, format: %s, wires: %d",
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: StartWriterLoop, topic: %s, format: %s, wires: %d",
 			a.componentMetadata, a.wTopic, a.wFormat, len(a.inputWires))
 		// TODO: implement batching/encoding/produce; invoke Kafka hooks per event.
 		<-ctx.Done()
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStop", a.componentMetadata)
 	}()
 
 	return nil
@@ -270,13 +276,16 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 	}
 	defer atomic.StoreInt32(&a.isServingWriter, 0)
 
-	// sensors: writer start/stop
+	// sensors + logger start/stop
 	a.forEachSensor(func(s types.Sensor[T]) {
 		s.InvokeOnKafkaWriterStart(a.componentMetadata, effTopic, format)
 	})
-	defer a.forEachSensor(func(s types.Sensor[T]) {
-		s.InvokeOnKafkaWriterStop(a.componentMetadata)
-	})
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStart, topic: %s, format: %s",
+		a.componentMetadata, effTopic, format)
+	defer func() {
+		a.forEachSensor(func(s types.Sensor[T]) { s.InvokeOnKafkaWriterStop(a.componentMetadata) })
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStop", a.componentMetadata)
+	}()
 
 	// batching defaults
 	maxRecs := a.wBatchMaxRecords
@@ -307,10 +316,12 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 		if len(pending) == 0 {
 			return nil
 		}
-		// batch flush hook
+		// batch flush hook + logger
 		a.forEachSensor(func(s types.Sensor[T]) {
 			s.InvokeOnKafkaBatchFlush(a.componentMetadata, effTopic, len(pending), byteTally, a.wCompression)
 		})
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: BatchFlush, topic: %s, records: %d, bytes: %d, compression: %s",
+			a.componentMetadata, effTopic, len(pending), byteTally, a.wCompression)
 
 		partForHook := -1
 		if a.wManualPartition != nil {
@@ -318,24 +329,21 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 		}
 
 		for _, m := range pending {
-			// attempt hook
-			a.forEachSensor(func(s types.Sensor[T]) {
-				s.InvokeOnKafkaProduceAttempt(a.componentMetadata, effTopic, partForHook, len(m.key), len(m.val))
-			})
+			// attempt hook (sensor already emits); add a debug log too
+			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: ProduceAttempt, topic: %s, partition: %d, key_bytes: %d, val_bytes: %d",
+				a.componentMetadata, effTopic, partForHook, len(m.key), len(m.val))
 
 			// NOTE: pass "" as topic to produce() when the injected writer already has a Topic set.
 			topicForMessage := ""
 			if _, has := a.producer.(*kafka.Writer); has {
-				// writer carries topic; leave message.Topic empty
 				topicForMessage = ""
 			} else {
-				// non kafka-go writers may need explicit topic
 				topicForMessage = effTopic
 			}
 
 			partition, offset, err := a.produce(ctx, topicForMessage, a.wManualPartition, m.key, m.val, m.headers)
 			if err != nil {
-				// error hook
+				// error hook + logger
 				a.forEachSensor(func(s types.Sensor[T]) {
 					s.InvokeOnKafkaProduceError(a.componentMetadata, effTopic, partForHook, err)
 				})
@@ -344,10 +352,12 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 				return err
 			}
 
-			// success hook
+			// success hook + logger
 			a.forEachSensor(func(s types.Sensor[T]) {
 				s.InvokeOnKafkaProduceSuccess(a.componentMetadata, effTopic, partition, offset, 0 /*dur unknown*/)
 			})
+			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ProduceSuccess, topic: %s, partition: %d, offset: %d",
+				a.componentMetadata, effTopic, partition, offset)
 		}
 
 		pending = pending[:0]
@@ -367,7 +377,7 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 		key = renderKeyFromTemplate(a.wKeyTemplate, v)
 		hdrs = renderHeadersFromTemplates(a.wHdrTemplates, v)
 
-		// hooks for adornments
+		// hooks for adornments + debug logs mirroring sensors
 		a.forEachSensor(func(s types.Sensor[T]) {
 			if key != nil {
 				s.InvokeOnKafkaKeyRendered(a.componentMetadata, key)
@@ -376,6 +386,12 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 				s.InvokeOnKafkaHeadersRendered(a.componentMetadata, hdrs)
 			}
 		})
+		if key != nil {
+			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: KeyRendered, bytes: %d", a.componentMetadata, len(key))
+		}
+		if hdrs != nil {
+			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: HeadersRendered, count: %d", a.componentMetadata, len(hdrs))
+		}
 		return key, val, hdrs, nil
 	}
 
@@ -424,16 +440,19 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 	a.forEachSensor(func(s types.Sensor[T]) {
 		s.InvokeOnKafkaWriterStart(a.componentMetadata, a.wTopic, "raw")
 	})
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStart, topic: %s, format: raw",
+		a.componentMetadata, a.wTopic)
 
 	// TODO: one chunk -> one Kafka message; invoke hooks.
 	a.NotifyLoggers(types.WarnLevel, "%s => level: WARN, event: ServeWriterRaw, status: not-implemented", a.componentMetadata)
 	<-ctx.Done()
+
+	a.forEachSensor(func(s types.Sensor[T]) { s.InvokeOnKafkaWriterStop(a.componentMetadata) })
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStop", a.componentMetadata)
 	return nil
 }
 
 // ---------- reader side ----------
-
-// -------- reader implementation --------
 
 func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context, T) error) error {
 	if len(a.rTopics) == 0 {
@@ -450,6 +469,8 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 	}
 	if created {
 		defer func() { _ = r.Close() }()
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ReaderCreated, group: %s, topics: %v",
+			a.componentMetadata, a.rGroupID, a.rTopics)
 	}
 
 	// normalize commit policy aliases
@@ -466,7 +487,12 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 	a.forEachSensor(func(s types.Sensor[T]) {
 		s.InvokeOnKafkaConsumerStart(a.componentMetadata, a.rGroupID, append([]string(nil), a.rTopics...), a.rStartAt)
 	})
-	defer a.forEachSensor(func(s types.Sensor[T]) { s.InvokeOnKafkaConsumerStop(a.componentMetadata) })
+	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConsumerStart, group: %s, topics: %v, start_at: %s",
+		a.componentMetadata, a.rGroupID, a.rTopics, a.rStartAt)
+	defer func() {
+		a.forEachSensor(func(s types.Sensor[T]) { s.InvokeOnKafkaConsumerStop(a.componentMetadata) })
+		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConsumerStop", a.componentMetadata)
+	}()
 
 	maxPollRecs := a.rMaxPollRecs
 	if maxPollRecs <= 0 {
@@ -508,10 +534,12 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 				break inner
 			}
 
-			// message hook
+			// message hook + logger
 			a.forEachSensor(func(s types.Sensor[T]) {
 				s.InvokeOnKafkaMessage(a.componentMetadata, msg.Topic, msg.Partition, msg.Offset, len(msg.Key), len(msg.Value))
 			})
+			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Message, topic: %s, partition: %d, offset: %d, key_bytes: %d, val_bytes: %d",
+				a.componentMetadata, msg.Topic, msg.Partition, msg.Offset, len(msg.Key), len(msg.Value))
 
 			// decode
 			var v T
@@ -550,12 +578,13 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 						a.forEachSensor(func(s types.Sensor[T]) {
 							s.InvokeOnKafkaCommitSuccess(a.componentMetadata, a.rGroupID, map[string]int64{key: msg.Offset + 1})
 						})
+						a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: CommitSuccess(after-each), group: %s, offsets: %s=%d",
+							a.componentMetadata, a.rGroupID, key, msg.Offset+1)
 					}
 				case "after-batch", "time", "":
 					key := fmt.Sprintf("%s:%d", msg.Topic, msg.Partition)
 					latestByTP[key] = msg // keep latest per partition
 				default:
-					// unknown => behave like after-batch
 					key := fmt.Sprintf("%s:%d", msg.Topic, msg.Partition)
 					latestByTP[key] = msg
 				}
@@ -569,17 +598,21 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 
 		cancel() // end of this polling window
 
-		// decode hooks per topic
+		// decode hooks per topic + log
 		if len(decodedByTopic) > 0 {
 			for t, n := range decodedByTopic {
 				a.forEachSensor(func(s types.Sensor[T]) {
 					s.InvokeOnKafkaDecode(a.componentMetadata, t, n, a.rFormat)
 				})
+				a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Decode, topic: %s, rows: %d, format: %s",
+					a.componentMetadata, t, n, a.rFormat)
 			}
 		}
 
 		// commit after-batch
 		if mode == "manual" && policy == "after-batch" && len(latestByTP) > 0 {
+			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Commit(after-batch), partitions: %d",
+				a.componentMetadata, len(latestByTP))
 			a.commitLatest(ctx, r, latestByTP, a.rGroupID)
 			latestByTP = make(map[string]kafka.Message)
 		}
@@ -589,6 +622,8 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 			select {
 			case <-commitTicker.C:
 				if len(latestByTP) > 0 {
+					a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Commit(time), partitions: %d, every: %s",
+						a.componentMetadata, len(latestByTP), a.rCommitEvery)
 					a.commitLatest(ctx, r, latestByTP, a.rGroupID)
 					latestByTP = make(map[string]kafka.Message)
 				}
@@ -601,6 +636,8 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 		case <-ctx.Done():
 			// best-effort final commit if manual
 			if mode == "manual" && len(latestByTP) > 0 {
+				a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Commit(final), partitions: %d",
+					a.componentMetadata, len(latestByTP))
 				a.commitLatest(context.Background(), r, latestByTP, a.rGroupID)
 			}
 			return nil
