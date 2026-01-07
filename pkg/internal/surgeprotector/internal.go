@@ -6,114 +6,122 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
-// submitToComponents submits the element to all managed components.
-func (s *SurgeProtector[T]) submitToComponents(ctx context.Context, elem T) error {
-	for _, component := range s.managedComponents {
-		if err := component.Submit(s.ctx, elem); err != nil {
-			return err
-		}
+func (s *SurgeProtector[T]) snapshotSensors() []types.Sensor[T] {
+	s.sensorLock.Lock()
+	defer s.sensorLock.Unlock()
+	if len(s.sensors) == 0 {
+		return nil
 	}
-	return nil
+	out := make([]types.Sensor[T], len(s.sensors))
+	copy(out, s.sensors)
+	return out
+}
+
+func (s *SurgeProtector[T]) snapshotLoggers() []types.Logger {
+	s.loggersLock.Lock()
+	defer s.loggersLock.Unlock()
+	if len(s.loggers) == 0 {
+		return nil
+	}
+	out := make([]types.Logger, len(s.loggers))
+	copy(out, s.loggers)
+	return out
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorTrip() {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
 		sensor.InvokeOnSurgeProtectorTrip(s.componentMetadata)
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorTrip, target_component: %s => Invoked InvokeOnSurgeProtectorTrip for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
 	}
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorReset() {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
 		sensor.InvokeOnSurgeProtectorReset(s.componentMetadata)
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorReset, target_component: %s => Invoked InvokeOnSurgeProtectorReset for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
 	}
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorBackupFailure(err error) {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
 		sensor.InvokeOnSurgeProtectorBackupFailure(s.componentMetadata, err)
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorBackupFailure, error: %v, target_component: %s => Invoked InvokeOnSurgeProtectorBackupFailure for sensor", s.GetComponentMetadata(), err, sensor.GetComponentMetadata())
 	}
 }
 
-/* func (s *SurgeProtector[T]) notifySurgeProtectorResisterProcessed() {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
-		sensor.InvokeOnSurgeProtectorResisterProcessed(s.componentMetadata, s.resister.GetComponentMetadata())
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorResisterProcessed, target_component: %s => Invoked InvokeOnSurgeProtectorResisterProcessed for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
-	}
-} */
-
-/* func (s *SurgeProtector[T]) notifySurgeProtectorResisterEmpty() {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
-		sensor.InvokeOnSurgeProtectorResisterEmpty(s.componentMetadata, s.resister.GetComponentMetadata())
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorQueueEmpty, target_component: %s => Invoked InvokeOnSurgeProtectorQueueEmpty for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
-	}
-} */
-
 func (s *SurgeProtector[T]) notifySurgeProtectorBackupSubmission(elem T) {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
 		sensor.InvokeOnSurgeProtectorBackupWireSubmit(s.componentMetadata, elem)
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorReleaseToken, target_component: %s => Invoked InvokeOnSurgeProtectorReleaseToken for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
 	}
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorCreation() {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
 		for _, ms := range sensor.GetMeters() {
 			ms.IncrementCount(types.MetricSurgeCount)
 		}
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorReleaseToken, target_component: %s => Invoked InvokeOnSurgeProtectorReleaseToken for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
 	}
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorReleaseToken() {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
 		sensor.InvokeOnSurgeProtectorReleaseToken(s.componentMetadata)
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorReleaseToken, target_component: %s => Invoked InvokeOnSurgeProtectorReleaseToken for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
 	}
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorConnectResister(r types.Resister[T]) {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
-		sensor.InvokeOnSurgeProtectorConnectResister(s.componentMetadata, r.GetComponentMetadata())
-
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorConnectResister, target_component: %s => Invoked InvokeOnSurgeProtectorConnectResister for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
+	meta := r.GetComponentMetadata()
+	for _, sensor := range s.snapshotSensors() {
+		if sensor == nil {
+			continue
+		}
+		sensor.InvokeOnSurgeProtectorConnectResister(s.componentMetadata, meta)
 	}
 }
 
 func (s *SurgeProtector[T]) notifySurgeProtectorDetachedBackups(bs ...types.Submitter[T]) {
-	for _, sensor := range s.sensors {
-		s.sensorLock.Lock()
-		defer s.sensorLock.Unlock()
+	sensors := s.snapshotSensors()
+	for _, sensor := range sensors {
+		if sensor == nil {
+			continue
+		}
 		for _, b := range bs {
+			if b == nil {
+				continue
+			}
 			sensor.InvokeOnSurgeProtectorDetachedBackups(s.componentMetadata, b.GetComponentMetadata())
 		}
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: notifySurgeProtectorDetachedBackups, target_component: %s => Invoked InvokeOnSurgeProtectorDetachedBackups for sensor", s.GetComponentMetadata(), sensor.GetComponentMetadata())
 	}
+}
+
+func (s *SurgeProtector[T]) submitToComponents(ctx context.Context, elem T) error {
+	s.mu.Lock()
+	components := make([]types.Submitter[T], len(s.managedComponents))
+	copy(components, s.managedComponents)
+	s.mu.Unlock()
+
+	for _, component := range components {
+		if component == nil {
+			continue
+		}
+		if err := component.Submit(ctx, elem); err != nil {
+			return err
+		}
+	}
+	return nil
 }

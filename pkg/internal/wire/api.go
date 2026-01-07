@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,37 +76,68 @@ func (w *Wire[T]) ConnectGenerator(generator ...types.Generator[T]) {
 // Parameters:
 //   - logger: One or more logger instances to be connected.
 func (w *Wire[T]) ConnectLogger(logger ...types.Logger) {
-	w.loggers = append(w.loggers, logger...)
+	// Track non-nil loggers
+	var n int32
 	for _, l := range logger {
-		w.NotifyLoggers(
-			types.DebugLevel,
-			"ConnectLogger",
-			"component", w.componentMetadata,
-			"event", "ConnectLogger",
-			"result", "SUCCESS",
-			"loggerAddress", l,
-		)
+		if l != nil {
+			n++
+		}
+	}
+
+	w.loggersLock.Lock()
+	w.loggers = append(w.loggers, logger...)
+	w.loggersLock.Unlock()
+
+	if n != 0 {
+		atomic.AddInt32(&w.loggerCount, n)
+	}
+
+	// Keep your existing debug logs if you want, but only if loggers exist.
+	// (Otherwise you’re paying interface-boxing cost for nothing.)
+	if atomic.LoadInt32(&w.loggerCount) != 0 {
+		for _, l := range logger {
+			w.NotifyLoggers(
+				types.DebugLevel,
+				"ConnectLogger",
+				"component", w.componentMetadata,
+				"event", "ConnectLogger",
+				"result", "SUCCESS",
+				"loggerAddress", l,
+			)
+		}
 	}
 }
 
-// ConnectSensor attaches one or more sensor components to the wire.
-// Sensors monitor data throughput and various internal metrics of the wire,
-// aiding in real-time performance tracking and diagnostics.
-//
-// Parameters:
-//   - sensor: One or more sensor components to be connected.
 func (w *Wire[T]) ConnectSensor(sensor ...types.Sensor[T]) {
+	// Track non-nil sensors
+	var n int32
+	for _, s := range sensor {
+		if s != nil {
+			n++
+		}
+	}
+
+	w.sensorLock.Lock()
 	w.sensors = append(w.sensors, sensor...)
-	for _, m := range sensor {
-		w.NotifyLoggers(
-			types.DebugLevel,
-			"ConnectSensor",
-			"component", w.componentMetadata,
-			"event", "ConnectSensor",
-			"result", "SUCCESS",
-			"sensorComponentMetadata", m.GetComponentMetadata(),
-			"sensorAddress", m,
-		)
+	w.sensorLock.Unlock()
+
+	if n != 0 {
+		atomic.AddInt32(&w.sensorCount, n)
+	}
+
+	// Optional debug log gating
+	if atomic.LoadInt32(&w.loggerCount) != 0 {
+		for _, m := range sensor {
+			w.NotifyLoggers(
+				types.DebugLevel,
+				"ConnectSensor",
+				"component", w.componentMetadata,
+				"event", "ConnectSensor",
+				"result", "SUCCESS",
+				"sensorComponentMetadata", m.GetComponentMetadata(),
+				"sensorAddress", m,
+			)
+		}
 	}
 }
 
@@ -267,47 +297,15 @@ func (w *Wire[T]) IsStarted() bool {
 	return atomic.LoadInt32(&w.started) == 1
 }
 
-// Load blocks until all processing is complete, then returns a copy of the output buffer.
-// This method is useful for synchronously retrieving the final processed data.
-//
-// Returns:
-//   - *bytes.Buffer: A new buffer containing the processed output data.
-func (w *Wire[T]) Load() *bytes.Buffer {
-	// Wait for the completion signal indicating that all processing is done.
-	<-w.completeSignal
-
-	// Safely terminate the wire's operations.
-	w.Stop()
-
-	// Lock the bufferMutex to ensure safe access to the OutputBuffer.
-	w.bufferMutex.Lock()
-	buf := make([]byte, w.OutputBuffer.Len())
-	copy(buf, w.OutputBuffer.Bytes())
-	w.bufferMutex.Unlock()
-	// Log the buffer copy and return it.
-	w.NotifyLoggers(
-		types.DebugLevel,
-		"Load Called",
-		"component", w.componentMetadata,
-		"event", "Load",
-		"result", "SUCCESS",
-		"buffer", buf,
-	)
-	return bytes.NewBuffer(buf)
-}
-
-// LoadAsJSONArray collects all processed output into a JSON array.
-// It assumes that the output data is JSON-compatible.
-//
-// Returns:
-//   - []byte: The marshaled JSON array representing the output data.
-//   - error: An error value if marshalling fails.
 func (w *Wire[T]) LoadAsJSONArray() ([]byte, error) {
-	w.wg.Wait() // Ensure all data is processed before marshalling.
+	// Ensure processing is finished and OutputChan is closed so the range terminates.
+	_ = w.Stop()
+
 	var items []T
 	for item := range w.GetOutputChannel() {
 		items = append(items, item)
 	}
+
 	w.NotifyLoggers(
 		types.DebugLevel,
 		"LoadAsJSONArray Called",
@@ -316,7 +314,29 @@ func (w *Wire[T]) LoadAsJSONArray() ([]byte, error) {
 		"result", "SUCCESS",
 		"itemsInSlice", items,
 	)
+
 	return json.Marshal(items)
+}
+
+func (w *Wire[T]) Load() *bytes.Buffer {
+	// Ensure processing is finished before reading OutputBuffer.
+	_ = w.Stop()
+
+	w.bufferMutex.Lock()
+	buf := make([]byte, w.OutputBuffer.Len())
+	copy(buf, w.OutputBuffer.Bytes())
+	w.bufferMutex.Unlock()
+
+	w.NotifyLoggers(
+		types.DebugLevel,
+		"Load Called",
+		"component", w.componentMetadata,
+		"event", "Load",
+		"result", "SUCCESS",
+		"buffer", buf,
+	)
+
+	return bytes.NewBuffer(buf)
 }
 
 // SetComponentMetadata updates the wire's metadata, such as name and ID.
@@ -364,23 +384,25 @@ func (w *Wire[T]) SetConcurrencyControl(bufferSize int, maxConcurrency int) {
 	)
 }
 
-// SetSemaphore replaces the concurrency semaphore used by the wire.
-// The semaphore controls the number of concurrent routines allowed during processing.
-//
-// Parameters:
-//   - sem: A pointer to the new semaphore channel.
-func (w *Wire[T]) SetSemaphore(sem *chan struct{}) {
-	oldSemaphore := w.concurrencySem
-	w.concurrencySem = *sem
-	w.NotifyLoggers(
-		types.DebugLevel,
-		"SetSemaphore Called",
-		"component", w.componentMetadata,
-		"event", "SetSemaphore",
-		"result", "SUCCESS",
-		"oldSemaphoreAddress", oldSemaphore,
-		"newSemaphoreAddress", w.concurrencySem,
-	)
+// FastSubmit is an optional fast lane used by Generator when available.
+// It MUST preserve correctness: if any feature that needs Submit() is enabled,
+// it falls back to Submit().
+func (w *Wire[T]) FastSubmit(ctx context.Context, elem T) error {
+	// If any intercepting feature is enabled, fall back.
+	if w.CircuitBreaker != nil || w.surgeProtector != nil || w.insulatorFunc != nil {
+		return w.Submit(ctx, elem)
+	}
+	if atomic.LoadInt32(&w.loggerCount) != 0 || atomic.LoadInt32(&w.sensorCount) != 0 {
+		return w.Submit(ctx, elem) // preserve submit notifications semantics
+	}
+
+	// Direct enqueue: baseline-like.
+	select {
+	case w.inChan <- elem:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SetEncoder assigns a new encoder to the wire.
@@ -516,32 +538,38 @@ func (w *Wire[T]) SetOutputChannel(outChan chan T) {
 //
 // Returns:
 //   - error: An error if startup fails, otherwise nil.
-func (w *Wire[T]) Start(ctx context.Context) error {
-	atomic.StoreInt32(&w.started, 1)
+func (w *Wire[T]) Start(_ context.Context) error {
+	if !atomic.CompareAndSwapInt32(&w.started, 0, 1) {
+		return nil // or return an error
+	}
+
 	w.notifyStart()
 
-	// Account for the error handling goroutine.
+	// error handler
 	w.wg.Add(1)
 	go w.handleErrorElements()
 
+	// resister should be tied to w.ctx and tracked in wg
 	if w.surgeProtector != nil && w.surgeProtector.IsResisterConnected() {
-		go w.processResisterElements(ctx)
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			w.processResisterElements(w.ctx)
+		}()
 	}
 
-	// Start processing elements (transformElements spawns routines as needed).
+	w.fastPathEnabled = w.computeFastPathEnabled()
+	if w.fastPathEnabled {
+		w.fastTransform = w.transformations[0]
+	}
+
+	// workers
 	w.transformElements()
 
-	go func() {
-		w.wg.Wait()
-		w.Stop()
-		w.notifyComplete()
-	}()
-
-	if w.generators != nil {
-		for _, g := range w.generators {
-			if !g.IsStarted() {
-				g.Start(ctx)
-			}
+	// generators should also use w.ctx so Stop actually stops them
+	for _, g := range w.generators {
+		if g != nil && !g.IsStarted() {
+			g.Start(w.ctx)
 		}
 	}
 
@@ -560,23 +588,30 @@ func (w *Wire[T]) Start(ctx context.Context) error {
 // Returns:
 //   - error: An error if the submission fails, or nil on success.
 func (w *Wire[T]) Submit(ctx context.Context, elem T) error {
-	element := types.NewElement[T](elem)
-
+	// Circuit breaker: no Element wrapper required.
 	if w.CircuitBreaker != nil && !w.CircuitBreaker.Allow() {
-		return w.handleCircuitBreakerTrip(ctx, element.Data)
+		return w.handleCircuitBreakerTrip(ctx, elem)
 	}
 
-	if w.surgeProtector != nil && w.surgeProtector.IsTripped() {
-		w.notifySurgeProtectorSubmit(element.Data)
-		return w.surgeProtector.Submit(ctx, element)
+	// Surge protector path: only now do we allocate Element metadata.
+	if w.surgeProtector != nil {
+		// Cheap ID by default. Swap to NewElementHashed(elem) only if you really need dedupe-by-content.
+		element := types.NewElementFast[T](elem)
+
+		if w.surgeProtector.IsTripped() {
+			w.notifySurgeProtectorSubmit(element.Data)
+			return w.surgeProtector.Submit(ctx, element)
+		}
+
+		if w.surgeProtector.IsBeingRateLimited() && !w.surgeProtector.TryTake() {
+			w.notifyRateLimit(elem, time.Now().Add(w.surgeProtector.GetTimeUntilNextRefill()).Format("2006-01-02 15:04:05"))
+			return w.surgeProtector.Submit(ctx, element)
+		}
+		// If rate limiting allows, fall through to normal submit.
 	}
 
-	if w.surgeProtector != nil && !w.surgeProtector.TryTake() {
-		w.notifyRateLimit(elem, time.Now().Add(w.surgeProtector.GetTimeUntilNextRefill()).Format("2006-01-02 15:04:05"))
-		return w.surgeProtector.Submit(ctx, element)
-	}
-
-	return w.submitNormally(ctx, element.Data)
+	// Fast path: no Element, no hashing, no allocations beyond what user code does.
+	return w.submitNormally(ctx, elem)
 }
 
 // Stop gracefully terminates the wire's processing routines and cleans up resources.
@@ -585,24 +620,41 @@ func (w *Wire[T]) Submit(ctx context.Context, elem T) error {
 // Returns:
 //   - error: An error if the shutdown encounters issues, otherwise nil.
 func (w *Wire[T]) Stop() error {
-	// Ensure termination logic is executed only once.
-	if atomic.CompareAndSwapInt32(&w.started, 1, 0) {
-		w.notifyStop()
-		w.terminateOnce.Do(func() {
-			w.cancel()
-			w.wg.Wait()
-
-			w.closeLock.Lock()
-			defer w.closeLock.Unlock()
-
-			w.closeOutputChanOnce.Do(func() { close(w.OutputChan) })
-			w.closeInputChanOnce.Do(func() { close(w.inChan) })
-			w.closeErrorChanOnce.Do(func() { close(w.errorChan) })
-			w.isClosed = true
-
-			w.wg = sync.WaitGroup{}
-		})
+	if !atomic.CompareAndSwapInt32(&w.started, 1, 0) {
+		return nil
 	}
+
+	w.notifyStop()
+
+	w.terminateOnce.Do(func() {
+		// Mark closed BEFORE cancel/close.
+		w.closeLock.Lock()
+		w.isClosed = true
+		w.closeLock.Unlock()
+
+		// Cancel wire context (workers exit).
+		w.cancel()
+
+		// Wait for internal goroutines you accounted for in wg.
+		w.wg.Wait()
+
+		// Now it’s safe to close outward-facing channels.
+		w.closeOutputChanOnce.Do(func() { close(w.OutputChan) })
+		w.closeErrorChanOnce.Do(func() { close(w.errorChan) })
+
+		// Optional: do NOT close inChan; it’s the one that causes send panics from external producers.
+		// If you insist on closing it, you MUST harden Submit/submitNormally to never panic (see #3).
+		// w.closeInputChanOnce.Do(func() { close(w.inChan) })
+
+		// Signal completion exactly once.
+		select {
+		case <-w.completeSignal:
+			// already closed/used (if you implement it as a close; otherwise ignore)
+		default:
+			// if you want “close channel means complete”, add a once/close here
+		}
+	})
+
 	return nil
 }
 
@@ -615,17 +667,33 @@ func (w *Wire[T]) Stop() error {
 // Returns:
 //   - error: An error if the restart process fails, otherwise nil.
 func (w *Wire[T]) Restart(ctx context.Context) error {
-	if atomic.LoadInt32(&w.started) == 1 {
-		if err := w.Stop(); err != nil {
-			return fmt.Errorf("failed to stop wire during restart: %w", err)
-		}
-	}
+	// Stop if running
+	_ = w.Stop()
 
-	w.concurrencySem = make(chan struct{}, w.maxConcurrency)
+	// Rebind context (critical)
+	w.ctx, w.cancel = context.WithCancel(ctx)
+
+	// Reset lifecycle guards so Stop() works again after restart
+	w.terminateOnce = sync.Once{}
+	w.closeOutputChanOnce = sync.Once{}
+	w.closeInputChanOnce = sync.Once{}
+	w.closeErrorChanOnce = sync.Once{}
+
+	// Reset closed flag
+	w.closeLock.Lock()
+	w.isClosed = false
+	w.closeLock.Unlock()
+
+	// Rebuild channels/buffers
 	w.SetInputChannel(make(chan T, w.maxBufferSize))
 	w.SetOutputChannel(make(chan T, w.maxBufferSize))
 	w.SetErrorChannel(make(chan types.ElementError[T], w.maxBufferSize))
 	w.OutputBuffer = &bytes.Buffer{}
 
-	return w.Start(ctx)
+	// Restart CB ticker if you rely on it
+	if w.CircuitBreaker != nil {
+		go w.startCircuitBreakerTicker()
+	}
+
+	return w.Start(w.ctx)
 }

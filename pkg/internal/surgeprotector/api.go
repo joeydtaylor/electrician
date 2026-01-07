@@ -17,6 +17,74 @@ func (s *SurgeProtector[T]) ConnectComponent(c ...types.Submitter[T]) {
 	s.managedComponents = append(s.managedComponents, c...)
 }
 
+func (s *SurgeProtector[T]) IsBeingRateLimited() bool {
+	return atomic.LoadInt32(&s.rateLimited) == 1
+}
+
+func (s *SurgeProtector[T]) GetTimeUntilNextRefill() time.Duration {
+	if !s.IsBeingRateLimited() {
+		return 0
+	}
+	s.tokenLock.Lock()
+	defer s.tokenLock.Unlock()
+
+	if s.nextRefill.IsZero() {
+		return 0
+	}
+	now := time.Now()
+	if !now.Before(s.nextRefill) {
+		return 0
+	}
+	return s.nextRefill.Sub(now)
+}
+
+func (s *SurgeProtector[T]) ReleaseToken() {
+	if !s.IsBeingRateLimited() {
+		return
+	}
+
+	s.tokenLock.Lock()
+	// Cap tokens at capacity.
+	if s.tokens < s.capacity {
+		s.tokens++
+	}
+	s.tokenLock.Unlock()
+
+	s.notifySurgeProtectorReleaseToken()
+}
+
+func (s *SurgeProtector[T]) TryTake() bool {
+	// If rate limiting is not enabled, always allow.
+	if !s.IsBeingRateLimited() {
+		return true
+	}
+
+	s.tokenLock.Lock()
+	defer s.tokenLock.Unlock()
+
+	now := time.Now()
+
+	// Refill when due (also covers zero time initialization).
+	if s.nextRefill.IsZero() || !now.Before(s.nextRefill) {
+		if s.capacity < 0 {
+			s.capacity = 0
+		}
+		s.tokens = s.capacity
+		if s.refillRate > 0 {
+			s.nextRefill = now.Add(s.refillRate)
+		} else {
+			s.nextRefill = now
+		}
+	}
+
+	// Take token only if > 0.
+	if s.tokens <= 0 {
+		return false
+	}
+	s.tokens--
+	return true
+}
+
 // SetBlackoutPeriod configures the surge protector to trip during a specified period and reset afterwards.
 func (s *SurgeProtector[T]) SetBlackoutPeriod(start, end time.Time) {
 	go func() {
@@ -73,22 +141,6 @@ func (s *SurgeProtector[T]) GetRateLimit() (int32, time.Duration, int, int) {
 	return s.capacity, s.refillRate, s.maxRetryAttempts, s.backoffJitter
 }
 
-// GetTimeUntilNextRefill calculates and returns the duration until the next refill.
-func (s *SurgeProtector[T]) GetTimeUntilNextRefill() time.Duration {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	if now.After(s.nextRefill) {
-		return 0
-	}
-	return s.nextRefill.Sub(now)
-}
-
-func (s *SurgeProtector[T]) ReleaseToken() {
-	atomic.AddInt32(&s.tokens, 1) // Increase token count atomically
-	s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, result: SUCCESS, event: ReleaseToken => Released token", s.componentMetadata)
-}
-
 // AttachBackup connects a backup system to the surge protector.
 func (s *SurgeProtector[T]) AttachBackup(backup ...types.Submitter[T]) {
 	s.mu.Lock()
@@ -143,10 +195,6 @@ func (s *SurgeProtector[T]) IsTripped() bool {
 	return atomic.LoadInt32(&s.active) == 1 // Check value atomically
 }
 
-func (s *SurgeProtector[T]) IsBeingRateLimited() bool {
-	return atomic.LoadInt32(&s.active) == 1 // Check value atomically
-}
-
 func (s *SurgeProtector[T]) IsResisterConnected() bool {
 	return atomic.LoadInt32(&s.resisterEnabled) == 1 // Check value atomically
 }
@@ -162,15 +210,26 @@ func (s *SurgeProtector[T]) GetBackupSystems() []types.Submitter[T] {
 }
 
 func (s *SurgeProtector[T]) Submit(ctx context.Context, elem *types.Element[T]) error {
+	if elem == nil {
+		return nil
+	}
 
-	if len(s.backupSystems) > 0 {
-		for _, bs := range s.backupSystems {
+	// Snapshot backups safely
+	s.mu.Lock()
+	backups := make([]types.Submitter[T], len(s.backupSystems))
+	copy(backups, s.backupSystems)
+	s.mu.Unlock()
+
+	// If backups exist, route to backups and return.
+	if len(backups) > 0 {
+		for _, bs := range backups {
+			if bs == nil {
+				continue
+			}
 			if !bs.IsStarted() {
 				bs.Start(s.ctx)
 			}
-			s.NotifyLoggers(types.WarnLevel, "%s => level: WARN, result: PENDING, event: Submit, element: %v, target: %v => Routing to surge protector backup!", s.componentMetadata, elem, bs.GetComponentMetadata())
-			err := bs.Submit(s.ctx, elem.Data)
-			if err != nil {
+			if err := bs.Submit(ctx, elem.Data); err != nil {
 				s.notifySurgeProtectorBackupFailure(err)
 				return err
 			}
@@ -179,76 +238,76 @@ func (s *SurgeProtector[T]) Submit(ctx context.Context, elem *types.Element[T]) 
 		return nil
 	}
 
-	if s.IsResisterConnected() {
-		for s.resister.Len() > 0 && s.TryTake() {
-			nextElem := s.resister.Pop()
-			if nextElem != nil {
-				if err := s.submitToComponents(s.ctx, nextElem.Data); err != nil {
-					nextElem.IncrementRetryCount() // Properly increment retry count
-					nextElem.AdjustPriority()      // Adjust priority based on current logic
-					s.NotifyLoggers(types.ErrorLevel, "component: %s, level: ERROR, result: FAILURE, event: Submit, element: %v, error: %v => Failed to processed queued item, requeuing...", s.componentMetadata, nextElem, err)
-					fmt.Printf("Failed to process queued item: %s, requeuing\n", nextElem.ID)
-					s.resister.Push(nextElem)
-					return err
-				}
-			}
-		}
+	// If no resister is connected, act as a pass-through instead of dropping.
+	if !s.IsResisterConnected() || s.resister == nil {
+		return s.submitToComponents(ctx, elem.Data)
+	}
 
-		if s.TryTake() {
-			return s.submitToComponents(s.ctx, elem.Data)
-		} else {
-			s.NotifyLoggers(types.WarnLevel, "component: %s, level: WARN, result: PENDING, event: Submit, element: %v => Hit rate limit, queueing element", s.componentMetadata, elem) // Adjust initial priority
-			s.Enqueue(elem)
+	// Drain queued work while we have tokens.
+	for s.resister.Len() > 0 && s.TryTake() {
+		nextElem := s.resister.Pop()
+		if nextElem == nil {
+			break
+		}
+		if err := s.submitToComponents(ctx, nextElem.Data); err != nil {
+			nextElem.IncrementRetryCount()
+			nextElem.AdjustPriority()
+			_ = s.resister.Push(nextElem)
+			return err
 		}
 	}
 
+	// Process current element if allowed; otherwise enqueue.
+	if s.TryTake() {
+		return s.submitToComponents(ctx, elem.Data)
+	}
+
+	_ = s.Enqueue(elem)
 	return nil
 }
 
-// ConnectLogger attaches loggers to the SurgeProtector.
+func (s *SurgeProtector[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
+	loggers := s.snapshotLoggers()
+	if len(loggers) == 0 {
+		return
+	}
+
+	msg := fmt.Sprintf(format, args...)
+	for _, logger := range loggers {
+		if logger == nil {
+			continue
+		}
+		if logger.GetLevel() <= level {
+			switch level {
+			case types.DebugLevel:
+				logger.Debug(msg)
+			case types.InfoLevel:
+				logger.Info(msg)
+			case types.WarnLevel:
+				logger.Warn(msg)
+			case types.ErrorLevel:
+				logger.Error(msg)
+			case types.DPanicLevel:
+				logger.DPanic(msg)
+			case types.PanicLevel:
+				logger.Panic(msg)
+			case types.FatalLevel:
+				logger.Fatal(msg)
+			}
+		}
+	}
+}
+
 func (s *SurgeProtector[T]) ConnectLogger(loggers ...types.Logger) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.loggersLock.Lock()
+	defer s.loggersLock.Unlock()
 	s.loggers = append(s.loggers, loggers...)
 }
 
-// ConnectLogger attaches loggers to the SurgeProtector.
 func (s *SurgeProtector[T]) ConnectSensor(sensors ...types.Sensor[T]) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.sensorLock.Lock()
+	defer s.sensorLock.Unlock()
 	s.sensors = append(s.sensors, sensors...)
-}
-
-func (s *SurgeProtector[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
-	if s.loggers != nil {
-		msg := fmt.Sprintf(format, args...)
-		for _, logger := range s.loggers {
-			if logger == nil {
-				continue
-			}
-			// Ensure we only acquire the lock once per logger to avoid deadlock or excessive locking overhead
-			s.loggersLock.Lock()
-			if logger.GetLevel() <= level {
-				switch level {
-				case types.DebugLevel:
-					logger.Debug(msg)
-				case types.InfoLevel:
-					logger.Info(msg)
-				case types.WarnLevel:
-					logger.Warn(msg)
-				case types.ErrorLevel:
-					logger.Error(msg)
-				case types.DPanicLevel:
-					logger.DPanic(msg)
-				case types.PanicLevel:
-					logger.Panic(msg)
-				case types.FatalLevel:
-					logger.Fatal(msg)
-				}
-			}
-			s.loggersLock.Unlock()
-		}
-	}
 }
 
 // GetComponentMetadata returns the metadata.
@@ -264,26 +323,6 @@ func (s *SurgeProtector[T]) GetResisterQueue() int {
 // SetComponentMetadata sets the component metadata.
 func (s *SurgeProtector[T]) SetComponentMetadata(name string, id string) {
 	s.componentMetadata = types.ComponentMetadata{Name: name, ID: id}
-}
-
-func (s *SurgeProtector[T]) TryTake() bool {
-
-	s.tokenLock.Lock()
-	defer s.tokenLock.Unlock()
-	if time.Now().After(s.nextRefill) {
-		s.tokens = s.capacity
-		s.nextRefill = time.Now().Add(s.refillRate)
-		s.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: TryTake, currentTokens: %v => Tokens refilled", s.componentMetadata, s.tokens)
-		s.notifySurgeProtectorReleaseToken()
-	}
-
-	if s.tokens >= 0 {
-		s.tokens--
-		s.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: PENDING, event: TryTake, currentTokens: %v => Token taken, processing allowed...", s.componentMetadata, s.tokens)
-		return true
-	}
-
-	return false
 }
 
 // Enqueue adds an element to the queue.

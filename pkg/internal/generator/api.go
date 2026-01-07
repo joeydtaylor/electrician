@@ -29,85 +29,70 @@ func (g *Generator[T]) ConnectSensor(sensor ...types.Sensor[T]) {
 }
 
 func (g *Generator[T]) Start(ctx context.Context) error {
-	// Ensure that the generator can only be started once
 	if !atomic.CompareAndSwapInt32(&g.started, 0, 1) {
 		return fmt.Errorf("generator already started")
 	}
 	g.notifyStart()
 
-	// Safely initialize context and cancel function
+	// Bind generator context to Start() ctx.
 	g.configLock.Lock()
 	var cancel context.CancelFunc
 	g.ctx, cancel = context.WithCancel(ctx)
 	g.cancel = cancel
+
+	// Snapshot plugs so we don't hold configLock while starting goroutines.
+	plugs := append([]types.Plug[T](nil), g.plugs...)
+	cb := g.CircuitBreaker
 	g.configLock.Unlock()
 
 	g.wg.Add(1)
 	go g.listenToControlChan()
 
-	// Start listening to the control channel
+	// Auto-stop when all plug goroutines exit
 	go func() {
 		g.wg.Wait()
-
-		g.Stop()
+		_ = g.Stop()
 	}()
 
-	// Optionally start the circuit breaker ticker
-	if g.CircuitBreaker != nil {
+	if cb != nil {
 		go g.startCircuitBreakerTicker()
 	}
 
-	// Define a submit function that will be used by all plugs and components
-	submitFunc := func(ctx context.Context, item T) error {
-		if g.CircuitBreaker != nil && !g.CircuitBreaker.Allow() {
-			return fmt.Errorf("operation halted, circuit breaker is open")
-		}
-		g.configLock.Lock()
-		defer g.configLock.Unlock()
-		for _, s := range g.connectedComponents {
-			if err := s.Submit(ctx, item); err != nil {
-				if g.CircuitBreaker != nil {
-					g.CircuitBreaker.RecordError() // Record error to possibly trip the breaker
-				}
-				return err
-			}
-		}
-		return nil
-	}
+	// Build once; used by all plugs/connectors.
+	submitFunc := g.buildSubmitFunc()
 
-	// Start all configured plugs
-	g.configLock.Lock()
-	for _, plug := range g.plugs {
-		// Start adapter functions for each plug
-		pfs := plug.GetAdapterFuncs()
-		for _, pf := range pfs {
+	for _, plug := range plugs {
+		if plug == nil {
+			continue
+		}
+
+		// Adapter funcs
+		for _, pf := range plug.GetAdapterFuncs() {
 			g.wg.Add(1)
 			go func(pf types.AdapterFunc[T]) {
 				defer g.wg.Done()
-				pf(g.ctx, func(ctx context.Context, item T) error {
-					return submitFunc(ctx, item)
-				})
+				pf(g.ctx, submitFunc)
 			}(pf)
 		}
 
-		// Start connectors for each plug
-		pcs := plug.GetConnectors()
-		for _, pc := range pcs {
+		// Connectors
+		for _, pc := range plug.GetConnectors() {
 			g.wg.Add(1)
 			go func(pc types.Adapter[T]) {
 				defer g.wg.Done()
-				if (g.CircuitBreaker != nil && g.CircuitBreaker.Allow()) || g.CircuitBreaker == nil {
-					err := pc.Serve(g.ctx, submitFunc)
-					if err != nil && g.CircuitBreaker != nil {
-						g.CircuitBreaker.RecordError()
-					}
-				} else {
+
+				// Keep your existing “don’t start plugs when CB open” behavior.
+				if cb != nil && !cb.Allow() {
 					g.NotifyLoggers(types.WarnLevel, "%s => level: WARN, result: FAILURE, event: Serve => Skipped starting a plug due to open circuit", g.componentMetadata)
+					return
+				}
+
+				if err := pc.Serve(g.ctx, submitFunc); err != nil && cb != nil {
+					cb.RecordError()
 				}
 			}(pc)
 		}
 	}
-	g.configLock.Unlock()
 
 	return nil
 }

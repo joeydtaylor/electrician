@@ -29,6 +29,7 @@ package conduit
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"sync"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
@@ -53,10 +54,9 @@ type Conduit[T any] struct {
 	terminateOnce      sync.Once               // Ensures Terminate is executed once.
 	CircuitBreaker     types.CircuitBreaker[T] // Circuit Breaker attached to the Conduit.
 	cbLock             sync.Mutex
-	concurrencySem     chan struct{} // Semaphore for controlling concurrency.
-	started            int32         // Indicates whether the conduit has been started.
-	MaxBufferSize      int           // Maximum buffer size for channels.
-	MaxConcurrency     int           // Maximum number of concurrent routines.
+	started            int32 // Indicates whether the conduit has been started.
+	MaxBufferSize      int   // Maximum buffer size for channels.
+	MaxConcurrency     int   // Maximum number of concurrent routines.
 	surgeProtector     types.SurgeProtector[T]
 	configLock         sync.Mutex
 	surgeProtectorLock sync.Mutex
@@ -98,86 +98,88 @@ type Conduit[T any] struct {
 // Returns:
 //   - types.Conduit[T]: An instance of the Conduit component configured according to the provided options.
 func NewConduit[T any](ctx context.Context, options ...types.Option[types.Conduit[T]]) types.Conduit[T] {
-	// Create a child context for the conduit and a cancellation function.
 	childCtx, cancel := context.WithCancel(ctx)
 
-	// Create the conduit instance.
-	conduit := &Conduit[T]{
+	c := &Conduit[T]{
 		componentMetadata: types.ComponentMetadata{
-			ID:   utils.GenerateUniqueHash(), // Generate a unique identifier for the conduit.
+			ID:   utils.GenerateUniqueHash(),
 			Type: "CONDUIT",
 		},
-		wires:          make([]types.Wire[T], 0), // Initialize wires slice.
+		wires:          make([]types.Wire[T], 0),
 		generators:     make([]types.Generator[T], 0),
-		ctx:            childCtx,         // Assign the child context to the conduit.
-		cancel:         cancel,           // Assign the cancellation function to the conduit.
-		completeSignal: sync.WaitGroup{}, // Initialize the complete signal for synchronization.
-		started:        0,                // Initialize started indicator.
-		MaxBufferSize:  1000,             // Set default maximum buffer size.
-		MaxConcurrency: 100,              // Set default maximum concurrency.
+		ctx:            childCtx,
+		cancel:         cancel,
+		completeSignal: sync.WaitGroup{},
+		started:        0,
+		MaxBufferSize:  1024,
+		MaxConcurrency: runtime.GOMAXPROCS(0),
 	}
 
-	// Apply provided options to the conduit.
 	for _, option := range options {
-		option(conduit)
+		option(c)
 	}
 
-	var outputChan chan T // Declare output channel variable.
-	if len(conduit.wires) > 0 {
-		// Calculate buffer size and concurrency per wire.
-		wireCount := len(conduit.wires)
-		conduit.concurrencySem = make(chan struct{}, conduit.MaxConcurrency)
-		// Initialize the input channel.
+	// Ensure non-nil channels to avoid nil-channel goroutine stalls.
+	if c.MaxBufferSize <= 0 {
+		c.MaxBufferSize = 1000
+	}
+	if c.MaxConcurrency <= 0 {
+		c.MaxConcurrency = 1
+	}
+	if c.InputChan == nil {
+		c.InputChan = make(chan T, c.MaxBufferSize)
+	}
+	if c.OutputChan == nil {
+		c.OutputChan = make(chan T, c.MaxBufferSize)
+	}
 
-		for i, wire := range conduit.wires {
-			// Initialize the concurrency semaphore.
+	// Configure and chain wires.
+	if len(c.wires) > 0 {
+		for i, w := range c.wires {
+			if w == nil {
+				continue
+			}
 
-			// Attach loggers, sensors, and circuit breakers.
-			if conduit.loggers != nil {
-				for _, l := range conduit.loggers {
-					wire.ConnectLogger(l)
+			// Attach loggers/sensors/cb/surge/generators as your current behavior intends.
+			if c.loggers != nil {
+				for _, l := range c.loggers {
+					if l != nil {
+						w.ConnectLogger(l)
+					}
 				}
 			}
-			if conduit.sensors != nil {
-				for _, m := range conduit.sensors {
-					wire.ConnectSensor(m)
+			if c.sensors != nil {
+				for _, s := range c.sensors {
+					if s != nil {
+						w.ConnectSensor(s)
+					}
 				}
 			}
-			if conduit.CircuitBreaker != nil {
-				wire.ConnectCircuitBreaker(conduit.CircuitBreaker)
+			if c.CircuitBreaker != nil {
+				w.ConnectCircuitBreaker(c.CircuitBreaker)
 			}
-			if len(conduit.generators) != 0 {
-				wire.ConnectGenerator(conduit.generators...)
+			if len(c.generators) != 0 {
+				w.ConnectGenerator(c.generators...)
 			}
-			if conduit.surgeProtector != nil {
-				wire.ConnectSurgeProtector(conduit.surgeProtector)
-			}
-
-			// Set concurrency control for each wire.
-			wire.SetConcurrencyControl(conduit.MaxBufferSize, conduit.MaxConcurrency)
-			wire.SetSemaphore(&conduit.concurrencySem)
-
-			if i == 0 {
-				// Create input channel for the first wire.
-				conduit.InputChan = make(chan T, conduit.MaxBufferSize)
+			if c.surgeProtector != nil {
+				w.ConnectSurgeProtector(c.surgeProtector)
 			}
 
-			if i > 0 {
-				// Connect output of previous wire to input of current wire.
-				prevOutputChan := conduit.wires[i-1].GetOutputChannel()
-				conduit.wires[i].SetInputChannel(prevOutputChan)
-			}
+			// Concurrency control: buffer size + max routines.
+			w.SetConcurrencyControl(c.MaxBufferSize, c.MaxConcurrency)
 
-			if i == wireCount-1 {
-				// Create output channel for the last wire.
-				outputChan = make(chan T, conduit.MaxBufferSize)
-				wire.SetOutputChannel(outputChan)
-				conduit.OutputChan = outputChan
+			// Chain: previous wire output feeds next wire input.
+			if i > 0 && c.wires[i-1] != nil {
+				w.SetInputChannel(c.wires[i-1].GetOutputChannel())
 			}
+		}
 
-			conduit.SetInputChannel(make(chan T, conduit.MaxBufferSize))
+		// Force the last wire to emit to the conduit OutputChan.
+		last := c.wires[len(c.wires)-1]
+		if last != nil {
+			last.SetOutputChannel(c.OutputChan)
 		}
 	}
 
-	return conduit // Return the created conduit instance.
+	return c
 }

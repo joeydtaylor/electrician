@@ -8,6 +8,47 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
+// Optional fast lane. Wire can implement FastSubmit without changing any existing interfaces.
+type fastSubmitter[T any] interface {
+	FastSubmit(context.Context, T) error
+}
+
+// buildSubmitFunc snapshots connected components once and returns a submit func that does not lock per item.
+func (g *Generator[T]) buildSubmitFunc() func(context.Context, T) error {
+	g.configLock.Lock()
+	components := append([]types.Submitter[T](nil), g.connectedComponents...)
+	cb := g.CircuitBreaker
+	g.configLock.Unlock()
+
+	// Cache method values (one-time). No per-item type assertions.
+	submitFns := make([]func(context.Context, T) error, 0, len(components))
+	for _, c := range components {
+		if c == nil {
+			continue
+		}
+		if fs, ok := c.(fastSubmitter[T]); ok {
+			submitFns = append(submitFns, fs.FastSubmit)
+		} else {
+			submitFns = append(submitFns, c.Submit)
+		}
+	}
+
+	return func(ctx context.Context, item T) error {
+		if cb != nil && !cb.Allow() {
+			return fmt.Errorf("operation halted, circuit breaker is open")
+		}
+		for _, submit := range submitFns {
+			if err := submit(ctx, item); err != nil {
+				if cb != nil {
+					cb.RecordError()
+				}
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 func (g *Generator[T]) startCircuitBreakerTicker() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -74,40 +115,30 @@ func (g *Generator[T]) notifyStart() {
 }
 
 func (g *Generator[T]) restartOperations() {
-	// Assuming that you need to call Start or an equivalent method on each plug
+	// Snapshot plugs and cb
+	g.configLock.Lock()
+	plugs := append([]types.Plug[T](nil), g.plugs...)
+	cb := g.CircuitBreaker
+	g.configLock.Unlock()
 
-	submitFunc := func(ctx context.Context, item T) error {
-		if g.CircuitBreaker != nil && !g.CircuitBreaker.Allow() {
-			return fmt.Errorf("operation halted, circuit breaker is open")
-		}
-		g.configLock.Lock()
-		defer g.configLock.Unlock()
-		for _, s := range g.connectedComponents {
-			if err := s.Submit(ctx, item); err != nil {
-				if g.CircuitBreaker != nil {
-					g.CircuitBreaker.RecordError() // Record error to possibly trip the breaker
-				}
-				return err
-			}
-		}
-		return nil
-	}
+	submitFunc := g.buildSubmitFunc()
 
-	for _, plug := range g.plugs {
-		pcs := plug.GetConnectors()
-		for _, pc := range pcs {
+	for _, plug := range plugs {
+		if plug == nil {
+			continue
+		}
+		for _, pc := range plug.GetConnectors() {
 			g.wg.Add(1)
 			go func(pc types.Adapter[T]) {
 				defer g.wg.Done()
-				if (g.CircuitBreaker != nil && g.CircuitBreaker.Allow()) || g.CircuitBreaker == nil {
-					err := pc.Serve(g.ctx, submitFunc)
-					if err != nil {
-						if g.CircuitBreaker != nil {
-							g.CircuitBreaker.RecordError()
-						}
-					}
-				} else {
+
+				if cb != nil && !cb.Allow() {
 					g.NotifyLoggers(types.WarnLevel, "%s => level: WARN, result: FAILURE, event: Serve => Skipped starting a plug due to open circuit", g.componentMetadata)
+					return
+				}
+
+				if err := pc.Serve(g.ctx, submitFunc); err != nil && cb != nil {
+					cb.RecordError()
 				}
 			}(pc)
 		}

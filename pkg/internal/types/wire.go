@@ -55,8 +55,6 @@ type Wire[T any] interface {
 	// needs to be accessed in a non-structured form.
 	Load() *bytes.Buffer
 
-	SetSemaphore(sem *chan struct{})
-
 	// LoadAsJSONArray retrieves the contents of the output buffer and returns it as a JSON array,
 	// useful for exporting the data in a structured format.
 	LoadAsJSONArray() ([]byte, error)

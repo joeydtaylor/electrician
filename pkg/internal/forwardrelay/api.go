@@ -29,9 +29,6 @@ import (
 
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
-	"github.com/joeydtaylor/electrician/pkg/internal/utils"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -267,78 +264,41 @@ func (fr *ForwardRelay[T]) Start(ctx context.Context) error {
 //
 // The function returns an error if it encounters issues during wrapping or data transmission.
 func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
-	// Build outgoing context with auth headers, static/dynamic headers, and trace-id
-	outCtx, err := fr.buildPerRPCContext(ctx)
+	// Wrap the payload (gob -> compress -> encrypt) as before
+	wp, err := WrapPayload(item, fr.PerformanceOptions, fr.SecurityOptions, fr.EncryptionKey)
 	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel,
-			"component: %v, level: ERROR, event: Submit => metadata build failed: %v",
-			fr.componentMetadata, err)
-		return fmt.Errorf("metadata build failed: %w", err)
-	}
-
-	// For logging only, extract trace-id (buildPerRPCContext guarantees one is present)
-	var traceID string
-	if md, ok := metadata.FromOutgoingContext(outCtx); ok && len(md["trace-id"]) > 0 {
-		traceID = md["trace-id"][0]
-	} else {
-		traceID = utils.GenerateUniqueHash()
-	}
-
-	fr.NotifyLoggers(types.DebugLevel,
-		"component: %v, level: DEBUG, event: Submit => wrapping payload, trace_id: %v, element: %v",
-		fr.componentMetadata, traceID, item)
-
-	wrappedPayload, err := WrapPayload(item, fr.PerformanceOptions, fr.SecurityOptions, fr.EncryptionKey)
-	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel,
-			"component: %v, level: ERROR, event: Submit => wrap failed: %v, trace_id: %v, element: %v",
-			fr.componentMetadata, err, traceID, item)
 		return fmt.Errorf("failed to wrap payload: %w", err)
 	}
 
-	// Dial options (enforce TLS if OAuth2 is enabled)
-	creds, useInsecure, err := fr.makeDialOptions()
-	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel,
-			"component: %v, level: ERROR, event: Submit => dial options failed: %v, trace_id: %v",
-			fr.componentMetadata, err, traceID)
-		return fmt.Errorf("dial options: %w", err)
-	}
-	var dialOpts []grpc.DialOption
-	if !useInsecure {
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds[0]))
-	} else {
-		dialOpts = append(dialOpts, grpc.WithInsecure())
+	// Assign sequence for correlation
+	wp.Seq = atomic.AddUint64(&fr.seq, 1)
+
+	// If stream defaults are set (StreamOpen.defaults), omit per-message metadata to reduce overhead
+	wp.Metadata = nil
+
+	env := &relay.RelayEnvelope{
+		Msg: &relay.RelayEnvelope_Payload{Payload: wp},
 	}
 
-	// Send to each target
+	// Send to each target stream (enqueue, don’t dial per item)
 	for _, address := range fr.Targets {
-		conn, err := grpc.DialContext(outCtx, address, dialOpts...)
+		sess, err := fr.getOrCreateStreamSession(ctx, address)
 		if err != nil {
 			fr.NotifyLoggers(types.ErrorLevel,
-				"component: %v, level: ERROR, event: Submit => dial failed: %v, addr: %s, trace_id: %v",
-				fr.componentMetadata, err, address, traceID)
+				"component: %v, level: ERROR, event: Submit => stream setup failed addr=%s err=%v",
+				fr.componentMetadata, address, err,
+			)
 			continue
 		}
 
-		client := relay.NewRelayServiceClient(conn)
-		fr.NotifyLoggers(types.DebugLevel,
-			"component: %v, level: DEBUG, event: Submit => sending, addr: %s, trace_id: %v",
-			fr.componentMetadata, address, traceID)
-
-		ack, err := client.Receive(outCtx, wrappedPayload)
-		_ = conn.Close()
-
-		if err != nil {
-			fr.NotifyLoggers(types.ErrorLevel,
-				"component: %v, level: ERROR, event: Submit => send failed: %v, addr: %s, trace_id: %v",
-				fr.componentMetadata, err, address, traceID)
-			continue
+		select {
+		case sess.sendCh <- env:
+			// enqueued
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-fr.ctx.Done():
+			return fr.ctx.Err()
 		}
-
-		fr.NotifyLoggers(types.InfoLevel,
-			"component: %v, level: INFO, event: Submit => success, addr: %s, ack: %v, trace_id: %v",
-			fr.componentMetadata, address, ack, traceID)
 	}
 
 	return nil
@@ -387,9 +347,18 @@ func (fr *ForwardRelay[T]) NotifyLoggers(level types.LogLevel, format string, ar
 //
 // It atomically updates the `isRunning` state to ensure that the relay's status is accurately reflected across all threads.
 func (fr *ForwardRelay[T]) Stop() {
-	fr.NotifyLoggers(types.InfoLevel, "component: %s, level: INFO, result: SUCCESS, event: Terminate => Stopping Forward Relay", fr.componentMetadata)
+	fr.NotifyLoggers(types.InfoLevel,
+		"component: %s, level: INFO, result: SUCCESS, event: Stop => Stopping Forward Relay",
+		fr.componentMetadata,
+	)
+
+	// Stop producers first so nothing keeps submitting.
 	fr.cancel()
-	atomic.StoreInt32(&fr.isRunning, 0) // Ensure state is updated correctly
+
+	// Close streams (CloseSend + conn close) and wait.
+	fr.closeAllStreams("relay stop")
+
+	atomic.StoreInt32(&fr.isRunning, 0)
 }
 
 // WrapPayload serializes the given data of generic type T into a WrappedPayload structure,
