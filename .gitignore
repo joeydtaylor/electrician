@@ -1,1 +1,4 @@
 logs/
+*.pprof
+example/benchmark_example/compare/compare
+example/benchmark_example/processing/bench

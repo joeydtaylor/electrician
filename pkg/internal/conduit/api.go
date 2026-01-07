@@ -201,13 +201,12 @@ func (c *Conduit[T]) IsStarted() bool {
 // Returns:
 //   - *bytes.Buffer: A copy of the output buffer containing the processed data.
 func (c *Conduit[T]) Load() *bytes.Buffer {
-	c.completeSignal.Wait() // Wait for all processing to complete.
-	c.Stop()
-	if len(c.wires) > 0 {
-		lastWire := c.wires[len(c.wires)-1]
-		return lastWire.GetOutputBuffer() // Assuming Output returns a *bytes.Buffer
+	_ = c.Stop()
+
+	if len(c.wires) > 0 && c.wires[len(c.wires)-1] != nil {
+		return c.wires[len(c.wires)-1].GetOutputBuffer()
 	}
-	return new(bytes.Buffer) // Return empty buffer if no wires are present.
+	return new(bytes.Buffer)
 }
 
 // LoadAsJSONArray collects output into a JSON array. Assumes final output is JSON-compatible.
@@ -217,10 +216,13 @@ func (c *Conduit[T]) Load() *bytes.Buffer {
 //   - []byte: The JSON array containing the output data.
 //   - error: An error, if any occurred during the marshalling process.
 func (c *Conduit[T]) LoadAsJSONArray() ([]byte, error) {
-	c.completeSignal.Wait() // Ensure all data is processed before marshalling.
+	_ = c.Stop()
+
 	var items []T
-	for item := range c.OutputChan {
-		items = append(items, item)
+	if c.OutputChan != nil {
+		for item := range c.OutputChan {
+			items = append(items, item)
+		}
 	}
 	return json.Marshal(items)
 }
@@ -301,40 +303,64 @@ func (c *Conduit[T]) SetInputChannel(inputChan chan T) {
 // Start starts the Conduit component.
 // This function starts the Conduit component, initializing its configuration and its managed wires,
 // starting processing routines, and managing generators.
-func (c *Conduit[T]) Start(ctx context.Context) error {
-	atomic.StoreInt32(&c.started, 1) // Thread-safe way to set started to true
-
-	// Start each wire concurrently without the conduit-level semaphore.
-	for _, wire := range c.wires {
-		c.completeSignal.Add(1)
-		go func(wire types.Wire[T]) {
-			wire.Start(ctx)
-			c.completeSignal.Done()
-		}(wire)
+func (c *Conduit[T]) Start(_ context.Context) error {
+	if !atomic.CompareAndSwapInt32(&c.started, 0, 1) {
+		return nil
 	}
 
-	// Setup generators if they exist.
+	// Start wires (use conduit context so Stop() reliably cancels everything).
+	for _, w := range c.wires {
+		if w == nil {
+			continue
+		}
+		_ = w.Start(c.ctx)
+	}
+
+	// Start conduit-level generators (if any).
 	if c.generators != nil {
 		for _, g := range c.generators {
-			c.NotifyLoggers(types.InfoLevel, "component: %s, level: INFO, result: SUCCESS, event: CONDUIT_GENERATORS_STARTED, target: %v => SetInputChannel called", c.componentMetadata, g)
-			g.Start(ctx)
+			if g == nil {
+				continue
+			}
+			g.Start(c.ctx)
 		}
 	}
 
-	// Setup forwarding from the input channel to the first wire if there are wires.
-	if len(c.wires) > 0 {
+	// Forward from conduit InputChan to first wire ONLY if InputChan exists.
+	// (Most usage goes through Submit; this is kept for compatibility.)
+	if c.InputChan != nil && len(c.wires) > 0 && c.wires[0] != nil {
+		c.completeSignal.Add(1)
 		go func() {
-			for elem := range c.InputChan {
-				c.wires[0].Submit(c.ctx, elem)
+			defer c.completeSignal.Done()
+			for {
+				select {
+				case <-c.ctx.Done():
+					return
+				case elem, ok := <-c.InputChan:
+					if !ok {
+						return
+					}
+					_ = c.wires[0].Submit(c.ctx, elem)
+				}
 			}
 		}()
 	}
 
-	// Forward elements from the output channel to the next conduit if applicable.
+	// Forward conduit output into next conduit if chained.
 	if c.NextConduit != nil && c.OutputChan != nil {
+		c.completeSignal.Add(1)
 		go func() {
-			for elem := range c.OutputChan {
-				c.NextConduit.Submit(c.ctx, elem)
+			defer c.completeSignal.Done()
+			for {
+				select {
+				case <-c.ctx.Done():
+					return
+				case elem, ok := <-c.OutputChan:
+					if !ok {
+						return
+					}
+					_ = c.NextConduit.Submit(c.ctx, elem)
+				}
 			}
 		}()
 	}
@@ -380,20 +406,25 @@ func (c *Conduit[T]) Submit(ctx context.Context, elem T) error {
 // Terminate stops the Conduit component.
 // This function stops the Conduit component, and cleanly shuts down its managed wires
 func (c *Conduit[T]) Stop() error {
-	if atomic.CompareAndSwapInt32(&c.started, 1, 0) {
-		c.terminateOnce.Do(func() {
-			// Terminate each wire.
-			for _, wire := range c.wires {
-				wire.Stop()
-			}
-			// Cancel the context to stop all ongoing operations.
-			c.cancel()
-			// Wait for all wires to finish processing.
-			c.completeSignal.Wait()
-			// Additional cleanup logic can be implemented here if needed.
-			c.NotifyLoggers(types.DebugLevel, "component: %s, level: INFO, result: SUCCESS, event: CONDUIT_LIFECYCLE_TERMINATE => Conduit completed!", c.componentMetadata)
-		})
+	if !atomic.CompareAndSwapInt32(&c.started, 1, 0) {
+		return nil
 	}
+
+	c.terminateOnce.Do(func() {
+		// Cancel first so forwarders exit.
+		c.cancel()
+
+		// Stop wires (this should close last wire output => closes c.OutputChan if last wire was wired to it).
+		for _, w := range c.wires {
+			if w == nil {
+				continue
+			}
+			_ = w.Stop()
+		}
+
+		// Wait for internal forwarders (InputChan->wire, OutputChan->NextConduit).
+		c.completeSignal.Wait()
+	})
 
 	return nil
 }

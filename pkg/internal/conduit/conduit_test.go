@@ -137,7 +137,7 @@ func TestFeedbackProcessing(t *testing.T) {
 	conduit := builder.NewConduit[Feedback](
 		ctx,
 		builder.ConduitWithWire[Feedback](wire),
-		builder.ConduitWithConcurrencyControl[Feedback](10000, 1000),
+		builder.ConduitWithConcurrencyControl[Feedback](100000, 100000),
 	)
 
 	conduit.Start(ctx)
@@ -162,10 +162,8 @@ func TestConduitConnectPlug(t *testing.T) {
 
 	plug := builder.NewPlug[DummyType](
 		ctx,
-		builder.PlugWithAdapterFunc[DummyType](func(ctx context.Context, submitFunc func(ctx context.Context, elem DummyType) error) {
-			if err := submitFunc(ctx, DummyType{"Test"}); err != nil {
-				fmt.Printf("Error submitting data: %v\n", err)
-			}
+		builder.PlugWithAdapterFunc[DummyType](func(ctx context.Context, submitFunc func(context.Context, DummyType) error) {
+			_ = submitFunc(ctx, DummyType{Value: "Test"})
 		}),
 	)
 
@@ -178,25 +176,30 @@ func TestConduitConnectPlug(t *testing.T) {
 	)
 
 	con := conduit.NewConduit(ctx, conduit.WithWire[DummyType](w))
-
 	con.Start(ctx)
 
-	<-ctx.Done()
+	// Wait for exactly one output OR timeout.
+	select {
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for output: %v", ctx.Err())
+	case <-time.After(50 * time.Millisecond):
+		// give generator a tick; optional
+	}
+
+	// Critical: stop so output channel closes, then load.
+	con.Stop()
 
 	output, err := con.LoadAsJSONArray()
 	if err != nil {
-		t.Fatalf("Failed to compile output into JSON array: %v", err)
+		t.Fatalf("LoadAsJSONArray failed: %v", err)
 	}
 
 	var transformed []DummyType
-	err = json.Unmarshal(output, &transformed)
-	if err != nil {
-		t.Fatalf("Error unmarshalling JSON: %v", err)
+	if err := json.Unmarshal(output, &transformed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
 	}
-
-	// Correct the condition to match the expected output
 	if len(transformed) != 1 || transformed[0].Value != "Transformed: Test" {
-		t.Errorf("Expected '[{\"value\":\"Transformed: Test\"}]', got: '%v'", string(output))
+		t.Fatalf("unexpected output: %s", string(output))
 	}
 }
 
@@ -216,16 +219,21 @@ func classifier(feedback Feedback) (Feedback, error) {
 	if feedback.IsNegative {
 		return feedback, nil
 	}
-	keywords := map[string]string{"delivery": "Delivery", "product": "Product Quality", "support": "Customer Support"}
-	for keyword, category := range keywords {
-		if strings.Contains(strings.ToLower(feedback.Content), keyword) {
-			feedback.Category = category
-			break
-		}
-	}
-	if feedback.Category == "" {
+
+	s := strings.ToLower(feedback.Content)
+
+	// Deterministic precedence: Delivery > Customer Support > Product Quality > General
+	switch {
+	case strings.Contains(s, "delivery"):
+		feedback.Category = "Delivery"
+	case strings.Contains(s, "support"):
+		feedback.Category = "Customer Support"
+	case strings.Contains(s, "product"):
+		feedback.Category = "Product Quality"
+	default:
 		feedback.Category = "General"
 	}
+
 	return feedback, nil
 }
 

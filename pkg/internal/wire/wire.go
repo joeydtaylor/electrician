@@ -22,6 +22,7 @@ package wire
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"sync"
 	"time"
 
@@ -59,7 +60,6 @@ type Wire[T any] struct {
 	controlChan          chan bool                                               // Channel for controlling circuit breaker state.
 	maxBufferSize        int                                                     // Maximum capacity for input and output channel buffers.
 	maxConcurrency       int                                                     // Maximum number of concurrent processing operations.
-	concurrencySem       chan struct{}                                           // Semaphore to limit concurrent operations.
 	started              int32                                                   // Atomic flag indicating whether the wire has been started.
 	insulatorFunc        func(ctx context.Context, elem T, err error) (T, error) // Function for error recovery (insulation).
 	retryThreshold       int                                                     // Maximum number of insulator retry attempts.
@@ -68,6 +68,10 @@ type Wire[T any] struct {
 	queueRetryMaxAttempt int                                                     // Maximum retry attempts for queue operations.
 	isClosed             bool                                                    // Indicates if the wire's channels have been closed.
 	closeLock            sync.Mutex                                              // Protects access to the isClosed flag.
+	loggerCount          int32
+	sensorCount          int32
+	fastPathEnabled      bool
+	fastTransform        types.Transformer[T]
 }
 
 // NewWire creates a new Wire instance configured with the provided options.
@@ -94,8 +98,8 @@ func NewWire[T any](ctx context.Context, options ...types.Option[types.Wire[T]])
 		sensors:         []types.Sensor[T]{},      // Initialize an empty list of sensors.
 		OutputBuffer:    &bytes.Buffer{},          // Initialize the output buffer.
 		controlChan:     make(chan bool, 1),       // Buffered channel for circuit breaker control.
-		maxBufferSize:   1000,                     // Default maximum buffer size.
-		maxConcurrency:  10000,                    // Default maximum concurrency.
+		maxBufferSize:   1024,                     // Default maximum buffer size.
+		maxConcurrency:  runtime.GOMAXPROCS(0),    // Default maximum concurrency.
 	}
 
 	// Apply any provided configuration options.
@@ -104,7 +108,6 @@ func NewWire[T any](ctx context.Context, options ...types.Option[types.Wire[T]])
 	}
 
 	// Initialize the concurrency semaphore and channels.
-	w.concurrencySem = make(chan struct{}, w.maxConcurrency)
 	w.SetInputChannel(make(chan T, w.maxBufferSize))
 	w.SetOutputChannel(make(chan T, w.maxBufferSize))
 	w.SetErrorChannel(make(chan types.ElementError[T], w.maxBufferSize))

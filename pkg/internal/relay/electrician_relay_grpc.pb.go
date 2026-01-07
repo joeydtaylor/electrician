@@ -27,8 +27,10 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RelayServiceClient interface {
+	// Unary stays the same (simple request/ack).
 	Receive(ctx context.Context, in *WrappedPayload, opts ...grpc.CallOption) (*StreamAcknowledgment, error)
-	StreamReceive(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[WrappedPayload, StreamAcknowledgment], error)
+	// Streaming now uses the envelope to avoid per-message repeated metadata and allow ack batching.
+	StreamReceive(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RelayEnvelope, StreamAcknowledgment], error)
 }
 
 type relayServiceClient struct {
@@ -49,25 +51,27 @@ func (c *relayServiceClient) Receive(ctx context.Context, in *WrappedPayload, op
 	return out, nil
 }
 
-func (c *relayServiceClient) StreamReceive(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[WrappedPayload, StreamAcknowledgment], error) {
+func (c *relayServiceClient) StreamReceive(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RelayEnvelope, StreamAcknowledgment], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &RelayService_ServiceDesc.Streams[0], RelayService_StreamReceive_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[WrappedPayload, StreamAcknowledgment]{ClientStream: stream}
+	x := &grpc.GenericClientStream[RelayEnvelope, StreamAcknowledgment]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type RelayService_StreamReceiveClient = grpc.BidiStreamingClient[WrappedPayload, StreamAcknowledgment]
+type RelayService_StreamReceiveClient = grpc.BidiStreamingClient[RelayEnvelope, StreamAcknowledgment]
 
 // RelayServiceServer is the server API for RelayService service.
 // All implementations must embed UnimplementedRelayServiceServer
 // for forward compatibility.
 type RelayServiceServer interface {
+	// Unary stays the same (simple request/ack).
 	Receive(context.Context, *WrappedPayload) (*StreamAcknowledgment, error)
-	StreamReceive(grpc.BidiStreamingServer[WrappedPayload, StreamAcknowledgment]) error
+	// Streaming now uses the envelope to avoid per-message repeated metadata and allow ack batching.
+	StreamReceive(grpc.BidiStreamingServer[RelayEnvelope, StreamAcknowledgment]) error
 	mustEmbedUnimplementedRelayServiceServer()
 }
 
@@ -81,7 +85,7 @@ type UnimplementedRelayServiceServer struct{}
 func (UnimplementedRelayServiceServer) Receive(context.Context, *WrappedPayload) (*StreamAcknowledgment, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Receive not implemented")
 }
-func (UnimplementedRelayServiceServer) StreamReceive(grpc.BidiStreamingServer[WrappedPayload, StreamAcknowledgment]) error {
+func (UnimplementedRelayServiceServer) StreamReceive(grpc.BidiStreamingServer[RelayEnvelope, StreamAcknowledgment]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamReceive not implemented")
 }
 func (UnimplementedRelayServiceServer) mustEmbedUnimplementedRelayServiceServer() {}
@@ -124,11 +128,11 @@ func _RelayService_Receive_Handler(srv interface{}, ctx context.Context, dec fun
 }
 
 func _RelayService_StreamReceive_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RelayServiceServer).StreamReceive(&grpc.GenericServerStream[WrappedPayload, StreamAcknowledgment]{ServerStream: stream})
+	return srv.(RelayServiceServer).StreamReceive(&grpc.GenericServerStream[RelayEnvelope, StreamAcknowledgment]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type RelayService_StreamReceiveServer = grpc.BidiStreamingServer[WrappedPayload, StreamAcknowledgment]
+type RelayService_StreamReceiveServer = grpc.BidiStreamingServer[RelayEnvelope, StreamAcknowledgment]
 
 // RelayService_ServiceDesc is the grpc.ServiceDesc for RelayService service.
 // It's only intended for direct use with grpc.RegisterService,

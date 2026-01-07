@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -28,8 +27,8 @@ type Feedback struct {
 }
 
 const (
-	itemsToProcess = 10_000_000
-	hashRounds     = 2_000
+	itemsToProcess = 10000000
+	hashRounds     = 2000
 	errorEveryNth  = 5
 )
 
@@ -87,8 +86,7 @@ func main() {
 			),
 		),
 		builder.WireWithSensor(builder.NewSensor(builder.SensorWithMeter[Feedback](meter))),
-		// cpu×4 workers, queue = itemsToProcess
-		builder.WireWithConcurrencyControl[Feedback](runtime.NumCPU()*4, itemsToProcess),
+		builder.WireWithConcurrencyControl[Feedback](10000000, 10000),
 	)
 
 	start := time.Now()

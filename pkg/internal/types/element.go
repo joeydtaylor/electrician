@@ -1,11 +1,40 @@
 package types
 
 import (
+	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
+
+var elementSeq uint64
+
+// NewElementFast creates a queue element with a cheap unique ID.
+// Use this for resister/surge queueing unless you truly need content-hash IDs.
+func NewElementFast[T any](data T) *Element[T] {
+	id := atomic.AddUint64(&elementSeq, 1)
+
+	return &Element[T]{
+		ID:            strconv.FormatUint(id, 36),
+		Data:          data,
+		QueuePriority: 0,
+		CreationTime:  time.Now(),
+		RetryCount:    0,
+	}
+}
+
+// Optional: keep the old behavior under an explicit name (clarifies intent).
+func NewElementHashed[T any](data T) *Element[T] {
+	hash := utils.GenerateSha256Hash[T](data)
+	return &Element[T]{
+		ID:            hash,
+		Data:          data,
+		QueuePriority: 0,
+		CreationTime:  time.Now(),
+		RetryCount:    0,
+	}
+}
 
 // ElementError encapsulates an error associated with a specific element of type T, allowing for detailed
 // error handling and tracking in processing workflows.
@@ -37,7 +66,10 @@ func NewElement[T any](data T) *Element[T] {
 }
 
 func (e *Element[T]) IsSame(other *Element[T]) bool {
-	return e.Hash == other.Hash
+	if other == nil {
+		return false
+	}
+	return e.ID == other.ID
 }
 
 // IncrementRetryCount safely increments the retry count of the element.

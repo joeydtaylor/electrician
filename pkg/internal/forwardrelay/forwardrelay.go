@@ -68,6 +68,12 @@ type ForwardRelay[T any] struct {
 	tlsCredentialsUpdate sync.Mutex   // Mutex for TLS credentials update.
 	configFrozen         int32        // Indicates whether the relay's configuration has been frozen.
 	authRequired         bool
+	// streaming state
+	streamsMu     sync.Mutex
+	streams       map[string]*streamSession
+	seq           uint64
+	streamSendBuf int // e.g. 8192; if 0, default used
+
 }
 
 // NewForwardRelay creates a new forward relay instance with the specified context and options.

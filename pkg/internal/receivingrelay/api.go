@@ -42,7 +42,9 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // ConnectLogger attaches one or more loggers to the ReceivingRelay. This method is useful for enabling
@@ -202,47 +204,52 @@ func (rr *ReceivingRelay[T]) NotifyLoggers(level types.LogLevel, format string, 
 // Receive processes incoming data payloads within a context, providing acknowledgments upon successful
 // processing and facilitating error handling.
 func (rr *ReceivingRelay[T]) Receive(ctx context.Context, payload *relay.WrappedPayload) (*relay.StreamAcknowledgment, error) {
-	// Extract or generate a trace ID
-	md, ok := metadata.FromIncomingContext(ctx)
+	// Trace ID (prefer payload metadata, else gRPC metadata, else new)
 	var traceID string
-	if !ok || len(md["trace-id"]) == 0 {
-		traceID = utils.GenerateUniqueHash() // Generate a new trace ID if none was provided
-	} else {
+	if payload.GetMetadata() != nil && payload.GetMetadata().GetTraceId() != "" {
+		traceID = payload.GetMetadata().GetTraceId()
+	} else if md, ok := metadata.FromIncomingContext(ctx); ok && len(md["trace-id"]) > 0 {
 		traceID = md["trace-id"][0]
+	} else {
+		traceID = utils.GenerateUniqueHash()
 	}
 
 	rr.NotifyLoggers(
 		types.InfoLevel,
-		"%s, address: %s, level: INFO, result: SUCCESS, event: Receive, trace_id: %v => Received stream.",
+		"%s, address: %s, level: INFO, result: SUCCESS, event: Receive, trace_id: %v => Received unary payload.",
 		rr.componentMetadata, rr.Address, traceID,
 	)
 
-	// Immediately return an acknowledgment so the sender knows we "got" it,
-	// even though we unwrap asynchronously below.
 	ack := &relay.StreamAcknowledgment{
-		Success: true,
-		Message: "Received stream",
+		Success:   true,
+		Message:   "Received",
+		Id:        payload.GetId(),
+		Seq:       payload.GetSeq(),
+		StreamId:  "", // unary has no stream id
+		Code:      0,
+		Retryable: false,
 	}
 
-	// Unwrap in a separate goroutine to avoid blocking
-	go func() {
+	// Unwrap async (preserves your old behavior)
+	go func(p *relay.WrappedPayload, tid string) {
 		var data T
-		if err := UnwrapPayload(payload, rr.DecryptionKey, &data); err != nil {
+		if err := UnwrapPayload(p, rr.DecryptionKey, &data); err != nil {
 			rr.NotifyLoggers(
 				types.ErrorLevel,
 				"%s, address: %s, level: ERROR, result: FAILURE, event: Receive, error: %v, trace_id: %v => Error unwrapping payload",
-				rr.componentMetadata, rr.Address, err, traceID,
+				rr.componentMetadata, rr.Address, err, tid,
 			)
 			return
 		}
 
 		rr.NotifyLoggers(
 			types.InfoLevel,
-			"%s, address: %s, level: INFO, result: SUCCESS, event: Receive, data: %v, trace_id: %v => Data unwrapped and sent to channel",
-			rr.componentMetadata, rr.Address, data, traceID,
+			"%s, address: %s, level: INFO, result: SUCCESS, event: Receive, trace_id: %v => Data unwrapped, forwarding to channel",
+			rr.componentMetadata, rr.Address, tid,
 		)
+
 		rr.DataCh <- data
-	}()
+	}(payload, traceID)
 
 	return ack, nil
 }
@@ -329,60 +336,217 @@ func (rr *ReceivingRelay[T]) Start(ctx context.Context) error {
 // StreamReceive handles a continuous stream of data from a client, processing each piece of data as it arrives
 // and maintaining a session through the provided server stream interface.
 func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamReceiveServer) error {
-	for {
-		rr.NotifyLoggers(types.InfoLevel,
-			"%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive => Waiting to receive stream data",
-			rr.componentMetadata, rr.Address)
+	ctx := stream.Context()
 
-		payload, err := stream.Recv()
+	// Stream state (defaults + ack policy)
+	var (
+		streamID  string
+		defaults  *relay.MessageMetadata
+		ackMode   relay.AckMode = relay.AckMode_ACK_PER_MESSAGE
+		ackEveryN uint64        = 0
+	)
+
+	// Batch ack state
+	var (
+		batchOK   uint32
+		batchErr  uint32
+		lastSeq   uint64
+		batchSeen uint64
+	)
+
+	sendAck := func(a *relay.StreamAcknowledgment) error {
+		return stream.Send(a)
+	}
+
+	flushBatch := func(finalMsg string) {
+		if ackMode != relay.AckMode_ACK_BATCH {
+			return
+		}
+		if batchOK == 0 && batchErr == 0 {
+			return
+		}
+		_ = sendAck(&relay.StreamAcknowledgment{
+			Success:  batchErr == 0,
+			Message:  finalMsg,
+			StreamId: streamID,
+			LastSeq:  lastSeq,
+			OkCount:  batchOK,
+			ErrCount: batchErr,
+		})
+		batchOK, batchErr, batchSeen = 0, 0, 0
+	}
+
+	// Trace ID fallback for logs
+	traceFallback := ""
+	if md, ok := metadata.FromIncomingContext(ctx); ok && len(md["trace-id"]) > 0 {
+		traceFallback = md["trace-id"][0]
+	}
+	if traceFallback == "" {
+		traceFallback = utils.GenerateUniqueHash()
+	}
+
+	for {
+		env, err := stream.Recv()
 		if err == io.EOF {
-			rr.NotifyLoggers(types.InfoLevel,
-				"%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive => End of data stream",
-				rr.componentMetadata, rr.Address)
+			flushBatch("EOF")
 			return nil
 		}
 		if err != nil {
-			rr.NotifyLoggers(types.ErrorLevel,
-				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v => Error receiving stream data",
-				rr.componentMetadata, rr.Address, err)
+			// Treat normal shutdown as non-error: client canceled or deadline reached.
+			code := status.Code(err)
+			if code == codes.Canceled || code == codes.DeadlineExceeded || ctx.Err() != nil {
+				flushBatch("context done")
+				rr.NotifyLoggers(
+					types.DebugLevel,
+					"%s, address: %s, level: DEBUG, event: StreamReceive => stream ended: code=%v err=%v ctx_err=%v",
+					rr.componentMetadata, rr.Address, code, err, ctx.Err(),
+				)
+				return nil
+			}
+
+			rr.NotifyLoggers(
+				types.ErrorLevel,
+				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v => Recv failed",
+				rr.componentMetadata, rr.Address, err,
+			)
 			return err
 		}
 
-		// Extract or generate a trace ID
-		md, _ := metadata.FromIncomingContext(stream.Context()) // The stream's context can carry metadata
-		var traceID string
-		if len(md["trace-id"]) == 0 {
-			traceID = utils.GenerateUniqueHash() // Generate a new trace ID if none was provided
-		} else {
-			traceID = md["trace-id"][0]
+		// 1) OPEN
+		if open := env.GetOpen(); open != nil {
+			streamID = open.GetStreamId()
+			defaults = open.GetDefaults()
+
+			if open.GetAckMode() != relay.AckMode_ACK_MODE_UNSPECIFIED {
+				ackMode = open.GetAckMode()
+			}
+
+			if ackMode == relay.AckMode_ACK_BATCH {
+				n := open.GetAckEveryN()
+				if n == 0 {
+					n = 1024
+				}
+				ackEveryN = uint64(n)
+			} else {
+				ackEveryN = 0
+			}
+
+			rr.NotifyLoggers(
+				types.InfoLevel,
+				"%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive(Open), stream_id: %s, ack_mode: %v, ack_every_n: %d",
+				rr.componentMetadata, rr.Address, streamID, ackMode, ackEveryN,
+			)
+
+			if ackMode != relay.AckMode_ACK_NONE {
+				if err := sendAck(&relay.StreamAcknowledgment{
+					Success:  true,
+					Message:  "Stream open accepted",
+					StreamId: streamID,
+					Code:     0,
+				}); err != nil {
+					return fmt.Errorf("failed to send open ack: %w", err)
+				}
+			}
+			continue
+		}
+
+		// 2) CLOSE
+		if closeMsg := env.GetClose(); closeMsg != nil {
+			rr.NotifyLoggers(
+				types.InfoLevel,
+				"%s, address: %s, level: INFO, result: SUCCESS, event: StreamReceive(Close), stream_id: %s, reason: %s",
+				rr.componentMetadata, rr.Address, streamID, closeMsg.GetReason(),
+			)
+			flushBatch("Stream closed")
+			return nil
+		}
+
+		// 3) PAYLOAD
+		payload := env.GetPayload()
+		if payload == nil {
+			continue
+		}
+
+		// Effective metadata: payload metadata if present, else stream defaults
+		effectiveMeta := payload.GetMetadata()
+		if effectiveMeta == nil {
+			effectiveMeta = defaults
+		}
+
+		// Trace id for logging
+		traceID := traceFallback
+		if effectiveMeta != nil && effectiveMeta.GetTraceId() != "" {
+			traceID = effectiveMeta.GetTraceId()
+		}
+
+		seq := payload.GetSeq()
+		lastSeq = seq
+
+		// IMPORTANT: do NOT copy proto messages (copylocks). Build a fresh message with needed fields.
+		wp := &relay.WrappedPayload{
+			Id:        payload.GetId(),
+			Timestamp: payload.GetTimestamp(),
+			Payload:   payload.GetPayload(),
+			Metadata:  effectiveMeta,
+			ErrorInfo: payload.GetErrorInfo(),
+			Seq:       seq,
 		}
 
 		var data T
-		// Updated call: pass rr.DecryptionKey so the payload can be decrypted if needed.
-		if err := UnwrapPayload(payload, rr.DecryptionKey, &data); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel,
-				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, trace_id: %v => Failed to unwrap payload: %v",
-				rr.componentMetadata, rr.Address, traceID, err)
-			return fmt.Errorf("failed to unwrap payload: %v", err)
+		if err := UnwrapPayload(wp, rr.DecryptionKey, &data); err != nil {
+			rr.NotifyLoggers(
+				types.ErrorLevel,
+				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive(Payload), trace_id: %s, id: %s, seq: %d => unwrap failed: %v",
+				rr.componentMetadata, rr.Address, traceID, wp.GetId(), seq, err,
+			)
+
+			switch ackMode {
+			case relay.AckMode_ACK_PER_MESSAGE:
+				if err := sendAck(&relay.StreamAcknowledgment{
+					Success:   false,
+					Message:   "unwrap failed: " + err.Error(),
+					StreamId:  streamID,
+					Id:        wp.GetId(),
+					Seq:       seq,
+					Code:      1,
+					Retryable: false,
+				}); err != nil {
+					return fmt.Errorf("failed to send error ack: %w", err)
+				}
+			case relay.AckMode_ACK_BATCH:
+				batchErr++
+				batchSeen++
+				if ackEveryN > 0 && batchSeen%ackEveryN == 0 {
+					flushBatch("Batch ack")
+				}
+			case relay.AckMode_ACK_NONE:
+				// no ack
+			}
+			continue
 		}
 
-		rr.NotifyLoggers(types.InfoLevel,
-			"%s, address: %s, level: INFO, event: StreamReceive, trace_id: %v => Streaming data received: %v",
-			rr.componentMetadata, rr.Address, traceID, data)
-
-		// Submit the decoded data to DataCh so it can be processed or forwarded to outputs
 		rr.DataCh <- data
 
-		// Create and send an acknowledgment for each received message
-		ack := &relay.StreamAcknowledgment{
-			Success: true,
-			Message: "Data received successfully",
-		}
-		if err := stream.Send(ack); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel,
-				"%s, address: %s, level: ERROR, result: FAILURE, event: StreamReceive, error: %v, trace_id: %v => Failed to send acknowledgment",
-				rr.componentMetadata, rr.Address, err, traceID)
-			return fmt.Errorf("failed to send acknowledgment: %v", err)
+		switch ackMode {
+		case relay.AckMode_ACK_PER_MESSAGE:
+			if err := sendAck(&relay.StreamAcknowledgment{
+				Success:  true,
+				Message:  "OK",
+				StreamId: streamID,
+				Id:       wp.GetId(),
+				Seq:      seq,
+				Code:     0,
+			}); err != nil {
+				return fmt.Errorf("failed to send ack: %w", err)
+			}
+		case relay.AckMode_ACK_BATCH:
+			batchOK++
+			batchSeen++
+			if ackEveryN > 0 && batchSeen%ackEveryN == 0 {
+				flushBatch("Batch ack")
+			}
+		case relay.AckMode_ACK_NONE:
+			// no ack
 		}
 	}
 }

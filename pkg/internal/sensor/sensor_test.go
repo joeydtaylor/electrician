@@ -25,7 +25,7 @@ func plugFunc(ctx context.Context, submitFunc func(ctx context.Context, message 
 func TestSensorCallbacks(t *testing.T) {
 	var startCount, processCount, cancelCount, errorCount, terminateCount int64
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	plug := builder.NewPlug[string](
@@ -33,7 +33,6 @@ func TestSensorCallbacks(t *testing.T) {
 		builder.PlugWithAdapterFunc[string](plugFunc),
 	)
 
-	// Set up the sensor with callbacks that increment counters.
 	sensor := builder.NewSensor[string](
 		builder.SensorWithOnStartFunc[string](func(c builder.ComponentMetadata) { atomic.AddInt64(&startCount, 1) }),
 		builder.SensorWithOnElementProcessedFunc[string](func(c builder.ComponentMetadata, elem string) { atomic.AddInt64(&processCount, 1) }),
@@ -54,19 +53,27 @@ func TestSensorCallbacks(t *testing.T) {
 		builder.GeneratorWithPlug[string](plug),
 	)
 
-	// Create a wire with transformation, sensor, and generator that sends many messages quickly.
+	// Critical: tiny queue forces output to fill and block sends (no consumer),
+	// so cancel will reliably trigger OnCancel.
 	wire := builder.NewWire[string](
 		ctx,
 		builder.WireWithTransformer[string](transform),
 		builder.WireWithSensor[string](sensor),
 		builder.WireWithGenerator[string](generator),
+		builder.WireWithConcurrencyControl[string](1, 1), // bufferSize=1, workers=1
 	)
 
-	wire.Start(ctx)
-	time.Sleep(5 * time.Second)
-	wire.Stop()
+	_ = wire.Start(ctx)
 
-	// Test assertions using atomic reads
+	// Let it process long enough to hit output backpressure.
+	time.Sleep(100 * time.Millisecond)
+
+	// Force cancellation.
+	cancel()
+
+	_ = wire.Stop()
+
+	// Assertions
 	if atomic.LoadInt64(&startCount) != 1 {
 		t.Errorf("Expected start to be called once, got %d", startCount)
 	}
