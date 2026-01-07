@@ -1,23 +1,3 @@
-// Package wire offers a set of configurable options that can be applied to the Wire components in the Electrician framework.
-// These options allow customization of the wire's behavior and its interaction with other components in the data processing environment.
-// This file defines functional options that enhance the flexibility of the Wire by allowing dynamic adjustments to its operational parameters.
-//
-// The functional options pattern encapsulates settings in functions that modify the state of Wire objects. This approach
-// keeps the API flexible and allows configuration adjustments both at instantiation and at runtime, supporting complex
-// and scalable data processing pipelines.
-//
-// Key features provided through these options include:
-// - Connecting circuit breakers to manage fault tolerance.
-// - Setting concurrency parameters to optimize performance.
-// - Defining custom encoders for data serialization.
-// - Attaching generator functions for autonomous data production.
-// - Incorporating loggers for detailed event and error logging.
-// - Adding sensors for performance monitoring.
-// - Integrating transformation functions to modify data as it flows through the wire.
-//
-// Each option is designed to be applied at creation time or prior to operational use, ensuring that configurations
-// are tailored to specific processing needs.
-
 package wire
 
 import (
@@ -27,100 +7,146 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
-// WithCircuitBreaker sets the circuit breaker for the wire component.
-// This option connects a circuit breaker to manage failures and prevent cascading issues.
-// Returns a types.Option[types.Wire[T]] that, when applied, configures the circuit breaker.
+// WithCircuitBreaker attaches a circuit breaker to the wire.
+//
+// Prefer calling this during construction (NewWire options) before Start.
 func WithCircuitBreaker[T any](cb types.CircuitBreaker[T]) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.ConnectCircuitBreaker(cb)
 	}
 }
 
-// WithConcurrencyControl configures the wire's buffering and concurrent processing parameters.
-// Parameters:
-//   - bufferSize: The capacity for buffering incoming elements.
-//   - maxRoutines: The maximum number of concurrent processing routines.
+// WithConcurrencyControl sets channel buffer size and worker concurrency.
 //
-// Returns a types.Option[types.Wire[T]] that applies these settings.
+// bufferSize controls the internal in/out/error channel capacities.
+// maxRoutines controls the number of processing goroutines (workers).
 func WithConcurrencyControl[T any](bufferSize int, maxRoutines int) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.SetConcurrencyControl(bufferSize, maxRoutines)
 	}
 }
 
-// WithEncoder sets the encoder for the wire component.
-// The encoder serializes processed elements before output.
-// Returns a types.Option[types.Wire[T]] that applies the provided encoder.
+// WithEncoder attaches an encoder that writes processed elements into the wire output buffer.
 func WithEncoder[T any](e types.Encoder[T]) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.SetEncoder(e)
 	}
 }
 
-// WithGenerator attaches one or more generator functions to the wire.
-// Generators autonomously produce elements for processing.
-// Returns a types.Option[types.Wire[T]] that connects the provided generators.
-func WithGenerator[T any](generator ...types.Generator[T]) types.Option[types.Wire[T]] {
+// WithGenerator registers one or more generators.
+func WithGenerator[T any](generators ...types.Generator[T]) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
-		w.ConnectGenerator(generator...)
+		w.ConnectGenerator(generators...)
 	}
 }
 
-// WithInsulator sets the insulator function for error recovery.
-// The insulator function provides retry logic for failed processing attempts.
-// Parameters:
-//   - retryFunc: The function to invoke for retrying processing.
-//   - threshold: The maximum number of retry attempts.
-//   - interval: The duration to wait between retry attempts.
-//
-// Returns a types.Option[types.Wire[T]] that configures the insulator.
-func WithInsulator[T any](retryFunc func(ctx context.Context, elem T, err error) (T, error), threshold int, interval time.Duration) types.Option[types.Wire[T]] {
+// WithInsulator configures retry-based recovery for transform failures.
+func WithInsulator[T any](
+	retryFunc func(ctx context.Context, elem T, err error) (T, error),
+	threshold int,
+	interval time.Duration,
+) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.SetInsulator(retryFunc, threshold, interval)
 	}
 }
 
-// WithLogger attaches one or more logger instances to the wire.
-// Loggers record events and errors to aid in debugging and monitoring.
-// Returns a types.Option[types.Wire[T]] that connects the provided loggers.
-func WithLogger[T any](logger ...types.Logger) types.Option[types.Wire[T]] {
+// WithLogger registers one or more loggers.
+func WithLogger[T any](loggers ...types.Logger) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
-		w.ConnectLogger(logger...)
+		w.ConnectLogger(loggers...)
 	}
 }
 
-// WithSensor attaches one or more sensor instances to the wire.
-// Sensors monitor the wire’s operation and collect metrics.
-// Returns a types.Option[types.Wire[T]] that connects the provided sensors.
-func WithSensor[T any](sensor ...types.Sensor[T]) types.Option[types.Wire[T]] {
+// WithSensor registers one or more sensors.
+func WithSensor[T any](sensors ...types.Sensor[T]) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
-		w.ConnectSensor(sensor...)
+		w.ConnectSensor(sensors...)
 	}
 }
 
-// WithSurgeProtector sets the surge protector for the wire component.
-// The surge protector manages rate limiting and protects against sudden load spikes.
-// Returns a types.Option[types.Wire[T]] that configures the surge protector.
+// WithSurgeProtector attaches a surge protector (rate limit / queue behavior).
 func WithSurgeProtector[T any](surgeProtector types.SurgeProtector[T]) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.ConnectSurgeProtector(surgeProtector)
 	}
 }
 
-// WithTransformer attaches one or more transformation functions to the wire.
-// Transformers modify or process elements as they flow through the wire.
-// Returns a types.Option[types.Wire[T]] that applies the provided transformations.
-func WithTransformer[T any](transformation ...types.Transformer[T]) types.Option[types.Wire[T]] {
+// WithTransformer appends one or more transformers in order.
+func WithTransformer[T any](transformers ...types.Transformer[T]) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
-		w.ConnectTransformer(transformation...)
+		w.ConnectTransformer(transformers...)
 	}
 }
 
-// WithComponentMetadata sets custom metadata for the wire component.
-// Metadata, such as name and ID, can be used for identification and logging.
-// Returns a types.Option[types.Wire[T]] that configures the component metadata.
+// WithComponentMetadata sets the wire's component metadata (name/id).
 func WithComponentMetadata[T any](name string, id string) types.Option[types.Wire[T]] {
 	return func(w types.Wire[T]) {
 		w.SetComponentMetadata(name, id)
 	}
+}
+
+/*
+	Aliases (non-breaking). Use these going forward.
+*/
+
+// WithBreaker is an alias for WithCircuitBreaker.
+func WithBreaker[T any](cb types.CircuitBreaker[T]) types.Option[types.Wire[T]] {
+	return WithCircuitBreaker[T](cb)
+}
+
+// WithWorkers is an alias for WithConcurrencyControl.
+func WithWorkers[T any](bufferSize int, workerCount int) types.Option[types.Wire[T]] {
+	return WithConcurrencyControl[T](bufferSize, workerCount)
+}
+
+// WithTransformers is an alias for WithTransformer.
+func WithTransformers[T any](transformers ...types.Transformer[T]) types.Option[types.Wire[T]] {
+	return WithTransformer[T](transformers...)
+}
+
+// WithGenerators is an alias for WithGenerator.
+func WithGenerators[T any](generators ...types.Generator[T]) types.Option[types.Wire[T]] {
+	return WithGenerator[T](generators...)
+}
+
+// WithLoggers is an alias for WithLogger.
+func WithLoggers[T any](loggers ...types.Logger) types.Option[types.Wire[T]] {
+	return WithLogger[T](loggers...)
+}
+
+// WithSensors is an alias for WithSensor.
+func WithSensors[T any](sensors ...types.Sensor[T]) types.Option[types.Wire[T]] {
+	return WithSensor[T](sensors...)
+}
+
+// WithRetryPolicy is an alias for WithInsulator.
+func WithRetryPolicy[T any](
+	retryFunc func(ctx context.Context, elem T, err error) (T, error),
+	maxAttempts int,
+	interval time.Duration,
+) types.Option[types.Wire[T]] {
+	return WithInsulator[T](retryFunc, maxAttempts, interval)
+}
+
+func WithTransformerFactory[T any](factory func() types.Transformer[T]) types.Option[types.Wire[T]] {
+	return func(w types.Wire[T]) {
+		ww, ok := w.(*Wire[T])
+		if !ok {
+			panic("wire.WithTransformerFactory: unsupported wire implementation")
+		}
+		ww.SetTransformerFactory(factory)
+	}
+}
+
+func WithScratchBytes[T any](size int, fn func([]byte, T) (T, error)) types.Option[types.Wire[T]] {
+	if size < 0 {
+		size = 0
+	}
+	return WithTransformerFactory[T](func() types.Transformer[T] {
+		buf := make([]byte, size) // allocated once per worker
+		return func(v T) (T, error) {
+			return fn(buf, v)
+		}
+	})
 }

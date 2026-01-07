@@ -6,22 +6,12 @@ package electrician;
 
 option go_package = "github.com/joeydtaylor/electrician/pkg/internal/relay";
 
-// ---------- Core ----------
-
 message WrappedPayload {
   string id = 1;
   google.protobuf.Timestamp timestamp = 2;
-
-  // The actual application payload (opaque to relay).
   bytes payload = 3;
-
-  // Per-message metadata (may be omitted in streaming if StreamOpen.defaults is set).
   MessageMetadata metadata = 4;
-
-  // Per-message error info (optional).
   ErrorInfo error_info = 5;
-
-  // NEW: stream-local monotonic sequence number for correlation/ordering.
   uint64 seq = 6;
 }
 
@@ -38,14 +28,8 @@ message MessageMetadata {
   PerformanceOptions performance = 4;
   string trace_id = 5;
   int32 priority = 6;
-
-  // Existing content/transport crypto.
   SecurityOptions security = 7;
-
-  // Auth hints for resource servers; server config may override.
   AuthenticationOptions authentication = 8;
-
-  // Populated by receiver after auth; no raw tokens.
   AuthContext auth_context = 9;
 }
 
@@ -79,96 +63,74 @@ enum CompressionAlgorithm {
   COMPRESS_LZ4 = 5;
 }
 
-// ---------- Auth (optional) ----------
-
 enum AuthMode {
   AUTH_MODE_UNSPECIFIED = 0;
-  AUTH_NONE = 1;        // No app-layer auth (e.g., mTLS-only)
-  AUTH_OAUTH2 = 2;      // Bearer token in "authorization" metadata
-  AUTH_MUTUAL_TLS = 3;  // Client cert at transport layer
+  AUTH_NONE = 1;        
+  AUTH_OAUTH2 = 2;      
+  AUTH_MUTUAL_TLS = 3;  
 }
 
 message AuthenticationOptions {
-  bool enabled = 1;          // If false, treat as AUTH_NONE
-  AuthMode mode = 2;         // Expected mode
-  OAuth2Options oauth2 = 3;  // OAuth2/JWT/introspection (optional)
-  MTLSOptions mtls = 4;      // mTLS expectations (optional)
+  bool enabled = 1;          
+  AuthMode mode = 2;         
+  OAuth2Options oauth2 = 3;  
+  MTLSOptions mtls = 4;      
 }
 
 message OAuth2Options {
-  bool accept_jwt = 1;              // Validate JWT locally via JWKS
-  bool accept_introspection = 2;    // RFC 7662 for opaque tokens
+  bool accept_jwt = 1;              
+  bool accept_introspection = 2;    
 
-  // JWT validation hints (optional)
-  string issuer = 3;                // Expected iss
-  string jwks_uri = 4;              // Override JWKS URI; else discover
+  string issuer = 3;                
+  string jwks_uri = 4;              
   repeated string required_audience = 5;
   repeated string required_scopes = 6;
 
-  // Introspection config (optional)
   string introspection_url = 7;
-  string introspection_auth_type = 8;   // "basic" | "bearer" | "none"
+  string introspection_auth_type = 8;   
   string introspection_client_id = 9;
   string introspection_client_secret = 10;
   string introspection_bearer_token = 11;
 
-  // Behavior (optional)
-  bool forward_bearer_token = 12;       // Default false
-  string forward_metadata_key = 13;     // e.g., "x-forwarded-authorization"
+  bool forward_bearer_token = 12;       
+  string forward_metadata_key = 13;     
 
-  // Caching hints (seconds, optional)
-  int32 jwks_cache_seconds = 14;         // e.g., 300
-  int32 introspection_cache_seconds = 15; // e.g., 60
+  int32 jwks_cache_seconds = 14;         
+  int32 introspection_cache_seconds = 15; 
 }
 
 message MTLSOptions {
-  repeated string allowed_principals = 1; // CN/SAN/SPIFFE
-  string trust_domain = 2;                // Impl-specific
+  repeated string allowed_principals = 1; 
+  string trust_domain = 2;                
 }
 
-// Auth facts emitted post-validation (no raw tokens).
 message AuthContext {
   AuthMode mode = 1;
   bool authenticated = 2;
-  string principal = 3;                 // Canonical subject
-  string subject = 4;                   // Token sub or cert subject
-  string client_id = 5;                 // OAuth2 client_id if present
+  string principal = 3;                 
+  string subject = 4;                   
+  string client_id = 5;                 
   repeated string scopes = 6;
-  map<string, string> claims = 7;       // Curated claim set (stringified)
+  map<string, string> claims = 7;       
   google.protobuf.Timestamp expires_at = 8;
   string issuer = 9;
   repeated string audience = 10;
-  string token_id = 11;                 // JWT jti if present
+  string token_id = 11;                 
 }
-
-// ---------- Streaming control (no extra RPCs) ----------
 
 enum AckMode {
   ACK_MODE_UNSPECIFIED = 0;
-
-  // Send an ack for every payload (highest overhead, strongest per-item feedback).
   ACK_PER_MESSAGE = 1;
-
-  // Send acks periodically (every ack_every_n payloads). Receiver may also ack on timer.
   ACK_BATCH = 2;
-
-  // No acks (fire-and-forget).
   ACK_NONE = 3;
 }
 
 message StreamOpen {
-  // Optional stream ID from client; receiver can echo it back in acks.
   string stream_id = 1;
-
-  // Defaults applied to subsequent WrappedPayload.metadata when the payload metadata is omitted.
   MessageMetadata defaults = 2;
-
-  // Acknowledgment policy.
   AckMode ack_mode = 3;
-  uint32 ack_every_n = 4;     // used when ACK_BATCH (0 => receiver chooses)
-  uint32 max_in_flight = 5;   // advisory backpressure hint (0 => receiver chooses)
-
-  // If true, client intends to omit WrappedPayload.metadata on most messages.
+  uint32 ack_every_n = 4;     
+  uint32 max_in_flight = 5;
   bool omit_payload_metadata = 6;
 }
 
@@ -176,7 +138,6 @@ message StreamClose {
   string reason = 1;
 }
 
-// Envelope used by StreamReceive: first message SHOULD be StreamOpen, then payloads, optional close.
 message RelayEnvelope {
   oneof msg {
     StreamOpen open = 1;
@@ -185,32 +146,20 @@ message RelayEnvelope {
   }
 }
 
-// ---------- Service ----------
-
 service RelayService {
-  // Unary stays the same (simple request/ack).
   rpc Receive(WrappedPayload) returns (StreamAcknowledgment);
-
-  // Streaming now uses the envelope to avoid per-message repeated metadata and allow ack batching.
   rpc StreamReceive(stream RelayEnvelope) returns (stream StreamAcknowledgment);
 }
 
-// Ack supports per-message and batch modes.
 message StreamAcknowledgment {
   bool success = 1;
   string message = 2;
   map<string, string> metadata = 3;
-
-  // Correlation (set when known)
   string stream_id = 4;
-  string id = 5;      // echoes WrappedPayload.id when ACK_PER_MESSAGE
-  uint64 seq = 6;     // echoes WrappedPayload.seq when ACK_PER_MESSAGE
-
-  // Structured status (optional)
-  int32 code = 7;     // app-defined
+  string id = 5;      
+  uint64 seq = 6;     
+  int32 code = 7;
   bool retryable = 8;
-
-  // Batch ack fields (used when ACK_BATCH)
   uint64 last_seq = 9;
   uint32 ok_count = 10;
   uint32 err_count = 11;

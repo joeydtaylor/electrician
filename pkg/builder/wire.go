@@ -64,3 +64,21 @@ func WireWithSurgeProtector[T any](surgeProtector types.SurgeProtector[T]) types
 func WireWithTransformer[T any](transformation ...types.Transformer[T]) types.Option[types.Wire[T]] {
 	return wire.WithTransformer[T](transformation...)
 }
+
+func WithRetryPolicy[T any](
+	retryFunc func(ctx context.Context, elem T, err error) (T, error),
+	maxAttempts int,
+	interval time.Duration,
+) types.Option[types.Wire[T]] {
+	return wire.WithInsulator[T](retryFunc, maxAttempts, interval)
+}
+
+func WireWithTransformerFactory[T any](factory func() func(T) (T, error)) types.Option[types.Wire[T]] {
+	return wire.WithTransformerFactory[T](func() types.Transformer[T] {
+		return factory()
+	})
+}
+
+func WireWithScratchBytes[T any](size int, fn func([]byte, T) (T, error)) types.Option[types.Wire[T]] {
+	return wire.WithScratchBytes[T](size, fn)
+}
