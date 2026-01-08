@@ -1,86 +1,104 @@
 # ⚡ Generator Package
 
-The **Generator** package provides **data production** capabilities in Electrician.  
-It acts as a **source of data**, generating and forwarding elements to processing pipelines.
+A **Generator** is Electrician’s **source driver**.
 
-Generators can produce data from **plugs, external adapters, or internal sources**,  
-and distribute it to **connected components**, ensuring seamless data flow.
+It produces values of type `T` and submits them into downstream components (most commonly a **Wire**). In practice, generators are the glue between **ingestion** (Plugs/Adapters) and **processing** (Wires).
 
----
-
-## 📦 Package Overview
-
-| Feature                    | Description                                                     |
-| -------------------------- | --------------------------------------------------------------- |
-| **Pluggable Architecture** | Supports **multiple input adapters** for dynamic data sourcing. |
-| **Fault-Tolerant Design**  | Integrates **circuit breakers** to prevent system overload.     |
-| **Concurrency Management** | Efficiently handles **multiple data streams** in parallel.      |
-| **Sensor Integration**     | Supports **real-time monitoring** and event-driven callbacks.   |
-| **Restart Mechanism**      | Allows **safe stop-and-restart** for live data adjustments.     |
+Generators are optional: you can always call `Wire.Submit(...)` yourself. Use a generator when you want a reusable “pull/produce loop” with consistent wiring and telemetry.
 
 ---
 
-## 📂 Package Structure
+## 🧠 Where Generator fits
 
-| File                  | Purpose                                                                 |
-| --------------------- | ----------------------------------------------------------------------- |
-| **api.go**            | Public API methods for **starting, stopping, and managing** generators. |
-| **internal.go**       | Low-level logic for **handling concurrent data generation**.            |
-| **notify.go**         | Handles **event logging and sensor notifications**.                     |
-| **options.go**        | Functional options for **composable configuration**.                    |
-| **generator.go**      | Core **Type Definition and Constructor**.                               |
-| **generator_test.go** | Unit tests for **performance, reliability, and error handling**.        |
+Common composition:
 
----
+**Adapter → Plug → Generator → Wire**
 
-## 🔧 How Generators Work
+* **Adapter** talks to the outside world (HTTP/Kafka/S3/custom).
+* **Plug** owns adapter wiring + optional ingestion shaping.
+* **Generator** decides *when* to pull/produce and pushes results downstream.
+* **Wire** does the concurrent hot-path work (transform → emit).
 
-Generators **produce data** and send it to downstream components.
-
-### ✅ **Key Mechanisms**
-
-- **Plugs & Adapters:** Connect to **various data sources** (files, APIs, in-memory functions).
-- **Circuit Breaker Protection:** Prevents data flooding by **pausing under high load conditions**.
-- **Controlled Concurrency:** Manages **multiple concurrent sources** efficiently.
-- **Event-Driven Architecture:** Reacts to **external triggers and system events**.
-
-### ✅ **Lifecycle Management**
-
-| Method          | Description                                       |
-| --------------- | ------------------------------------------------- |
-| `Start()`       | Begins **data generation** from attached sources. |
-| `Stop()`        | Gracefully **halts** all active generation.       |
-| `Restart()`     | Stops and **restarts** the generator safely.      |
-| `ConnectPlug()` | Attaches a **new data source** dynamically.       |
+Generators should do minimal work. Heavy lifting belongs in the Wire.
 
 ---
 
-## 🔧 Extending the Generator Package
+## ✅ What a Generator does
 
-To **add new functionality**, follow this structured **workflow**:
+| Capability                           | Meaning                                                                                             |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| 🧵 Produce loop                      | Runs a controlled loop (often tick/poll) that creates or fetches `T`.                               |
+| 🔌 Plug integration                  | Pull from a configured Plug/Adapter rather than embedding IO logic in the pipeline.                 |
+| 🧯 Circuit breaker gating (optional) | Avoid hammering upstreams when errors occur (policy depends on breaker + generator implementation). |
+| 📡 Telemetry hooks                   | Emit events for submits/errors/starts/stops through sensors/loggers.                                |
+| 🧬 Downstream wiring                 | Connect to one or more downstream submitters (typically via `ConnectToComponent`).                  |
 
-### 1️⃣ Modify `types/`
+What it does **not** guarantee:
 
-- Define the new **interface method** inside `types/generator.go`.
-- This ensures **all implementations remain consistent**.
+* durability
+* exactly-once delivery
+* parallel ingestion by default
 
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file must now implement the new method.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Extend `notify.go` for event logging
-
-- If your change introduces **new events**, update **logging and sensor hooks**.
-
-### 5️⃣ Unit Testing (`generator_test.go`)
-
-- **Ensure performance, event handling, and failure conditions are tested**.
+If you need durable replay or broker semantics, put a real system boundary upstream (Kafka/SQS/etc.) and treat the generator as a local driver.
 
 ---
+
+## ⚙️ Lifecycle model
+
+Generators follow the same operational contract as the rest of Electrician:
+
+✅ Configure → Start → Run → Stop/Restart
+
+* Attach plug/sensor/breaker during configuration.
+* `Start()` begins the produce loop.
+* `Stop()` cancels and drains/shuts down (best-effort).
+* `Restart()` is a stop + rehydrate cycle; it’s not a live reconfiguration mechanism.
+
+Mutating generator configuration while running is not supported.
+
+---
+
+## 🔧 How generation typically works
+
+A common pattern inside a generator is:
+
+1. Wait for a tick / trigger (or run continuously under control).
+2. Pull or produce an element `T` (often via a Plug).
+3. If a circuit breaker is attached and disallows work, skip or delay (implementation-defined).
+4. Submit into the downstream component.
+5. Emit telemetry (best-effort).
+
+Backpressure is usually handled by the downstream submitter (e.g., a wire’s input channel may block when full). A generator should respect contexts and avoid unbounded goroutine growth.
+
+---
+
+## 📂 Package structure
+
+| File           | Purpose                              |
+| -------------- | ------------------------------------ |
+| `generator.go` | Type definition + constructor        |
+| `api.go`       | Public methods / wiring              |
+| `internal.go`  | Produce loop implementation          |
+| `options.go`   | Functional options for configuration |
+| `*_test.go`    | Tests                                |
+
+---
+
+## 🔧 Extending Generator
+
+When adding capability:
+
+* Cross-component contract change → update `types/generator.go` first.
+* Generator-only behavior → implement in `pkg/internal/generator`.
+* User-facing knob → expose via `pkg/builder` (`GeneratorWith…`).
+
+Tests should cover:
+
+* start/stop behavior
+* context cancellation
+* breaker gating behavior (if applicable)
+* correct submission into downstream components
+* no accidental hot-path allocations/regressions
 
 ## 📖 Further Reading
 

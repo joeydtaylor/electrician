@@ -1,100 +1,129 @@
 # 📡 Forward Relay Package
 
-The **Forward Relay** package enables **secure, high-performance data transmission** in distributed systems.  
-It acts as a **message router**, forwarding data from **input sources** to **target destinations** over gRPC.
+The **Forward Relay** is Electrician’s **egress gRPC client**.
 
-Forward Relays support **compression, TLS encryption, and configurable logging**,  
-ensuring **reliable and efficient data forwarding** between system components.
+It takes items from your local pipeline, wraps them in the Electrician relay envelope (`WrappedPayload` / `RelayEnvelope`), and forwards them to a remote `RelayService`.
 
----
-
-## 📦 Package Overview
-
-| Feature                 | Description                                                           |
-| ----------------------- | --------------------------------------------------------------------- |
-| **Multi-Input Support** | Receives data from **multiple sources** (e.g., APIs, data streams).   |
-| **High Throughput**     | Optimized for **parallel data processing and transmission**.          |
-| **Compression Support** | Reduces bandwidth usage with **gzip, zstd, snappy, brotli, and LZ4**. |
-| **TLS Encryption**      | Secures data transmission with **configurable TLS settings**.         |
-| **Performance Tuning**  | Supports **batching, buffering, and rate control options**.           |
+This package is about **transporting bytes + metadata**. Delivery guarantees, retry strategy, compression/encryption behavior, and auth policy are implementation/config decisions.
 
 ---
 
-## ⚡ Notable Dependencies
+## ✅ What it does
 
-Electrician is **almost entirely built on the Go standard library**—with two key exceptions:
+| Capability              | Meaning                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| 🛰️ gRPC egress         | Connect to a remote relay server and send messages via unary or streaming RPCs. |
+| 📦 Envelope wrapping    | Populate `id`, `timestamp`, `seq`, `metadata`, and `payload` bytes.             |
+| ✅ Acknowledgments       | Read `StreamAcknowledgment` as application-level status from the receiver.      |
+| 🔐 Transport security   | Use TLS/mTLS on the gRPC channel when configured.                               |
+| 🧾 Metadata propagation | Forward headers/content type/version/trace/priority hints to receivers.         |
 
-1. **Logging:** Uses [Zap](https://github.com/uber-go/zap), widely regarded as the best structured logger for Go.
-2. **Compression:** Integrates **widely used compression libraries** (ZSTD, Snappy, Brotli, LZ4, Deflate)  
-   to **optimize bandwidth and processing efficiency**.
+What it does **not** do by definition:
 
-These dependencies were chosen carefully to **maximize performance while minimizing external bloat**.
-
----
-
-## 📂 Package Structure
-
-| File                     | Purpose                                                             |
-| ------------------------ | ------------------------------------------------------------------- |
-| **api.go**               | Public API for **starting, stopping, and managing** Forward Relays. |
-| **internal.go**          | Low-level logic for **handling TLS, compression, and data flow**.   |
-| **notify.go**            | Handles **event logging and monitoring**.                           |
-| **options.go**           | Functional options for **composable configuration**.                |
-| **forwardrelay.go**      | Core **Type Definition and Constructor**.                           |
-| **forwardrelay_test.go** | Unit tests ensuring **performance, reliability, and security**.     |
+* durable delivery
+* exactly-once semantics
+* “priority queues” or guaranteed ordering across restarts
 
 ---
 
-## 🔧 How Forward Relays Work
+## 🧠 How it fits in a pipeline
 
-A **Forward Relay** acts as an **intelligent data router**,  
-efficiently transmitting messages between services.
+Common shape:
 
-### ✅ **Key Mechanisms**
+**Wire → ForwardRelay → Remote ReceivingRelay**
 
-- **Multi-Input Handling:** Receives data from **one or more sources**.
-- **Compression Support:** **Reduces payload size** for optimized network performance.
-- **Secure TLS Encryption:** Ensures **confidentiality and data integrity**.
-- **Dynamic Performance Tuning:** Adjusts **batch sizes, compression, and concurrency**.
-- **Event-Driven Logging & Monitoring:** Integrated with **Zap logger and sensors**.
+* Your local pipeline produces values.
+* The forward relay turns those into relay envelopes.
+* The remote receiving relay ingests and submits into the remote pipeline.
 
-### ✅ **Lifecycle Management**
-
-| Method           | Description                                          |
-| ---------------- | ---------------------------------------------------- |
-| `Start()`        | Begins **data forwarding** from connected sources.   |
-| `Stop()`         | Gracefully **terminates all forwarding operations**. |
-| `ConnectInput()` | Attaches **one or more data sources** dynamically.   |
-| `Submit()`       | **Forwards data** to target addresses securely.      |
+Forward relay is a sink/egress adapter. It should not contain business logic.
 
 ---
 
-## 🔧 Extending the Forward Relay Package
+## 🧬 Message model (what actually goes on the wire)
 
-To **add new functionality**, follow this structured **workflow**:
+The relay protocol is defined in protobuf:
 
-### 1️⃣ Modify `types/`
+* `WrappedPayload` is the core envelope.
+* `RelayEnvelope` wraps streaming messages (`StreamOpen`, `payload`, `StreamClose`).
 
-- Define the new **interface method** inside `types/forwardrelay.go`.
-- This ensures **all implementations remain consistent**.
+Key fields you should care about:
 
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file must now implement the new method.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Extend `notify.go` for event logging
-
-- If your change introduces **new events**, update **logging and sensor hooks**.
-
-### 5️⃣ Unit Testing (`forwardrelay_test.go`)
-
-- **Ensure performance, event handling, and security are tested**.
+* `payload` is `bytes` — you decide serialization (`application/json`, protobuf, msgpack, custom).
+* `metadata.content_type` describes the payload bytes.
+* `metadata.headers` carries arbitrary key/value context.
+* `trace_id`, `priority`, and `version` are hints that receivers may use.
 
 ---
+
+## 🗜️ Compression / 🔐 Encryption / 🪪 Auth (metadata vs enforcement)
+
+The schema includes fields for:
+
+* compression preferences (`PerformanceOptions`, `CompressionAlgorithm`)
+* payload encryption declaration (`SecurityOptions`, `EncryptionSuite`)
+* auth hints (`AuthenticationOptions`) and receiver-populated `AuthContext`
+
+Reality checks:
+
+* Protobuf/gRPC will not automatically compress/encrypt your payload based on these fields.
+* Transport security (TLS/mTLS) is separate from payload encryption.
+* `AuthenticationOptions` is **advisory**. Enforcement belongs to the receiver’s configured policy.
+* Don’t ship secrets (client secrets, bearer tokens) in metadata unless both ends explicitly agree and your threat model allows it.
+
+---
+
+## ✅ Acks are application status, not durability
+
+`StreamAcknowledgment` tells you what the receiver claims happened.
+
+It does **not** guarantee persistence or replay across failures.
+
+If you need stronger guarantees, design them explicitly:
+
+* idempotency keys (`id`/`seq` usage)
+* retry with backoff
+* durable upstream queues (Kafka/SQS/etc.)
+
+---
+
+## ⚙️ Lifecycle + configuration contract
+
+Forward relays follow Electrician’s standard operational model:
+
+✅ Configure → Start → Submit/Run → Stop/Restart
+
+* Configure target address/credentials/options before `Start()`.
+* Don’t mutate configuration while running.
+* Respect contexts on submit paths (cancellation/shutdown behavior should be clean).
+
+---
+
+## 📂 Package structure
+
+| File              | Purpose                                  |
+| ----------------- | ---------------------------------------- |
+| `forwardrelay.go` | Type definition + constructor            |
+| `api.go`          | Public methods / wiring                  |
+| `internal.go`     | gRPC client + send/stream implementation |
+| `options.go`      | Functional options for configuration     |
+| `*_test.go`       | Tests                                    |
+
+---
+
+## 🔧 Extending the forward relay
+
+* Proto change → update `.proto`, regenerate bindings, then update send/receive relays.
+* Cross-component contract → update `types/forwardrelay.go` first.
+* User-facing knob → expose via `pkg/builder` (`ForwardRelayWith…`).
+
+Tests should cover:
+
+* unary send path
+* streaming path + ack handling
+* cancellation/shutdown
+* error propagation (network errors vs receiver errors)
+* (if implemented) payload compression/encryption handling
 
 ## 📖 Further Reading
 

@@ -1,94 +1,98 @@
 # ⚙️ Types Package
 
-The **types** package is the **source of truth** for all shared interfaces and fundamental data structures in Electrician.  
-Every core component—including **Wires, Circuit Breakers, Sensors, Surge Protectors, and more**—**derives its contract from this package**.
+The `types` package is Electrician’s **contract layer**.
 
-Any **new functionality or extension** in Electrician **must first be defined here** before being implemented elsewhere.
+It defines the shared **interfaces**, **option types**, and core **data structures** that internal components implement and the public `pkg/builder` API composes.
 
----
-
-## 📦 Package Overview
-
-This package defines **all component interfaces**, ensuring a **consistent contract** across Electrician.
-
-| File                      | Description                                                                         |
-| ------------------------- | ----------------------------------------------------------------------------------- |
-| **adapter.go**            | Defines the **Adapter** interface for external data sources.                        |
-| **circuitbreaker.go**     | Defines the **CircuitBreaker** interface for failure handling.                      |
-| **codec.go**              | Provides interfaces for **Encoders/Decoders**.                                      |
-| **common.go**             | Contains **shared types and helper structures**.                                    |
-| **conduit.go**            | Defines the **Conduit** interface for multi-stage pipelines.                        |
-| **element.go**            | Defines **Element** structs used for message handling.                              |
-| **forwardrelay.go**       | Provides the **ForwardRelay** interface for outgoing gRPC messages.                 |
-| **generator.go**          | Defines **Generator** components responsible for producing data streams.            |
-| **httpclient_adapter.go** | Interface definition for **HTTP-based data ingestion**.                             |
-| **logger.go**             | Standardized **logging interfaces** for structured event tracking.                  |
-| **meter.go**              | Defines **Meter** interfaces for tracking throughput and performance metrics.       |
-| **plug.go**               | Specifies the **Plug** interface for pluggable input sources.                       |
-| **receiver.go**           | Defines the **Receiver** interface for incoming message handling.                   |
-| **receivingrelay.go**     | Interface for handling **incoming gRPC messages**.                                  |
-| **resister.go**           | Defines **Resister** logic for rate-limiting and delayed message processing.        |
-| **sensor.go**             | Defines **Sensors** for monitoring and telemetry collection.                        |
-| **submitter.go**          | Standardized interface for components that **submit** elements into processing.     |
-| **surgeprotector.go**     | Provides the **SurgeProtector** interface for load balancing and overflow handling. |
-| **wave.go**               | Specialized **Wave Encoding** interface (for advanced encoding scenarios).          |
-| **wire.go**               | Defines the **Wire** interface—the backbone of Electrician.                         |
+If two packages need to agree on behavior or shape (Wire ↔ SurgeProtector, Relay ↔ Receiver, Logger ↔ Sensors, etc.), the contract lives here.
 
 ---
 
-## 🔗 Relationship with Other Packages
+## ✅ What belongs in `types/`
 
-The **types** package is **foundational** to Electrician and directly influences every component:
+* Component interfaces (Wire, CircuitBreaker, SurgeProtector, Sensor, Generator, Relay, Adapter, …)
+* Cross-component structs (metadata, envelope types, element wrappers, error types)
+* Shared enums/constants used across packages (log levels, component type strings, etc.)
+* Functional option primitives (e.g., `Option[T]`) used by `builder` and internal constructors
 
-1️⃣ **Internal packages (e.g., `wire`, `circuitbreaker`, `sensor`)** must conform to these interfaces.  
-2️⃣ **The builder package (`pkg/builder/`)** wraps and exposes these types via a **user-friendly API**.  
-3️⃣ **All components must implement these contracts** to ensure seamless interoperability.
+## ❌ What doesn’t belong in `types/`
 
-By centralizing all **interfaces and contracts**, Electrician maintains **strict consistency and type safety**.
+* Implementation logic
+* Package-specific helpers that aren’t used outside that package
+* Anything that’s experimental or not meant to be part of a shared contract
 
----
+“Types is the source of truth” does **not** mean every change starts here.
 
-## 🔧 Modifying or Extending a Component
-
-To **add new functionality** in Electrician, follow this structured **workflow**:
-
-### 1️⃣ Modify `types/`
-
-- **Define the new interface method** in the appropriate file (e.g., `wire.go`, `circuitbreaker.go`).
-- This ensures **all implementations remain consistent**.
-
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file inside the respective **internal package** must now implement this method.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Extend `notify.go` for event logging (if applicable)
-
-- If your change introduces **new events**, add corresponding **logging and telemetry hooks**.
-
-### 5️⃣ Unit Testing (`package_test.go`)
-
-- **Write tests** to verify that the new functionality works as expected.
-
-By following these steps, Electrician maintains **stability, compatibility, and strict type safety**.
+* If a feature is internal to a single component, implement it there.
+* If a feature changes how multiple components interact (or should be exposed through `builder`), define/extend the contract here.
 
 ---
 
-## ⚡ Standard Library First
+## 📦 Package overview (by file)
 
-Like most of Electrician, the **Types package is built entirely on Go’s standard library**.  
-This ensures:
+This is the conceptual map. File names may evolve, but the responsibilities stay the same.
 
-✅ **Maximum compatibility** – No unnecessary third-party dependencies.  
-✅ **Minimal attack surface** – Secure and easy to audit.  
-✅ **High performance** – Optimized for **low-latency, high-throughput pipelines**.
-
-Electrician adheres to a **strict standard-library-first** philosophy, ensuring long-term maintainability.
+| File                    | What it defines                                         |
+| ----------------------- | ------------------------------------------------------- |
+| `adapter.go`            | Adapter interfaces for external data sources            |
+| `circuitbreaker.go`     | Circuit breaker contract                                |
+| `codec.go`              | Encoder/decoder interfaces                              |
+| `common.go`             | Shared types/constants used across components           |
+| `conduit.go`            | Conduit interface for multi-stage pipelines             |
+| `element.go`            | Element wrappers used for routing/queues/error channels |
+| `forwardrelay.go`       | Forward relay interfaces (outbound)                     |
+| `generator.go`          | Generator interfaces                                    |
+| `httpclient_adapter.go` | HTTP adapter-facing interface(s)                        |
+| `logger.go`             | Logging interfaces + levels                             |
+| `meter.go`              | Meter interfaces for measurement/monitoring             |
+| `plug.go`               | Plug interfaces for pluggable inputs                    |
+| `receiver.go`           | Receiver interface(s)                                   |
+| `receivingrelay.go`     | Receiving relay interfaces (inbound)                    |
+| `resister.go`           | Resister/queue contracts                                |
+| `sensor.go`             | Sensor interfaces for hooks/telemetry                   |
+| `submitter.go`          | Submission contracts for components that accept items   |
+| `surgeprotector.go`     | Surge protector contract                                |
+| `wave.go`               | Wave/advanced encoding contract (specialized)           |
+| `wire.go`               | Wire interface (core pipeline primitive)                |
 
 ---
+
+## 🔗 Relationship to `pkg/internal/*` and `pkg/builder`
+
+* `pkg/internal/*` packages implement these interfaces and use these shared structs.
+* `pkg/builder` is the public construction layer that:
+
+  * returns values that satisfy `types` interfaces,
+  * exposes functional options that ultimately call internal connect/set methods.
+
+The point of `types/` is to keep components interoperable without tight coupling between implementations.
+
+---
+
+## 🔧 Extending Electrician (the accurate workflow)
+
+When you add capability, decide first: **is this a shared contract change or an internal implementation change?**
+
+### 1) If it changes cross-component behavior
+
+1. Update/add the interface or shared struct in `types/`.
+2. Implement it in the relevant `pkg/internal/*` package.
+3. Expose it via `pkg/builder` (constructor arg and/or `XWith…` option).
+4. Add tests (and allocation/benchmark tests if it touches hot paths).
+
+### 2) If it’s internal to one component
+
+1. Implement it inside that `pkg/internal/*` package.
+2. Optionally expose it through `builder` if it’s a user-facing configuration knob.
+3. Only touch `types/` if other packages must depend on the new contract.
+
+---
+
+## 📚 Dependency stance
+
+`types/` is intentionally **standard-library only**.
+
+Contracts should be easy to audit and stable to import; third-party libraries belong in implementations (internal packages / adapters), not in the contract surface.
 
 ## 📖 Further Reading
 

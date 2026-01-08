@@ -1,100 +1,133 @@
-# 📡 Sensor Package – Event Monitoring & Telemetry
+# 📡 Sensor Package
 
-The **Sensor** package in Electrician provides a **flexible event monitoring system** that captures structured data from various **pipeline components**, including **Wires, Circuit Breakers, Surge Protectors, HTTP Clients, and more**.
+The **Sensor** package is Electrician’s **telemetry hook surface**.
 
-It enables **real-time observability** by allowing developers to register **event-driven callbacks**, push structured logs, and update performance metrics via **attached Meters**.
+A sensor is a typed receiver of pipeline events (start/stop/submit/errors/etc.). Components call sensor methods inline as work flows through the system. This lets you attach:
 
----
+* counters/meters
+* structured event emission
+* tracing correlation
+* lightweight auditing/debug hooks
 
-## 📦 Package Overview
-
-| Feature                        | Description                                                              |
-| ------------------------------ | ------------------------------------------------------------------------ |
-| **Event-Driven Callbacks**     | Hooks into key lifecycle events (`OnStart`, `OnStop`, `OnError`, etc.).  |
-| **Multi-Component Monitoring** | Observes activity across **Wires, Circuit Breakers, HTTP Clients**, etc. |
-| **Logging & Metrics**          | Supports **structured logging** and updates **attached meters**.         |
-| **Modular & Extensible**       | Easily extendable to track new event types.                              |
-| **Performance Tracking**       | Monitors **latency, error rates, and processing efficiency**.            |
+Sensors are **not** a metrics backend by themselves. They’re the hook points.
 
 ---
 
-## 📂 Package Structure
+## ✅ What sensors are (and aren’t)
 
-Each file follows **Electrician’s structured approach**, ensuring a **clear separation of concerns**.
+* ✅ A **contract** (`types.Sensor[T]`) + implementation(s) that react to pipeline events.
 
-| File               | Purpose                                                                    |
-| ------------------ | -------------------------------------------------------------------------- |
-| **api.go**         | Public API for **registering event listeners and invoking callbacks**.     |
-| **internal.go**    | Internal logic for **event handling, logging, and metric updates**.        |
-| **notify.go**      | Handles **event logging, structured telemetry, and sensor notifications**. |
-| **options.go**     | Functional options for configuring Sensors **in a declarative manner**.    |
-| **sensor.go**      | Core **Type Definition and Constructor**.                                  |
-| **sensor_test.go** | Unit tests ensuring **correctness and performance**.                       |
+* ✅ A way to centralize “what happened” without littering business logic with instrumentation.
 
----
+* ✅ Typed by the element flowing through the component (`T`).
 
-## 🔧 How Sensors Work
+* ❌ Not a guarantee of non-blocking behavior: sensors are invoked **inline** by components. Keep handlers fast or offload work inside the sensor.
 
-Sensors act as **observability agents** within Electrician's event-driven architecture.  
-They listen for **lifecycle events**, log structured data, and invoke **registered callbacks** for real-time monitoring.
-
-### ✅ **Event Monitoring**
-
-- **Lifecycle Events** – `OnStart`, `OnStop`, `OnRestart`, `OnComplete`, etc.
-- **Error Handling** – `OnError` captures failures across the pipeline.
-- **Data Processing Events** – `OnElementProcessed`, `OnSubmit`, `OnCancel`, etc.
-- **Circuit Breaker Events** – Tracks trips, resets, and dropped elements.
-- **HTTP Client Events** – Logs request lifecycle (`OnRequestStart`, `OnResponseReceived`, etc.).
-- **Surge Protector Events** – Monitors rate limits, token releases, and backup activations.
-- **Resister Events** – Tracks elements being queued, dequeued, and requeued.
-
-### ✅ **Metrics & Logging**
-
-- Sensors can **attach meters** to track event counts and performance statistics.
-- **Structured logging** enables detailed **tracing** and **debugging** of system events.
+* ❌ Not a promise that every component emits every event. Events are emitted by the components that call them.
 
 ---
 
-## 🔒 Standard Library First
+## 📦 Package structure
 
-Like most of Electrician, the **Sensor package is built entirely on Go’s standard library**, ensuring:
+File layout is intentionally simple. Names may evolve, but this is the typical split:
 
-✅ **Maximum compatibility** – No unnecessary third-party dependencies.  
-✅ **Minimal attack surface** – Secure and easy to audit.  
-✅ **High performance** – Optimized for **low-latency, high-throughput monitoring**.
+| File         | Purpose                                        |
+| ------------ | ---------------------------------------------- |
+| `sensor.go`  | Core type(s) + constructor                     |
+| `api.go`     | Public methods / interface fulfillment         |
+| `options.go` | Functional options (`With*`) for configuration |
+| `*_test.go`  | Unit tests                                     |
 
-Electrician adheres to a **strict standard-library-first** philosophy, ensuring long-term maintainability.
+---
+
+## 🧠 Event model
+
+Sensors are invoked by components at key points in the lifecycle and hot path.
+
+Common event families (based on how the pipeline currently calls sensors):
+
+### 🚦 Lifecycle
+
+* `OnStart` / `OnStop`
+* `OnComplete` (when a component finishes a cycle)
+
+### 📥 Flow
+
+* `OnSubmit`
+* `OnCancel` (context cancellation)
+* `OnElementProcessed` (successful processing)
+
+### ❌ Errors
+
+* `OnError` (transform/encode/processing failures)
+
+### 🧪 Recovery (Insulator)
+
+* `OnInsulatorAttempt`
+* `OnInsulatorSuccess`
+* `OnInsulatorFailure` (retries exhausted)
+
+### 🧯 Circuit breaker
+
+* `OnCircuitBreakerNeutralWireSubmission` (diverted to neutral/ground wire)
+* `OnCircuitBreakerDrop` (tripped and no neutral wires)
+
+### 🛡️ Surge protector
+
+* `OnSurgeProtectorSubmit` (item routed to protector handling)
+* `OnSurgeProtectorRateLimitExceeded` (rate limited / deferred)
+
+If you add new event types, they should be added to `types/sensor.go` and then invoked by the components that own the behavior.
 
 ---
 
-## 🔧 Extending the Sensor Package
+## ⚙️ Configuration contract
 
-To **add new functionality** to the Sensor package, follow this structured **workflow**:
+Sensors are configuration-time wiring.
 
-### 1️⃣ Modify `types/`
+* Attach sensors before `Start()`.
+* Mutating sensor sets while a component is running is not supported.
 
-- **Define the new event method** inside `types/sensor.go`.
-- This ensures **all components remain consistent**.
-
-### 2️⃣ Implement the logic in `api.go`
-
-- The `api.go` file inside the **sensor** package must now implement this event.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **declarative event registration**.
-
-### 4️⃣ Ensure `notify.go` handles event logging (if applicable)
-
-- If your change introduces **new events**, add corresponding **logging and telemetry hooks**.
-
-### 5️⃣ Unit Testing (`sensor_test.go`)
-
-- **Write tests** to verify that the new event hooks function correctly.
-
-By following these steps, Electrician maintains **stability, compatibility, and strict type safety**.
+This is how Electrician avoids locks/allocations in the hot path.
 
 ---
+
+## 📈 Meters and aggregation
+
+A common pattern is:
+
+* a **Meter** collects counts/timings
+* a **Sensor** updates that meter when events fire
+
+Example wiring (conceptual):
+
+```go
+meter := builder.NewMeter[Event](ctx, builder.MeterWithTotalItems[Event](n))
+sensor := builder.NewSensor(builder.SensorWithMeter[Event](meter))
+
+w := builder.NewWire(
+    ctx,
+    builder.WireWithSensor(sensor),
+    builder.WireWithTransformer(fn),
+)
+```
+
+Whether you track latency, errors, throughput, etc. is a sensor/meter implementation detail.
+
+---
+
+## 🔧 Extending sensors
+
+When adding a new telemetry surface:
+
+1. Add the event method to `pkg/internal/types/sensor.go`.
+2. Implement it in the sensor implementation.
+3. Invoke it from the owning component at the correct point.
+4. Add tests that validate:
+
+   * the event fires exactly when expected
+   * it does not break the pipeline if the sensor is nil/missing
+   * performance impact stays acceptable (no accidental allocations in hot paths)
 
 ## 📖 Further Reading
 

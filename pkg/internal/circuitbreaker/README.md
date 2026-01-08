@@ -1,78 +1,113 @@
 # 🛑 Circuit Breaker Package
 
-The **Circuit Breaker** package prevents **system overloads and cascading failures**  
-by **blocking failing operations** after reaching a predefined error threshold.
+A **Circuit Breaker** is Electrician’s **admission gate** for protecting pipelines when failures start stacking.
 
-It provides **automatic resets, neutral wires for buffering, and structured logging**,  
-ensuring **resilience and fault tolerance** in distributed systems.
+It answers one question:
 
----
+* ✅ **Should we accept work right now?** (`Allow()`)
 
-## 📦 Package Overview
+And it exposes one primary feedback signal:
 
-| Feature                         | Description                                                       |
-| ------------------------------- | ----------------------------------------------------------------- |
-| **Automatic Failure Detection** | Opens the circuit when error count exceeds a threshold.           |
-| **Time-Based Resets**           | **Automatically resets** after a cooldown period.                 |
-| **Neutral Wire Support**        | Routes traffic to **backup processing channels** during failures. |
-| **Event Logging & Telemetry**   | Logs failures, resets, and trips **for real-time monitoring**.    |
-| **Thread-Safe Design**          | Uses **atomic operations and locks** for concurrency safety.      |
+* ❌ **An error happened** (`RecordError()`)
+
+When attached to a `Wire`, the breaker can also provide **neutral/ground wires** as an alternate destination for work when the circuit is open.
 
 ---
 
-## 📂 Package Structure
+## ✅ What it does
 
-| File                       | Purpose                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------- |
-| **api.go**                 | Public API for **tripping, resetting, and managing** Circuit Breakers.        |
-| **internal.go**            | Low-level logic for **error tracking, state transitions, and lock handling**. |
-| **options.go**             | Functional options for **configurable Circuit Breakers**.                     |
-| **circuitbreaker.go**      | Core **Type Definition and Constructor**.                                     |
-| **circuitbreaker_test.go** | Unit tests ensuring **fault tolerance, resets, and performance**.             |
-
----
-
-## 🔧 How Circuit Breakers Work
-
-A **Circuit Breaker** **monitors failures**,  
-blocking operations when error rates exceed a **defined threshold**.
-
-### ✅ **Key Mechanisms**
-
-- **Failure Tracking:** Counts **errors per time window**, triggering when exceeded.
-- **Automatic Resets:** Reopens after a **cooldown period**.
-- **Neutral Wires:** Redirects traffic **to alternate processing paths**.
-- **Event Logging:** Reports trips, resets, and failures **for diagnostics**.
-- **Concurrency Safe:** Uses **atomic counters and locks** for efficiency.
+| Capability           | Meaning                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| 🚦 Allow/deny        | `Allow()` decides whether the pipeline should accept new submissions.                                  |
+| 📉 Error recording   | `RecordError()` feeds the breaker’s trip logic (threshold/window/cooldown are implementation-defined). |
+| 🧯 Diversion targets | `GetNeutralWires()` can return alternate wires to receive items when the breaker denies.               |
+| 🧵 Concurrency-safe  | `Allow()` and `RecordError()` must be safe under concurrent calls (hot path).                          |
 
 ---
 
-## 🔧 Extending the Circuit Breaker Package
+## ❌ What it is not
 
-To **customize failure handling**, follow this **structured workflow**:
-
-### 1️⃣ Modify `types/`
-
-- Define new methods inside `types/circuitbreaker.go`.
-- This ensures **all implementations remain consistent**.
-
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file contains **public methods** – update it accordingly.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **declarative configuration** via functional options.
-
-### 4️⃣ Extend `notify.go` for logging & telemetry
-
-- If new events are introduced, add **sensor and logger hooks**.
-
-### 5️⃣ Unit Testing (`circuitbreaker_test.go`)
-
-- **Ensure resets, failure handling, and neutral wire routing are tested**.
+* Not a retry policy (that’s the **insulator**).
+* Not durable buffering.
+* Not a distributed circuit breaker.
+* Not a guarantee of “no overload” — it’s a local control mechanism.
 
 ---
+
+## 🧠 How it works with Wire
+
+When a breaker is attached to a `Wire`, the wire uses it in two places:
+
+### 1) Submission gating
+
+`Wire.Submit(...)` checks `cb.Allow()`.
+
+* If allowed: the element proceeds into the wire’s input channel.
+* If denied: the wire diverts the element to `cb.GetNeutralWires()` (if any), otherwise the element is dropped (best-effort) and telemetry is emitted.
+
+### 2) Error feedback
+
+When processing fails:
+
+* the wire reports the error on an error channel (best-effort), and
+* the breaker can be notified via `RecordError()` (exact call points depend on the failure path).
+
+The breaker is therefore both:
+
+* a **gate** for new work, and
+* a **feedback sink** for failures.
+
+---
+
+## 🧯 Neutral / ground wires (diversion)
+
+Neutral wires are simply other wires you provide to the breaker.
+
+When the circuit is open, the wire will attempt to submit the element to each neutral wire:
+
+* if at least one submission succeeds, the element is considered handled
+* failures to submit to a neutral wire are ignored (best-effort)
+* if no neutral wires exist, the element is dropped
+
+Important: a “neutral wire” is not automatically a durable queue or a backup system. It behaves exactly like whatever wire you connected.
+
+---
+
+## 🧪 Interaction with Insulator (retry/recovery)
+
+Insulator retries exist to recover from transform failures.
+
+The wire’s behavior is intentionally conservative:
+
+* If the breaker is open, the pipeline should be in **protect mode**, so retries may be skipped and work diverted/dropped instead.
+* If retries are exhausted, the breaker can record the failure (`RecordError()`), which can trip the circuit depending on the breaker’s policy.
+
+Bottom line: breaker = system safety gate; insulator = per-item recovery.
+
+---
+
+## ⚙️ Configuration contract
+
+Circuit breakers are meant to be configured before `Start()`:
+
+✅ Configure → Start → Run → Stop/Restart
+
+Mutating breaker wiring (especially neutral wires) while the pipeline is running is not supported.
+
+---
+
+## 🔧 Extending the circuit breaker
+
+* Cross-component contract changes start in `pkg/internal/types/circuitbreaker.go`.
+* Implement behavior in `pkg/internal/circuitbreaker`.
+* Expose user-facing knobs through `pkg/builder` (`CircuitBreakerWith…`).
+
+Tests should cover:
+
+* trip logic (threshold/cooldown)
+* `Allow()` behavior under concurrency
+* diversion correctness (neutral wires)
+* interaction with error recording
 
 ## 📖 Further Reading
 

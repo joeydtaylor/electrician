@@ -1,93 +1,105 @@
-# 🛠️ Resister Package – Priority-Based Queueing
+# 🛠️ Resister Package
 
-The **Resister package** implements a **thread-safe, priority queue** for managing **delayed or rate-limited data flow** in Electrician pipelines. It serves as an **intelligent buffer**, ensuring **high-priority elements are processed first**, while **lower-priority elements decay over time**.
+The **Resister** is Electrician’s **in-memory defer queue**.
 
-Resisters are particularly useful in **congested systems** where processing capacity is limited, and **queued elements must be dynamically prioritized**.
+It exists to absorb bursts when a pipeline is rate limited or temporarily tripped (typically by a **Surge Protector**) and to hand that work back to the hot path when capacity returns.
 
----
+This package is deliberately boring:
 
-## 📦 Package Overview
-
-| Feature                         | Description                                                               |
-| ------------------------------- | ------------------------------------------------------------------------- |
-| **Priority-Based Queueing**     | Uses a **priority heap** to process critical elements first.              |
-| **Retry & Requeue Support**     | Elements **requeued on failure** retain their priority but can decay.     |
-| **Concurrency-Safe**            | Thread-safe operations for concurrent pipeline execution.                 |
-| **Backoff & Priority Decay**    | Items that **fail repeatedly** have their priority **gradually reduced**. |
-| **Sensor & Logger Integration** | Supports **event monitoring** and **structured logging**.                 |
+* ✅ thread-safe enqueue/dequeue
+* ✅ predictable draining behavior
+* ✅ bounded policies (capacity / drop / retry limits) depending on implementation
+* ❌ not durable storage
+* ❌ not a broker
+* ❌ not “guaranteed delivery”
 
 ---
 
-## 📂 Package Structure
+## 🧠 Where Resister sits in the system
 
-Each file follows **Electrician’s structured approach**, ensuring **clear separation of concerns**.
+The typical topology is:
 
-| File                 | Purpose                                                                        |
-| -------------------- | ------------------------------------------------------------------------------ |
-| **api.go**           | Public API for interacting with **priority queue operations**.                 |
-| **internal.go**      | Manages internal logic for **queue indexing, priority decay, and processing**. |
-| **notify.go**        | Handles **event logging, telemetry, and sensor notifications**.                |
-| **options.go**       | Functional options for configuring Resisters **declaratively**.                |
-| **resister.go**      | Core **Type Definition and Constructor**.                                      |
-| **resister_test.go** | Unit tests ensuring **correctness and performance**.                           |
+**Submit → SurgeProtector → (Resister queue) → Wire drain loop → Wire input → workers**
 
----
+When a surge protector is attached to a wire:
 
-## 🔧 How Resisters Work
+* submissions that can’t be admitted immediately are routed into the protector’s handling path
+* the protector may enqueue into a resister queue
+* the wire runs a drain loop that pulls items back out later and submits them directly into the wire
 
-A **Resister** functions as a **priority queue**, ensuring that the **most important elements are processed first**.  
-It dynamically **decays priority over time** to prevent starvation of lower-priority items.
-
-### ✅ **Key Mechanisms**
-
-- **Heap-Based Priority Queue** – Ensures elements are processed in the correct order.
-- **Requeue with Adjusted Priority** – Failed elements **re-enter the queue** but **lose priority over time**.
-- **Decay Mechanism** – Elements that **fail too often** will **gradually drop in priority**.
-- **Concurrency-Safe Processing** – Locking mechanisms ensure safe **multi-threaded access**.
-- **Queue Monitoring** – Sensors track queue **size, processing rates, and failure rates**.
+Resister is the queue in the middle.
 
 ---
 
-## 🔒 Standard Library First
+## ✅ What it does
 
-Like most of Electrician, the **Resister package is built entirely on Go’s standard library**, ensuring:
+| Capability           | Meaning                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| 🧱 Buffering         | Temporarily store items when immediate processing is not allowed.                          |
+| 🔁 Deferred re-entry | Items are replayed into the pipeline when tokens/capacity allow.                           |
+| 🧵 Concurrency-safe  | Safe for concurrent producers + a consumer drain loop.                                     |
+| 🧯 Bounded behavior  | Policies like max depth / drop behavior / retry attempt limits are implementation-defined. |
 
-✅ **Maximum compatibility** – No unnecessary third-party dependencies.  
-✅ **Minimal attack surface** – Secure and easy to audit.  
-✅ **High performance** – Optimized for **low-latency, high-throughput queueing**.
+What it does **not** do (by default):
 
-Electrician follows a **strict standard-library-first** approach, ensuring long-term maintainability.
+* priority scheduling
+* time-based decay
+* persistence
+
+If you need those, implement them explicitly and document the policy.
+
+---
+
+## 🔧 How draining works (paired with Surge Protector + Wire)
+
+Electrician’s wire integration is intentionally simple:
+
+1. A background loop wakes on a cadence (usually tied to the protector’s refill interval).
+2. It attempts to acquire capacity (`TryTake`).
+3. If capacity is available, it dequeues one item.
+4. It submits that item **directly** into the wire (bypassing the surge protector) so queued work doesn’t get re-queued.
+
+This avoids feedback loops and keeps the queue mechanism isolated.
 
 ---
 
-## 🔧 Extending the Resister Package
+## 📦 Contract expectations
 
-To **add new functionality** to the Resister package, follow this structured **workflow**:
+The concrete interfaces live in `pkg/internal/types`.
 
-### 1️⃣ Modify `types/`
+At minimum, the resister/queue side needs to support the semantics the surge protector and wire depend on:
 
-- **Define the new method** inside `types/resister.go`.
-- This ensures **all implementations remain consistent**.
+* enqueue a wrapped element
+* dequeue one element (or return an error/empty)
+* report current depth
 
-### 2️⃣ Implement the logic in `api.go`
-
-- The `api.go` file inside the **resister** package must now implement this method.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **declarative-style queue configuration**.
-
-### 4️⃣ Ensure `notify.go` handles event logging (if applicable)
-
-- If your change introduces **new queue-related events**, add corresponding **logging and telemetry hooks**.
-
-### 5️⃣ Unit Testing (`resister_test.go`)
-
-- **Write tests** to verify the **priority queue logic and decay mechanisms**.
-
-By following these steps, Electrician maintains **stability, compatibility, and strict type safety**.
+If the system tracks retry attempts (e.g. a max attempt budget for queued items), that should be part of the element wrapper or queue policy.
 
 ---
+
+## 🎛️ Design constraints
+
+Resister exists to protect the hot path, so constraints are strict:
+
+* ✅ enqueue should be fast and bounded
+* ✅ dequeue should be non-blocking or cancellation-aware
+* ✅ queue operations should not allocate per-op beyond what the caller already did
+* ✅ the drain loop must stop cleanly on context cancellation
+
+If you require durability, ordering guarantees across restarts, or cross-process coordination, you want a real system boundary (Kafka, SQS, NATS, etc.) — not an in-memory resister.
+
+---
+
+## 🔧 Extending the package
+
+When changing queue behavior, be explicit about policy:
+
+* ordering (FIFO/LIFO/priority)
+* capacity and drop behavior
+* retry attempt tracking (if any)
+* cancellation semantics
+
+If a change impacts cross-component behavior, update `types/resister.go` first, then implement it here, then expose it via `builder` if it’s a user-facing knob.
 
 ## 📖 Further Reading
 

@@ -1,86 +1,95 @@
 # 📜 Internal Logger Package
 
-The **Internal Logger** package provides high-performance, structured logging for Electrician.  
-Unlike most of Electrician, which exclusively relies on the **Go standard library**, this package uses **Zap**,  
-the industry-standard structured logger from Uber, for **performance and efficiency**.
+The **internal logger** package provides a Zap-backed implementation of Electrician’s logging interface (`types.Logger`).
 
-Zap offers **zero-allocation logging**, making it the fastest structured logger available for Go.
+Electrician components emit structured events (start/stop/submit/errors/etc.) as key/value pairs. This package is the default “structured logger” implementation used by the framework.
 
 ---
 
-## 📦 Package Overview
+## ✅ What it is
 
-| Feature                       | Description                                                         |
-| ----------------------------- | ------------------------------------------------------------------- |
-| **Blazing-Fast Logging**      | Uses **Zap** for **low-latency structured logging**.                |
-| **Multiple Log Sinks**        | Supports **stdout, file-based, and network sinks** for flexibility. |
-| **Structured JSON Logs**      | Provides **machine-readable** logs for easy ingestion.              |
-| **Dynamic Log Level Control** | Adjust log levels **without restarting** the application.           |
-| **Caller Tracing**            | Includes **caller depth tracking** to maintain accurate trace logs. |
+* A **Zap-based logger** wired to Electrician’s `types.Logger` contract.
+* A **structured logging** sink for pipeline events.
+* A place to standardize field shapes (component metadata, event names, results, errors).
 
----
+## ❌ What it isn’t
 
-## 📂 Package Structure
+* A promise of “zero allocations everywhere.”
+* A metrics system (that’s meters + sensors).
+* A network transport.
 
-| File                       | Purpose                                                     |
-| -------------------------- | ----------------------------------------------------------- |
-| **api.go**                 | Public API for logging operations.                          |
-| **internal.go**            | Low-level logic for managing **Zap logger configuration**.  |
-| **notify.go**              | Handles **log event sinks** and structured log output.      |
-| **options.go**             | Functional options for **log customization**.               |
-| **internallogger.go**      | Core **Type Definition and Constructor**.                   |
-| **internallogger_test.go** | Unit tests for **log performance, output, and formatting**. |
+Zap is chosen because it’s widely deployed and designed for **low-overhead structured logging**. Actual allocation behavior depends on how you use it.
 
 ---
 
-## 🔧 How Logging Works
+## 🧠 How it’s used by the pipeline
 
-Electrician’s **Internal Logger** provides high-speed logging **without sacrificing flexibility**.
+Core components (e.g. `wire`) call into loggers with the pattern:
 
-### ✅ **Key Mechanisms**
+* `level` (debug/info/warn/error…)
+* `msg`
+* `keysAndValues ...interface{}`
 
-- **Multiple Output Sinks:** Logs can be written to **stdout, files, or network-based sinks**.
-- **Structured JSON Logging:** Ensures **logs are easily parsed and machine-readable**.
-- **Dynamic Log Levels:** Supports **Debug, Info, Warn, Error, Fatal, Panic** dynamically.
-- **Caller Depth Customization:** Ensures accurate **tracebacks even in deep call stacks**.
+To keep hot paths lean, components may skip log calls when there are no connected loggers.
 
-### ✅ **Lifecycle Management**
+### Level filtering
 
-| Method                      | Description                                             |
-| --------------------------- | ------------------------------------------------------- |
-| `Debug() / Info() / Warn()` | Logs messages at different **severity levels**.         |
-| `SetLevel()`                | Dynamically **adjusts logging level** at runtime.       |
-| `AddSink()`                 | Adds a **new log output sink** (file, network, stdout). |
-| `Flush()`                   | Ensures **all logs are written before shutdown**.       |
+Some components optionally check for a level gate via:
+
+```go
+type levelChecker interface { IsLevelEnabled(types.LogLevel) bool }
+```
+
+If your logger implements `IsLevelEnabled`, components can avoid emitting logs at disabled levels (less work and fewer allocations).
+
+---
+
+## 🚄 Performance stance (accurate)
+
+Zap is optimized for structured logging, but “zero alloc” depends on usage.
+
+To keep overhead down:
+
+* Prefer typed fields over string formatting.
+* Avoid `fmt.Sprintf` in log paths.
+* Avoid logging large structs/maps on hot paths.
+* Gate noisy logs behind `Debug` and ensure debug is disabled in production.
+
+If you need hard numbers, benchmark with your actual event volume and field payload sizes.
 
 ---
 
-## 🔧 Extending the Internal Logger Package
+## 📂 Package structure
 
-To **add new logging functionality**, follow this structured **workflow**:
-
-### 1️⃣ Modify `types/`
-
-- Define new **log levels, output sinks, or metadata options** inside `types/logger.go`.
-- This ensures **all implementations remain consistent**.
-
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file contains **public API methods** – update it accordingly.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Extend `notify.go` for new log events
-
-- If new log types are introduced, add **event handlers for structured logging**.
-
-### 5️⃣ Unit Testing (`internallogger_test.go`)
-
-- **Ensure logging performance, output formatting, and error handling are verified**.
+| File                | Purpose                              |
+| ------------------- | ------------------------------------ |
+| `internallogger.go` | Type definition + constructor        |
+| `api.go`            | Methods that satisfy `types.Logger`  |
+| `options.go`        | Functional options for configuration |
+| `internal.go`       | Zap configuration helpers            |
+| `*_test.go`         | Tests                                |
 
 ---
+
+## ⚙️ Configuration model
+
+Configuration is intended to be done at construction time via options (typically exposed through `pkg/builder`).
+
+Common knobs in a Zap-backed logger (exact options depend on the builder wrapper):
+
+* output encoding (JSON vs console)
+* minimum log level
+* development vs production presets
+* caller / stacktrace behavior
+
+---
+
+## 🔧 Extending the internal logger
+
+* If you need new behavior exposed to consumers, add a builder option that configures the underlying Zap logger.
+* Only change `types/logger.go` if you need to change the **logging contract** across the framework.
+* Keep the logger implementation boring: logging must never become the bottleneck of the pipeline.
+
 
 ## 📖 Further Reading
 

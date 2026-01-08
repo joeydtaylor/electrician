@@ -1,96 +1,88 @@
 # 🔌 Conduit Package
 
-The **Conduit** package provides a **modular, high-performance data processing pipeline**  
-that efficiently routes data through multiple **Wires**, **Circuit Breakers**, **Generators**, and **Surge Protectors**.
+A **Conduit** is Electrician’s **composition layer**.
 
-Conduits act as **central processing hubs**, enabling **composable, fault-tolerant workflows**  
-within **streaming, batch, and event-driven architectures**.
+It links multiple components (most commonly multiple **Wires**) into a single logical pipeline so you can treat a multi-stage flow as “one thing” for lifecycle and submission.
 
----
-
-## 📦 Package Overview
-
-| Feature                     | Description                                                        |
-| --------------------------- | ------------------------------------------------------------------ |
-| **Multi-Wire Processing**   | Supports **chained, parallel, or sequential** data pipelines.      |
-| **Circuit Breaker Support** | Prevents failures from cascading by isolating **faulty segments**. |
-| **Surge Protection**        | Dynamically throttles throughput during **high-load conditions**.  |
-| **Generator Integration**   | Seamlessly connects **Plug-based data sources**.                   |
-| **Logging & Telemetry**     | **Zap-based logging** + **Sensor metrics** for real-time insights. |
+Conduit is not a new processing engine. The work still happens inside the stages you attach (wires, relays, etc.). Conduit’s job is orchestration and routing.
 
 ---
 
-## 📂 Package Structure
+## ✅ What a Conduit does
 
-| File                | Purpose                                                              |
-| ------------------- | -------------------------------------------------------------------- |
-| **api.go**          | Public API for **configuring and managing Conduits**.                |
-| **options.go**      | Functional options for **customizing conduit behavior**.             |
-| **conduit.go**      | Core **Type Definition and Constructor**.                            |
-| **conduit_test.go** | Unit tests ensuring **stability, performance, and fault tolerance**. |
-
----
-
-## ⚡ Notable Dependencies
-
-Electrician is **almost entirely built on the Go standard library**, with two key exceptions:
-
-1. **Logging:** Uses [Zap](https://github.com/uber-go/zap) – the most performant structured logger for Go.
-2. **Compression & Encoding (Protobuf Relay Only):**  
-   Uses widely adopted **ZSTD, Snappy, Brotli, LZ4, and Deflate** for optimized performance.
-
-Everything else is built **directly on Go’s standard library**, keeping Electrician **lean, efficient, and self-contained**.
+| Capability                 | Meaning                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| 🔗 Stage composition       | Connect stages into a multi-step pipeline (most commonly wire → wire → …).   |
+| 🚦 Lifecycle orchestration | Start/stop/restart the composed stages as a unit.                            |
+| 📥 Unified submission      | Provide a single `Submit` surface that feeds the first stage.                |
+| 📤 Unified output          | Expose the “tail” output (typically the last stage’s output channel/buffer). |
 
 ---
 
-## 🔧 How Conduits Work
+## ❌ What a Conduit does *not* do
 
-A **Conduit** acts as a **data processing hub**, coordinating **wires, sensors, and flow control mechanisms**.
+* ❌ It does not magically add durability or delivery guarantees.
+* ❌ It is not a load balancer.
+* ❌ It does not replace circuit breakers/surge protectors/insulators — those are per-stage concerns.
 
-### ✅ **Key Mechanisms**
-
-- **Multi-Wire Execution:** Supports **parallel and sequential processing chains**.
-- **Dynamic Data Flow:** Routes elements **through multiple transformation steps**.
-- **Concurrency & Buffering:** Configurable **throughput and parallelism controls**.
-- **Integrated Error Handling:** Works with **Circuit Breakers, Surge Protectors, and Resisters**.
-
-### ✅ **Lifecycle Management**
-
-| Method     | Description                                                  |
-| ---------- | ------------------------------------------------------------ |
-| `Start()`  | Begins **data processing**, activating connected components. |
-| `Stop()`   | Gracefully **shuts down** all managed wires.                 |
-| `Submit()` | Pushes data **into the processing pipeline**.                |
-| `Load()`   | Retrieves **processed output from the last wire**.           |
+If you want resilience behaviors, attach them to the stages (e.g., breakers or surge protectors on wires) and let the conduit orchestrate those stages.
 
 ---
 
-## 🔧 Extending the Conduit Package
+## 🧠 How it fits in a pipeline
 
-To **add new functionality**, follow this **structured workflow**:
+A common shape:
 
-### 1️⃣ Modify `types/`
+**Generator → Wire (ingest/normalize) → Wire (transform/enrich) → Wire (encode/emit)**
 
-- Define the new **interface method** inside `types/conduit.go`.
-- This ensures **all implementations remain consistent**.
+A conduit gives you:
 
-### 2️⃣ Implement in `api.go`
+* one “thing” to start/stop
+* one “thing” to submit into
+* one “thing” to read output from
 
-- The `api.go` file must now **implement the new method**.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Extend `notify.go` for event logging
-
-- If your change introduces **new events**, update **logging and sensor hooks**.
-
-### 5️⃣ Unit Testing (`conduit_test.go`)
-
-- **Ensure performance, event handling, and fault tolerance are tested**.
+Under the hood, it forwards stage output into the next stage’s input using the contracts defined in `types/`.
 
 ---
+
+## ⚙️ Configuration contract
+
+Conduit follows Electrician’s standard model:
+
+✅ Configure → Start → Run → Stop/Restart
+
+* Build the stage chain before `Start()`.
+* Don’t mutate the stage list while running.
+
+If you need dynamic routing, model that explicitly (multiple conduits, explicit fan-out/fan-in stages, external brokers, etc.).
+
+---
+
+## 📂 Package structure
+
+| File         | Purpose                       |
+| ------------ | ----------------------------- |
+| `conduit.go` | Type definition + constructor |
+| `api.go`     | Public methods / wiring       |
+| `options.go` | Functional options (`With*`)  |
+| `*_test.go`  | Tests                         |
+
+---
+
+## 🔧 Extending Conduit
+
+When adding capability:
+
+* Cross-component contract change → update `types/conduit.go` first.
+* Conduit-only behavior → implement in `pkg/internal/conduit`.
+* User-facing knob → expose via `pkg/builder` (`ConduitWith…`).
+
+Tests should cover:
+
+* correct stage chaining
+* start/stop behavior across all stages
+* cancellation behavior
+* no goroutine leaks when downstream stages stop
 
 ## 📖 Further Reading
 

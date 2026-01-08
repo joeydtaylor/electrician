@@ -1,102 +1,102 @@
 # 🛡️ Surge Protector Package
 
-The **Surge Protector** is a **load-balancing and overload protection mechanism** for Electrician pipelines.  
-It prevents **system failures** by controlling data flow under high load conditions, redistributing traffic to **backup systems**, and enforcing **rate limits**.
+The **Surge Protector** is Electrician’s **admission control + smoothing layer**.
 
-Surge Protectors are essential for **stabilizing throughput**, preventing **queue overflows**, and ensuring **graceful degradation** in high-demand environments.
+It sits in front of a hot pipeline (typically a **Wire**) and prevents overload by:
 
----
+* 🪙 enforcing **rate limits** (token/refill style)
+* 🧱 optionally **buffering** excess work in a *resister queue*
+* 🧯 providing a **tripped** mode where normal submission is bypassed and the protector takes over handling
 
-## 📦 Package Overview
-
-| Feature                       | Description                                                               |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| **Rate Limiting**             | Limits the number of requests processed over time.                        |
-| **Blackout Periods**          | Temporarily disables processing during predefined time windows.           |
-| **Backup Systems**            | Redirects traffic to alternate pipelines during overload.                 |
-| **Resister Integration**      | Uses a **priority queue** to buffer and manage excess traffic.            |
-| **Event Logging & Telemetry** | Supports **real-time monitoring** via **sensors and structured logging**. |
+It’s not “load balancing” in the cluster sense. It’s **backpressure control** at the edge of a pipeline.
 
 ---
 
-## 📂 Package Structure
+## ✅ What it does
 
-Each file follows **Electrician’s structured approach**, ensuring a **clear separation of concerns**.
-
-| File                       | Purpose                                                                         |
-| -------------------------- | ------------------------------------------------------------------------------- |
-| **api.go**                 | Public API methods for managing Surge Protectors.                               |
-| **internal.go**            | Low-level logic for managing surge conditions and backpressure.                 |
-| **notify.go**              | Handles **event logging, sensor notifications, and telemetry hooks**.           |
-| **options.go**             | Functional options for configuring Surge Protectors in a **composable manner**. |
-| **surgeprotector.go**      | Core **Type Definition and Constructor**.                                       |
-| **surgeprotector_test.go** | Unit tests ensuring **correctness, performance, and fault tolerance**.          |
+| Capability                   | What it means in practice                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 🪙 Rate limiting             | Limit how quickly items enter the hot path (`TryTake` gating).                                                      |
+| 🧱 Resister queue (optional) | When rate limited/tripped, queue items for later processing. Ordering is implementation-defined (FIFO vs priority). |
+| 🚦 Trip / reset behavior     | A tripped protector forces submissions into the protector path rather than direct processing.                       |
+| 📡 Telemetry hooks           | The wire can emit events when submissions are deferred/tripped (loggers/sensors).                                   |
 
 ---
 
-## 🔧 How Surge Protectors Work
+## 🧠 How it works with Wire
 
-A **Surge Protector** acts as a **guardrail** for processing pipelines, ensuring that bursts of incoming data do not overwhelm the system.
+When a surge protector is attached to a `Wire`, the submission path changes:
 
-### ✅ **Core Responsibilities**
+### 1) Normal case (not tripped, tokens available)
 
-- **Rate Limiting:** Prevents excessive processing load by enforcing token-based request control.
-- **Backup Routing:** Automatically redirects excess traffic to **alternative processing units**.
-- **Blackout Periods:** Allows scheduled downtime or controlled failure handling.
-- **Resister Queue:** Implements a **priority-based buffering system** for deferred processing.
+* `Wire.Submit` checks `sp.IsBeingRateLimited()` and calls `sp.TryTake()`.
+* If a token is available, the element is submitted normally into the wire’s input channel.
 
-### ✅ **Lifecycle Management**
+### 2) Rate limited (no token available)
 
-| Method           | Description                                                    |
-| ---------------- | -------------------------------------------------------------- |
-| `Trip()`         | Activates surge protection, halting normal data flow.          |
-| `Reset()`        | Restores normal operation and restarts managed components.     |
-| `IsTripped()`    | Checks if the Surge Protector is actively restricting traffic. |
-| `AttachBackup()` | Connects **backup processing systems** for failover.           |
+* `Wire.Submit` emits a rate-limit notification (best-effort telemetry).
+* The element is wrapped and handed to `sp.Submit(...)` for protector-side handling (typically queueing).
 
----
+### 3) Tripped
 
-## 🔒 Standard Library First
+* The element is routed directly to `sp.Submit(...)`.
 
-Like most of Electrician, the **Surge Protector package is built entirely on Go’s standard library**.  
-This ensures:
+### 4) Resister draining loop
 
-✅ **Maximum compatibility** – No unnecessary third-party dependencies.  
-✅ **Minimal attack surface** – Secure and easy to audit.  
-✅ **High performance** – Optimized for **low-latency, high-throughput processing**.
+If the protector reports that a resister queue is connected (`IsResisterConnected()`), the wire starts a background drain loop at `Start()`.
 
-Electrician adheres to a **strict standard-library-first** philosophy, ensuring long-term maintainability.
+That loop:
+
+* wakes on a cadence derived from the protector’s refill interval (or a conservative fallback)
+* tries to take a token (`TryTake()`)
+* dequeues one item (`Dequeue()`)
+* submits it **directly** into the wire (bypassing the surge protector) so queued work doesn’t get re-queued
+
+The loop stops when the wire context is cancelled or the queue is empty.
 
 ---
 
-## 🔧 Extending the Surge Protector Package
+## 🔧 Contract expectations (what Wire uses)
 
-To **add new functionality** to the Surge Protector package, follow this structured **workflow**:
+A surge protector implementation is expected to provide methods with semantics equivalent to:
 
-### 1️⃣ Modify `types/`
+* `IsTripped()`
+* `Trip()` / `Reset()` (if supported by the implementation)
+* `IsBeingRateLimited()`
+* `TryTake()` (non-blocking token acquisition)
+* `GetTimeUntilNextRefill()` (used for “next attempt” telemetry)
+* `GetRateLimit()` (includes refill interval and retry policy tuning)
+* `Submit(ctx, element)` (protector-side handling: queue/drop/redirect depending on implementation)
+* `IsResisterConnected()`, `Dequeue()`, `GetResisterQueue()`
+* `ConnectComponent(...)` (wires itself into the component graph)
 
-- **Define the new interface method** inside `types/surgeprotector.go`.
-- This ensures **all implementations remain consistent**.
-
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file inside the **surgeprotector** package must now implement this method.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Ensure `notify.go` handles event logging (if applicable)
-
-- If your change introduces **new events**, add corresponding **logging and telemetry hooks**.
-
-### 5️⃣ Unit Testing (`surgeprotector_test.go`)
-
-- **Write tests** to verify that the new functionality works as expected.
-
-By following these steps, Electrician maintains **stability, compatibility, and strict type safety**.
+The exact type names live in `pkg/internal/types`.
 
 ---
+
+## 🎛️ Design constraints
+
+Surge protection exists to protect the hot path, so the design constraints are strict:
+
+* ✅ submission should not block the pipeline
+* ✅ protector handling should be bounded (queue depth + policy)
+* ✅ telemetry must be best-effort (never stall processing)
+
+If you need “hard” delivery guarantees, enforce them at the system boundary (durable queues, retry policies, idempotency) and treat the surge protector as a local control mechanism.
+
+---
+
+## 🔧 Extending the package
+
+* If you need new cross-component behavior, update `types/surgeprotector.go` first.
+* Then implement it in `pkg/internal/surgeprotector`.
+* Add builder exposure via `SurgeProtectorWith…` / `WireWithSurgeProtector` as appropriate.
+* Add tests that cover:
+
+  * rate limit behavior
+  * queueing/draining
+  * trip/reset semantics
+  * cancellation behavior
 
 ## 📖 Further Reading
 

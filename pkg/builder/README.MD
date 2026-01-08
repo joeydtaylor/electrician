@@ -1,120 +1,128 @@
 # 🏗️ Builder Package
 
-The **builder** package provides the **public API** for constructing and configuring Electrician’s core components. It acts as the **entry point** for users to create, customize, and assemble pipelines using functional options.
+The `builder` package is Electrician’s **public construction layer**.
 
-Instead of directly interacting with **internal** packages, users interface with Electrician **exclusively** through the builder package, which ensures a **clean, composable, and user-friendly** experience.
+It provides ergonomic constructors (`NewWire`, `NewConduit`, `NewRelay`, etc.) plus a consistent set of **functional options** (`WireWith…`, `ConduitWith…`, …) so you can assemble pipelines without reaching into implementation details.
 
----
-
-## 📦 Package Overview
-
-The builder package exposes **high-level factories** for each Electrician component. These functions provide a structured way to create and configure objects without requiring users to manage **internal details**.
-
-| File                  | Description                                                                            |
-| --------------------- | -------------------------------------------------------------------------------------- |
-| **adapter.go**        | Creates external data source adapters (e.g., HTTP, OAuth2).                            |
-| **builder.go**        | Houses core logic for constructing and initializing components.                        |
-| **circuitbreaker.go** | Provides an interface for failure detection and recovery mechanisms.                   |
-| **codec.go**          | Enables encoding and decoding support for data serialization.                          |
-| **conduit.go**        | Constructs **multi-stage processing units** by linking multiple Wires together.        |
-| **forwardrelay.go**   | Builds components for **sending** data via gRPC (outgoing messages).                   |
-| **generator.go**      | Configures autonomous **data generators** that feed Wires.                             |
-| **logger.go**         | Exposes logging functionalities for debugging and monitoring.                          |
-| **meter.go**          | Provides **performance metrics**, throughput tracking, and concurrency monitoring.     |
-| **plug.go**           | Constructs **pluggable data sources** (like adapters or functions) for pipelines.      |
-| **receivingrelay.go** | Builds components for **receiving** external data via gRPC.                            |
-| **resister.go**       | Implements queue-based **rate limiting** and message resisters.                        |
-| **sensor.go**         | Creates sensors that collect **telemetry and real-time monitoring** data.              |
-| **surgeprotector.go** | Constructs **load-balancing and overload prevention** components.                      |
-| **utils.go**          | Provides helper functions for Electrician’s internal operations.                       |
-| **wire.go**           | Constructs the **core data processing units** (Wires) and enables their configuration. |
+Under the hood, `builder` wraps the engine in `pkg/internal/*`.
 
 ---
 
-## ⚙️ Functional Options & Configuration
+## 🔒 Import boundary
 
-Electrician’s **builder API** follows the **functional options pattern**, allowing users to configure components in a declarative, readable way. Instead of requiring complex constructor parameters, the builder provides **composable options**.
+Electrician uses a “public surface + private engine” layout:
 
-For example, when constructing a **Wire**, users can configure it via options:
+* `pkg/builder` is intended for consumers of the module.
+* `pkg/internal/*` is private to `pkg/*` (enforced by Go’s `internal/` rule).
+
+Practically:
+
+* ✅ packages under `pkg/` can import `pkg/internal/...`
+* ❌ external consumers cannot import `pkg/internal/...`
+
+So `builder` is where the stable, user-facing API lives.
+
+---
+
+## 📦 What builder does
+
+* 🧱 **Constructs components** with sane defaults.
+* 🧩 **Applies options** consistently (configuration-time wiring).
+* 🔁 **Keeps internal packages swappable** (internal implementations can evolve without forcing API churn).
+
+`builder` is intentionally thin: it should not add runtime overhead to the hot path.
+
+---
+
+## ⚙️ Functional options
+
+Electrician’s public API uses the functional options pattern to keep constructors clean and composable.
+
+Example (Wire):
 
 ```go
-wire := builder.NewWire[string](
+w := builder.NewWire[string](
     ctx,
-    builder.WireWithCircuitBreaker(circuitBreaker),
-    builder.WireWithGenerator(generator),
-    builder.WireWithTransformer(transformFunc),
-    builder.WireWithLogger(logger),
+    builder.WireWithConcurrencyControl[string](1024, 8),
+    builder.WireWithTransformer[string](func(v string) (string, error) {
+        return strings.ToUpper(v), nil
+    }),
+    builder.WireWithCircuitBreaker[string](cb),
+    builder.WireWithSurgeProtector[string](sp),
+    builder.WireWithSensor[string](sensor),
 )
 ```
 
-## 🚀 Why Use the Builder Package?
+Notes:
 
-✅ **Encapsulation** – Shields users from internal implementation details.  
-✅ **Immutability** – Encourages pre-configured, deterministic pipeline construction.  
-✅ **Declarative Composition** – Options provide composable, functional-style configuration.  
-✅ **Extensibility** – New features can be added without breaking existing APIs.  
-✅ **Simplicity** – Eliminates complex struct initialization, reducing user error.
+* Options are meant to be applied **before** `Start()`.
+* Configuration mutation while running is not supported.
 
 ---
 
-## 🏗️ How It Works
+## 🧠 How builder maps to internal
 
-Each function in `builder/` serves as a **factory** that wraps the corresponding **internal** component.
+The pattern is consistent across components:
 
-For example, creating a **Wire** follows this pattern:
+1. `builder.NewX(...)` delegates to `pkg/internal/x.NewX(...)`.
+2. `builder.XWithY(...)` options call the underlying component’s connect/set method.
+3. The returned value is a ready-to-start component implementing the shared `types` contract.
 
-### 1️⃣ Instantiate the Component (Internal Call)
+This gives you:
 
-- `NewWire[T]` calls the **internal** `wire.NewWire[T]` function.
-
-### 2️⃣ Apply Functional Options
-
-- Each `WireWithOption()` function **wraps internal API calls**, allowing seamless configuration.
-
-### 3️⃣ Return a Fully Configured Instance
-
-- The user gets a **ready-to-use Wire** without modifying internal code.
-
-### 🔹 Example: Wire Construction
-
-The following builder function:
-
-```go
-func NewWire[T any](ctx context.Context, options ...types.Option[types.Wire[T]]) types.Wire[T] {
-    return wire.NewWire[T](ctx, options...)
-}
-```
-
-- Calls `wire.NewWire[T]` from the **internal** package.
-- Accepts **functional options** that modify its behavior.
-- Returns a fully configured **Wire** object.
-
-Similarly, each Electrician component—**Circuit Breakers, Surge Protectors, Sensors, etc.**—follows the same structured API.
+* stable constructors
+* predictable option naming
+* internal flexibility without exposing internals
 
 ---
 
-## 🔧 Extending the Builder Package
+## 📂 Package layout
 
-To **add new functionality**, follow this structured **workflow**:
+Builder exposes one file per component family (names may vary as the repo evolves, but the idea holds):
 
-### 1️⃣ Modify `types/`
+| File                | Responsibility                                |
+| ------------------- | --------------------------------------------- |
+| `wire.go`           | Wire constructor + Wire options (`WireWith…`) |
+| `conduit.go`        | Conduit constructor + options                 |
+| `circuitbreaker.go` | Circuit breaker constructor + options         |
+| `surgeprotector.go` | Surge protector constructor + options         |
+| `resister.go`       | Resister/queue wiring + options               |
+| `sensor.go`         | Sensor constructor + options                  |
+| `meter.go`          | Meter constructor + options                   |
+| `logger.go`         | Logger constructors/adapters + options        |
+| `codec.go`          | Encoder/decoder helpers + options             |
+| `adapter.go`        | Integration adapters (HTTP, auth, etc.)       |
+| `forwardrelay.go`   | Outbound relay constructors/options           |
+| `receivingrelay.go` | Inbound relay constructors/options            |
+| `plug.go`           | Plug constructors/options                     |
+| `generator.go`      | Generator constructors/options                |
 
-- If a new method is needed, **update the interface** in `types/`.
-- This ensures **consistent contracts** across components.
+---
 
-### 2️⃣ Implement in `internal/`
+## 🚄 Performance stance
 
-- Add the actual method in the respective **internal package (`api.go`)**.
+Builder is configuration-time glue. The performance characteristics of a running pipeline are dominated by the internal engine (especially `wire`).
 
-### 3️⃣ Create a Builder Function
+If you’re optimizing throughput:
 
-- Define a `NewComponent()` function in `builder/`.
+* keep the hot path minimal (transform + emit)
+* keep telemetry and encoding opt-in
+* prefer worker-local state (factory transforms / scratch buffers) over shared pooling unless measured
 
-### 4️⃣ Expose Functional Options
+---
 
-- Add corresponding `ComponentWithOption()` functions for composability.
+## 🔧 Extending builder
 
-By following these steps, Electrician maintains **uniformity** and **backward compatibility** across all components.
+When you add a capability, keep the layering clean:
+
+1. Add/extend the contract in `pkg/internal/types` (if it’s cross-component).
+2. Implement it in the relevant `pkg/internal/*` component.
+3. Expose it through `pkg/builder` via:
+
+   * a constructor update (if needed), and/or
+   * a new `XWith…` option.
+
+The goal is for consumers to never need to touch `pkg/internal/*`.
 
 ---
 

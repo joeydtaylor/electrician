@@ -1,82 +1,117 @@
-# 🔌 Relay Package – gRPC Communication Layer
+# 🔌 Relay Package (gRPC + Protobuf bindings)
 
-The **Relay package** provides **gRPC-based communication** for Electrician components, enabling **high-performance, structured message exchange** between distributed services.
+The `relay` package contains the **generated Go bindings** for Electrician’s relay protocol.
 
-This package **facilitates reliable transport** of Electrician pipeline data, ensuring **fault-tolerant message delivery** with **metadata handling, error reporting, and optional compression**.
+This package is intentionally thin:
 
----
+* ✅ protobuf message types used across Electrician services
+* ✅ gRPC client/server interfaces for the relay service
+* ❌ no “reliable delivery” guarantees by itself
+* ❌ no compression/encryption/auth implementation (those are handled by the relays/adapters that *use* these types)
 
-## 📦 Package Overview
-
-| Feature                       | Description                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------- |
-| **gRPC Streaming**            | Supports **both unary and bidirectional streaming** for efficient transport. |
-| **Message Wrapping**          | Encapsulates data with **metadata, timestamps, and compression settings**.   |
-| **Error Handling**            | Provides **detailed error metadata** for robust debugging.                   |
-| **Tracing & Priority Queues** | Supports **trace IDs** and **priority-based message handling**.              |
-| **Compression Support**       | Optimizes bandwidth with **ZSTD, Brotli, LZ4, Snappy, and Deflate**.         |
+If you’re looking for implementation logic, it lives in packages like `forwardrelay/` and `receivingrelay/`. This package is the shared contract.
 
 ---
 
-## 📂 Package Structure
+## 📦 What’s in this package
 
-| File                 | Purpose                                                       |
-| -------------------- | ------------------------------------------------------------- |
-| **relay.pb.go**      | **Compiled Go bindings** for Protobuf messages.               |
-| **relay_grpc.pb.go** | **Compiled Go bindings** for gRPC client & server interfaces. |
+| File               | What it is                                |
+| ------------------ | ----------------------------------------- |
+| `relay.pb.go`      | Generated Go types for messages/enums     |
+| `relay_grpc.pb.go` | Generated gRPC client + server interfaces |
 
----
-
-## 🔧 How Relay Works
-
-A **Relay Service** in Electrician acts as a **high-efficiency messaging layer** that supports **streaming and direct message passing** between components.
-
-### ✅ **Core Message Structure**
-
-Each message is **wrapped in a structured payload** that includes:
-
-- **Unique ID** – Ensures **traceability** in distributed environments.
-- **Timestamp** – Supports **event ordering** and **latency tracking**.
-- **Payload Data** – The **actual message content**.
-- **Metadata** – **Headers, priority, versioning, and tracing** details.
-- **Error Info** – **Standardized error codes and descriptions**.
-
-### ✅ **Key RPC Methods**
-
-| Method            | Description                                                          |
-| ----------------- | -------------------------------------------------------------------- |
-| **Receive**       | Sends a single `WrappedPayload` and returns an acknowledgment.       |
-| **StreamReceive** | Supports **bidirectional streaming** for real-time message exchange. |
+These files are generated from the repo’s `.proto` definition. Do not hand-edit them.
 
 ---
 
-## 🔧 Extending the Relay Package
+## 🧬 Key message types
 
-To **modify or extend the relay service**, follow this structured **workflow**:
+### `WrappedPayload`
 
-### 1️⃣ Modify `proto/electrician_relay.proto`
+A single envelope around an opaque `payload` (`bytes`) plus context:
 
-- **Add new fields** or **define additional RPC methods**.
-- **Ensure backward compatibility** with existing messages.
+* `id`, `timestamp`, `seq`
+* `payload` bytes
+* `metadata` (headers/content_type/version/trace_id/priority + perf/security/auth fields)
+* `error_info` (optional structured error attachment)
 
-### 2️⃣ Regenerate Go Bindings
+`payload` is deliberately unopinionated: Electrician treats it as bytes. The meaning is conveyed via `content_type` and headers.
 
-- Recompile the gRPC service using the standard Protobuf tooling.
+### `RelayEnvelope` (streaming)
 
-### 3️⃣ Implement New gRPC Methods
+Bidirectional streaming uses a `oneof` envelope:
 
-- Add new methods in `relay_grpc.pb.go` **(or manually extend via an interface wrapper)**.
+* `StreamOpen` — establishes defaults + ack strategy
+* `WrappedPayload` — the data messages
+* `StreamClose` — close reason
 
-### 4️⃣ Ensure Compatibility with Electrician Pipelines
+### `StreamAcknowledgment`
 
-- Update **relay clients** across Electrician components.
-- Validate that **metadata, compression, and error handling remain intact**.
+Application-level ack fields used by unary and streaming calls:
 
-### 5️⃣ Unit Testing & Benchmarking
+* `success`, `message`, `code`, `retryable`
+* `id`, `seq`, `stream_id`
+* batch/stream summary fields: `last_seq`, `ok_count`, `err_count`
 
-- **Simulate network conditions** to ensure **fault-tolerant message delivery**.
+Acks are **application status**, not transport guarantees.
 
 ---
+
+## 🗜️ Compression / 🔐 Encryption / 🪪 Auth (metadata, not magic)
+
+The schema includes fields for:
+
+* compression preferences (`PerformanceOptions`, `CompressionAlgorithm`)
+* payload encryption declaration (`SecurityOptions`, `EncryptionSuite`)
+* auth hints (`AuthenticationOptions`) and verified auth facts (`AuthContext`)
+
+Important:
+
+* Protobuf/gRPC does not automatically compress or encrypt your `payload` based on these fields.
+* These fields describe **intent and context**. Implementations decide what to enforce.
+* `priority` and similar fields are **hints**; there is no built-in priority scheduling in this package.
+
+---
+
+## 🛰️ gRPC service surface
+
+The generated service is:
+
+* `Receive(WrappedPayload) -> StreamAcknowledgment`
+* `StreamReceive(stream RelayEnvelope) <-> stream StreamAcknowledgment`
+
+Server implementations should live outside this generated package (e.g., in a relay/adapter component). Do not modify generated files to add behavior.
+
+---
+
+## 🔧 Making changes (safe workflow)
+
+1. Update the `.proto` file.
+2. Regenerate bindings.
+3. Update the server/client implementations that use the new fields.
+
+Compatibility rules:
+
+* never reuse field numbers
+* only add new fields with new numbers
+* keep enums append-only
+* don’t change meaning of existing fields
+
+---
+
+## 🛠️ Regenerating Go bindings
+
+From repo root (assuming the proto is under `proto/`):
+
+```bash
+protoc \
+  -I=proto \
+  --go_out=pkg/internal/relay \
+  --go_opt=paths=source_relative \
+  --go-grpc_out=pkg/internal/relay \
+  --go-grpc_opt=paths=source_relative \
+  proto/electrician_relay.proto
+```
 
 ## 📖 Further Reading
 
