@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
@@ -35,23 +36,42 @@ func mustAES() string {
 	if err != nil || len(raw) != 32 {
 		log.Fatalf("bad AES key: %v", err)
 	}
+	// NOTE: key is raw bytes stored in a Go string (ok for your decrypt/encrypt funcs).
 	return string(raw)
 }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() { <-sigs; fmt.Println("Shutting down..."); cancel() }()
+	defer signal.Stop(sigs)
+	go func() {
+		<-sigs
+		fmt.Println("Shutting down...")
+		cancel()
+	}()
 
 	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
 
-	// Wires & drains (no transforms)
-	wireA := builder.NewWire[Feedback](ctx, builder.WireWithLogger[Feedback](logger))
-	wireB := builder.NewWire[Feedback](ctx, builder.WireWithLogger[Feedback](logger))
-	conduitA := builder.NewConduit(ctx, builder.ConduitWithWire(wireA))
-	conduitB := builder.NewConduit(ctx, builder.ConduitWithWire(wireB))
+	// Wires (must be STARTED or they never drain / close)
+	// Give them real buffers so Receive -> Wire doesn't backpressure immediately.
+	workers := runtime.GOMAXPROCS(0)
+
+	wireA := builder.NewWire[Feedback](
+		ctx,
+		builder.WireWithLogger[Feedback](logger),
+		builder.WireWithConcurrencyControl[Feedback](16384, workers),
+	)
+	wireB := builder.NewWire[Feedback](
+		ctx,
+		builder.WireWithLogger[Feedback](logger),
+		builder.WireWithConcurrencyControl[Feedback](16384, workers),
+	)
+
+	_ = wireA.Start(ctx)
+	_ = wireB.Start(ctx)
 
 	// TLS (server)
 	tlsCfg := builder.NewTlsServerConfig(
@@ -63,39 +83,33 @@ func main() {
 		tls.VersionTLS13, tls.VersionTLS13,
 	)
 
-	// Decryption must match forwarder
 	decKey := mustAES()
 
-	// =======================
 	// AUTH: JWKS ONLY
-	// =======================
 	issuerBase := envOr("OAUTH_ISSUER_BASE", "https://localhost:3000")
 	jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/.well-known/jwks.json")
 
 	jwtOpts := builder.NewReceivingRelayOAuth2JWTOptions(
 		issuerBase,
 		jwksURL,
-		[]string{"your-api"},   // required audience(s)
-		[]string{"write:data"}, // required scope(s)
-		300,                    // cache/leeway seconds
+		[]string{"your-api"},
+		[]string{"write:data"},
+		300,
 	)
 
-	// no introspection configured here — jwks only
 	oauth := builder.NewReceivingRelayMergeOAuth2Options(jwtOpts, nil)
 	authOpts := builder.NewReceivingRelayAuthenticationOptionsOAuth2(oauth)
 
-	// Static headers you expect from forwarder
 	staticHeaders := map[string]string{"x-tenant": "local"}
 
 	recvA := builder.NewReceivingRelay[Feedback](
 		ctx,
-		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_A", "localhost:50053")),
-		builder.ReceivingRelayWithBufferSize[Feedback](1000),
+		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_A", "localhost:50051")),
+		builder.ReceivingRelayWithBufferSize[Feedback](16384),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput(wireA),
+		builder.ReceivingRelayWithOutput[Feedback](wireA),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
 		builder.ReceivingRelayWithDecryptionKey[Feedback](decKey),
-
 		builder.ReceivingRelayWithAuthenticationOptions[Feedback](authOpts),
 		builder.ReceivingRelayWithStaticHeaders[Feedback](staticHeaders),
 		builder.ReceivingRelayWithAuthRequired[Feedback](true),
@@ -103,13 +117,12 @@ func main() {
 
 	recvB := builder.NewReceivingRelay[Feedback](
 		ctx,
-		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_B", "localhost:50054")),
-		builder.ReceivingRelayWithBufferSize[Feedback](1000),
+		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_B", "localhost:50052")),
+		builder.ReceivingRelayWithBufferSize[Feedback](16384),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput(wireB),
+		builder.ReceivingRelayWithOutput[Feedback](wireB),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
 		builder.ReceivingRelayWithDecryptionKey[Feedback](decKey),
-
 		builder.ReceivingRelayWithAuthenticationOptions[Feedback](authOpts),
 		builder.ReceivingRelayWithStaticHeaders[Feedback](staticHeaders),
 		builder.ReceivingRelayWithAuthRequired[Feedback](true),
@@ -125,22 +138,24 @@ func main() {
 	fmt.Println("Receivers up (JWKS ONLY). Ctrl+C to stop.")
 	<-ctx.Done()
 
+	// Stop relays first so nothing is still feeding wires.
+	recvA.Stop()
+	recvB.Stop()
+
+	// Now drain wires safely (LoadAsJSONArray stops + drains without hanging).
 	fmt.Println("---- Receiver A ----")
-	if b, err := conduitA.LoadAsJSONArray(); err == nil {
+	if b, err := wireA.LoadAsJSONArray(); err == nil {
 		fmt.Println(string(b))
 	} else {
 		fmt.Println("A err:", err)
 	}
+
 	fmt.Println("---- Receiver B ----")
-	if b, err := conduitB.LoadAsJSONArray(); err == nil {
+	if b, err := wireB.LoadAsJSONArray(); err == nil {
 		fmt.Println(string(b))
 	} else {
 		fmt.Println("B err:", err)
 	}
 
-	recvA.Stop()
-	recvB.Stop()
-	wireA.Stop()
-	wireB.Stop()
 	fmt.Println("Done.")
 }

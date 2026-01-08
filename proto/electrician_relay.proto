@@ -6,6 +6,12 @@ package electrician;
 
 option go_package = "github.com/joeydtaylor/electrician/pkg/internal/relay";
 
+enum PayloadEncoding {
+  PAYLOAD_ENCODING_UNSPECIFIED = 0;
+  PAYLOAD_ENCODING_GOB = 1;
+  PAYLOAD_ENCODING_PROTO = 2;
+}
+
 message WrappedPayload {
   string id = 1;
   google.protobuf.Timestamp timestamp = 2;
@@ -13,6 +19,9 @@ message WrappedPayload {
   MessageMetadata metadata = 4;
   ErrorInfo error_info = 5;
   uint64 seq = 6;
+
+  PayloadEncoding payload_encoding = 7;
+  string payload_type = 8; // e.g. "electrician.Feedback" or type URL
 }
 
 message ErrorInfo {

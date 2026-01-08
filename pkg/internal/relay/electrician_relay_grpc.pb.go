@@ -27,9 +27,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RelayServiceClient interface {
-	// Unary stays the same (simple request/ack).
 	Receive(ctx context.Context, in *WrappedPayload, opts ...grpc.CallOption) (*StreamAcknowledgment, error)
-	// Streaming now uses the envelope to avoid per-message repeated metadata and allow ack batching.
 	StreamReceive(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RelayEnvelope, StreamAcknowledgment], error)
 }
 
@@ -68,9 +66,7 @@ type RelayService_StreamReceiveClient = grpc.BidiStreamingClient[RelayEnvelope, 
 // All implementations must embed UnimplementedRelayServiceServer
 // for forward compatibility.
 type RelayServiceServer interface {
-	// Unary stays the same (simple request/ack).
 	Receive(context.Context, *WrappedPayload) (*StreamAcknowledgment, error)
-	// Streaming now uses the envelope to avoid per-message repeated metadata and allow ack batching.
 	StreamReceive(grpc.BidiStreamingServer[RelayEnvelope, StreamAcknowledgment]) error
 	mustEmbedUnimplementedRelayServiceServer()
 }
