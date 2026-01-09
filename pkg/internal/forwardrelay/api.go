@@ -418,21 +418,22 @@ func WrapPayload[T any](
 	id := timestamp.AsTime().Format(time.RFC3339Nano)
 
 	metadata := &relay.MessageMetadata{
+		Headers: map[string]string{
+			"source": "go",
+		},
 		ContentType: "application/octet-stream",
 		Version: &relay.VersionInfo{
 			Major: 1,
 			Minor: 0,
 		},
 		Performance: perfOpts,
-
-		// Attach SecurityOptions to the metadata so the receiver knows which suite is used
-		Security: secOpts,
+		Security:    secOpts,
 	}
 
 	return &relay.WrappedPayload{
 		Id:        id,
 		Timestamp: timestamp,
-		Payload:   buf.Bytes(), // compressed + encrypted
+		Payload:   buf.Bytes(),
 		Metadata:  metadata,
 	}, nil
 }
