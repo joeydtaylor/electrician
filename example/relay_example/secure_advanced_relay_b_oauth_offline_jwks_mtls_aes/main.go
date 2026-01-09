@@ -87,7 +87,7 @@ func main() {
 
 	// AUTH: JWKS ONLY
 	issuerBase := envOr("OAUTH_ISSUER_BASE", "https://localhost:3000")
-	jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/.well-known/jwks.json")
+	jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/oauth/jwks.json")
 
 	jwtOpts := builder.NewReceivingRelayOAuth2JWTOptions(
 		issuerBase,
