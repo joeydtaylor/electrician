@@ -31,10 +31,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -605,12 +607,16 @@ func UnwrapPayload[T any](wrappedPayload *relay.WrappedPayload, decryptionKey st
 		return errors.New("unwrap: nil wrappedPayload")
 	}
 
-	// Security/perf options are still in metadata; allow nil metadata = no decrypt/no decompress.
-	var secOpts *relay.SecurityOptions
-	var perfOpts *relay.PerformanceOptions
+	// Security/perf options from metadata; allow nil metadata = no decrypt/no decompress.
+	var (
+		secOpts  *relay.SecurityOptions
+		perfOpts *relay.PerformanceOptions
+		ct       string
+	)
 	if wrappedPayload.Metadata != nil {
 		secOpts = wrappedPayload.Metadata.Security
 		perfOpts = wrappedPayload.Metadata.Performance
+		ct = wrappedPayload.Metadata.GetContentType()
 	}
 
 	// 1) Decrypt (optional)
@@ -628,10 +634,22 @@ func UnwrapPayload[T any](wrappedPayload *relay.WrappedPayload, decryptionKey st
 		plaintext = buf.Bytes()
 	}
 
-	// 3) Decode based on payload_encoding
+	// JSON wins when explicitly declared and T is not a proto message target.
+	isJSON := func(s string) bool {
+		s = strings.ToLower(strings.TrimSpace(s))
+		return s == "application/json" || strings.HasSuffix(s, "+json")
+	}
+	if isJSON(ct) && !isProtoTarget(data) {
+		if err := json.Unmarshal(plaintext, data); err != nil {
+			return fmt.Errorf("unwrap: json decode failed: %w", err)
+		}
+		return nil
+	}
+
+	// 3) Decode based on payload_encoding (existing behavior)
 	enc := wrappedPayload.GetPayloadEncoding()
 	if enc == relay.PayloadEncoding_PAYLOAD_ENCODING_UNSPECIFIED {
-		// Best default: if the target is a proto message, decode proto; otherwise gob.
+		// Default: proto if target is proto, else gob
 		if isProtoTarget(data) {
 			enc = relay.PayloadEncoding_PAYLOAD_ENCODING_PROTO
 		} else {
@@ -648,12 +666,19 @@ func UnwrapPayload[T any](wrappedPayload *relay.WrappedPayload, decryptionKey st
 		return nil
 
 	case relay.PayloadEncoding_PAYLOAD_ENCODING_PROTO:
+		// If someone sends PROTO but content-type is json and T is not proto, we already handled it above.
 		if err := decodeProtoInto(wrappedPayload.GetPayloadType(), plaintext, data); err != nil {
 			return fmt.Errorf("unwrap: proto decode failed: %w", err)
 		}
 		return nil
 
 	default:
+		// Last safety: if content-type says json and T is not proto, try json once.
+		if isJSON(ct) && !isProtoTarget(data) {
+			if err := json.Unmarshal(plaintext, data); err == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("unwrap: unsupported payload_encoding: %v", enc)
 	}
 }
