@@ -1,95 +1,121 @@
 # 📡 Receiving Relay Package
 
-The **Receiving Relay** package handles **incoming data streams** in Electrician, ensuring **secure, efficient, and scalable message ingestion** within distributed systems.
+The **Receiving Relay** is Electrician’s **ingress gRPC server**.
 
-It provides **network listening, TLS security, and real-time data forwarding**, making it an essential component for **high-throughput, event-driven architectures**.
+It implements the relay service defined in the protobuf contract and turns inbound gRPC messages into submissions into your pipeline (typically a `Wire` or other `types.Submitter`).
 
----
+What it is:
 
-## 📦 Package Overview
+* a network-facing receiver (unary + streaming)
+* an adapter layer from protobuf envelopes → pipeline submissions
+* a place to enforce ingress policy (TLS config, optional auth checks, payload handling)
 
-| Feature                       | Description                                                                   |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| **gRPC-Based Communication**  | Handles **high-performance streaming and request/response** data exchange.    |
-| **TLS Security**              | Supports **encryption and authentication** via **configurable TLS settings**. |
-| **Flexible Output Routing**   | Routes messages to multiple downstream **Submitters** dynamically.            |
-| **Compression Handling**      | Supports **ZSTD, Brotli, Snappy, LZ4, and Deflate** for bandwidth efficiency. |
-| **Event Logging & Telemetry** | Provides **detailed structured logging and real-time monitoring**.            |
+What it is not:
 
----
-
-## ⚡ Notable Dependencies
-
-Electrician is **almost entirely built on the Go standard library**—with two key exceptions:
-
-1. **Logging:** Uses [Zap](https://github.com/uber-go/zap), which is widely regarded as the best structured logger for Go.
-2. **Compression:** Integrates **widely adopted compression libraries** (ZSTD, Snappy, Brotli, LZ4, Deflate) to **optimize bandwidth and processing efficiency**.
-
-These external dependencies were chosen carefully to **maximize performance and minimize bloat**.
+* a durability layer
+* a “guaranteed delivery” system
 
 ---
 
-## 📂 Package Structure
+## 📦 What it does
 
-| File                       | Purpose                                                                      |
-| -------------------------- | ---------------------------------------------------------------------------- |
-| **api.go**                 | Public API methods for configuring and managing the Receiving Relay.         |
-| **internal.go**            | Handles **data decompression, TLS setup, and gRPC connection management**.   |
-| **notify.go**              | Event logging and **sensor integration** for system-wide telemetry.          |
-| **options.go**             | Functional options for declarative **relay configuration**.                  |
-| **receivingrelay.go**      | Core **Type Definition and Constructor**.                                    |
-| **receivingrelay_test.go** | Unit tests for **correctness, fault tolerance, and networking reliability**. |
+| Capability         | Meaning                                                                           |
+| ------------------ | --------------------------------------------------------------------------------- |
+| gRPC ingress       | Accept `Receive` (unary) and `StreamReceive` (bi-di streaming).                   |
+| Envelope handling  | Read `WrappedPayload` / `RelayEnvelope` fields and pass along payload + metadata. |
+| Output forwarding  | Forward received items to one (or more) configured downstream submitters.         |
+| Transport security | Runs over gRPC transport security when you configure TLS/mTLS credentials.        |
+| Acknowledgments    | Returns `StreamAcknowledgment` as application-level status.                       |
 
----
+Notes:
 
-## 🔧 How Receiving Relays Work
-
-A **Receiving Relay** acts as an **ingress point** for Electrician pipelines, **listening for messages** and **forwarding them to downstream consumers**.
-
-### ✅ **Core Responsibilities**
-
-- **Data Reception:** Accepts incoming **gRPC messages** via direct calls or streaming.
-- **Decompression Support:** **Unpacks compressed payloads** based on metadata.
-- **TLS-Encrypted Communication:** Ensures **secure, authenticated transport**.
-- **Dynamic Output Routing:** Forwards messages to **multiple destinations**.
-
-### ✅ **Lifecycle Management**
-
-| Method            | Description                                                       |
-| ----------------- | ----------------------------------------------------------------- |
-| `Start()`         | Initiates the relay, **binding it to a network address**.         |
-| `Receive()`       | Processes **single incoming messages** and sends acknowledgments. |
-| `StreamReceive()` | Enables **continuous bidirectional streaming**.                   |
-| `Stop()`          | Gracefully shuts down the relay, **closing all connections**.     |
+* “Compression”, “payload encryption”, and “auth hints” exist in the schema as metadata. Whether this relay **enforces** or **interprets** those fields is an implementation/config decision.
 
 ---
 
-## 🔧 Extending the Receiving Relay Package
+## 📂 Package structure
 
-To **modify or extend the Receiving Relay**, follow this **structured workflow**:
+| File                | Purpose                                              |
+| ------------------- | ---------------------------------------------------- |
+| `receivingrelay.go` | Type definition + constructor                        |
+| `api.go`            | Public methods / component wiring                    |
+| `internal.go`       | gRPC server wiring + message handling implementation |
+| `options.go`        | Functional options for configuration                 |
+| `*_test.go`         | Tests                                                |
 
-### 1️⃣ Modify `types/`
-
-- Define new methods inside `types/receivingrelay.go`.
-- This ensures **all implementations remain consistent** across Electrician.
-
-### 2️⃣ Implement in `api.go`
-
-- The `api.go` file contains **public methods** – update it accordingly.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **composable, declarative-style configuration**.
-
-### 4️⃣ Extend `notify.go` for logging & telemetry
-
-- If new events are introduced, add **sensor and logger hooks**.
-
-### 5️⃣ Unit Testing (`receivingrelay_test.go`)
-
-- **Validate reliability, performance, and network stability** under real-world conditions.
+(If a package doesn’t have `notify.go`, that’s intentional — telemetry hooks live next to the code that emits them.)
 
 ---
+
+## 🧠 How receiving works
+
+### Unary: `Receive(WrappedPayload)`
+
+1. gRPC handler receives a `WrappedPayload`.
+2. The relay extracts:
+
+   * `payload` bytes
+   * `metadata` (headers/content_type/version/trace_id/etc.)
+   * `seq`, `id`, `timestamp`
+3. The relay forwards the message into the configured downstream submitter(s).
+4. The relay returns a `StreamAcknowledgment` indicating application-level success/failure.
+
+### Streaming: `StreamReceive(stream RelayEnvelope)`
+
+1. The client opens a stream and sends `StreamOpen` (optional but recommended).
+2. The client sends many `WrappedPayload` messages.
+3. The server may respond with acknowledgments per message or in batches depending on the negotiated `AckMode`.
+4. The client sends `StreamClose`.
+
+The streaming contract is defined in protobuf. The receiving relay’s behavior should follow that contract without inventing extra semantics.
+
+---
+
+## 🗜️ Compression / 🔐 Encryption / 🪪 Auth (what’s real)
+
+The protobuf schema includes:
+
+* `PerformanceOptions` + `CompressionAlgorithm`
+* `SecurityOptions` + `EncryptionSuite`
+* `AuthenticationOptions` and receiver-populated `AuthContext`
+
+Important reality checks:
+
+* gRPC/protobuf won’t automatically transform payload bytes based on these fields.
+* Treat `AuthenticationOptions` as **advisory**. Enforcement should be server policy.
+* Don’t ship secrets (client secrets, bearer tokens) in message metadata unless you control both ends and your threat model explicitly allows it.
+
+---
+
+## ✅ Acknowledgments are not durability
+
+A `StreamAcknowledgment` is an application-level status signal.
+
+It does **not** guarantee:
+
+* persistence
+* exactly-once processing
+* replay across restarts
+
+If you need those guarantees, design them explicitly (idempotency keys, durable queues/brokers, retries with backoff, etc.).
+
+---
+
+## 🔧 Extending the receiving relay
+
+When you add features, keep layering clean:
+
+* Proto changes → update `.proto`, regenerate bindings, then update receiving/forward relays.
+* Cross-component behavior → update `types/receivingrelay.go` first.
+* User-facing configuration knob → add an option in `options.go` and expose it through `pkg/builder`.
+
+Add tests that cover:
+
+* unary + streaming behavior
+* cancellation + shutdown
+* ack modes
+* forwarding to downstream submitters
+* (if implemented) compression/decompression and auth policy behavior
 
 ## 📖 Further Reading
 

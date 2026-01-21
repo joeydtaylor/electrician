@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
@@ -22,27 +25,84 @@ const (
 	broker       = "127.0.0.1:19092" // TLS+SASL listener from compose
 	topic        = "feedback-demo"
 	serverName   = "localhost"
-	saslUser     = "app"
-	saslPass     = "app-secret"
-	saslMech     = "SCRAM-SHA-256"
 	clientID     = "electrician-producer"
 	batchTimeout = 400 * time.Millisecond
 )
+
+const (
+	kBrokersCSV           = "127.0.0.1:19092" // external TLS+mTLS listener
+	kTLSServerName        = "localhost"       // must match server cert SAN; use "redpanda" if that’s what you issued
+	kCACandidates         = "../tls/ca.crt"
+	kClientCertCandidates = "../tls/client.crt"
+	kClientKeyCandidates  = "../tls/client.key"
+
+	kTopic = "feedback-demo"
+	kGroup = "feedback-demo-reader"
+
+	kSASLUser = "app"
+	kSASLPass = "app-secret"
+	kSASLMech = "SCRAM-SHA-256"
+)
+
+func firstExisting(csv string) (string, error) {
+	for _, p := range strings.Split(csv, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no file found in: %s", csv)
+}
+
+func buildTLSConfig() (*tls.Config, error) {
+	caPath, err := firstExisting(kCACandidates)
+	if err != nil {
+		return nil, err
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("failed adding CA to pool: %s", caPath)
+	}
+
+	certPath, err := firstExisting(kClientCertCandidates)
+	if err != nil {
+		return nil, err
+	}
+	keyPath, err := firstExisting(kClientKeyCandidates)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		ServerName:   kTLSServerName, // SNI + name verification
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{cert}, // mTLS: present client cert
+	}, nil
+}
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	// ---- security (only builder helpers you exported) ----
-	tlsCfg, err := builder.TLSFromCAFilesStrict([]string{
-		"./tls/ca.crt",
-		"../tls/ca.crt",
-		"../../tls/ca.crt",
-	}, serverName)
+	tlsCfg, err := buildTLSConfig()
 	if err != nil {
-		panic(err)
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
+		return
 	}
-	mech, err := builder.SASLSCRAM(saslUser, saslPass, saslMech)
+	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
 	if err != nil {
 		panic(err)
 	}

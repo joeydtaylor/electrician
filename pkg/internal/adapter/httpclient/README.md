@@ -1,78 +1,112 @@
 # 🌐 HTTP Client Adapter
 
-The **HTTP Client Adapter** integrates **external data sources** into Electrician pipelines,  
-fetching and transforming **HTTP responses** into structured pipeline data.
+The **HTTP Client Adapter** is an ingestion adapter that turns **HTTP responses** into typed values (`T`) for Electrician pipelines.
 
-It supports **OAuth2, TLS pinning, interval-based polling, retries, and structured logging**,  
-making it ideal for **secure and resilient HTTP integrations**.
+It’s typically used behind a `Plug` and driven by a `Generator` (polling) or any other component that wants to fetch remote data and feed it into a wire.
 
 ---
 
-## 📦 Package Overview
+## ✅ What it does
 
-| Feature                   | Description                                                         |
-| ------------------------- | ------------------------------------------------------------------- |
-| **OAuth2 Authentication** | Supports **client credentials flow** for secure API access.         |
-| **TLS Pinning**           | Enforces **certificate verification** for enhanced security.        |
-| **Retry & Backoff**       | Implements **exponential backoff** for handling transient failures. |
-| **Custom Headers**        | Supports **dynamic headers** (e.g., API keys, tokens, user-agents). |
-| **JSON, XML, and Binary** | Decodes **structured and unstructured** HTTP responses.             |
-
----
-
-## 📂 Package Structure
-
-| File                   | Purpose                                                          |
-| ---------------------- | ---------------------------------------------------------------- |
-| **api.go**             | Public API for **configuring and managing HTTP clients**.        |
-| **internal.go**        | Handles **response parsing, TLS verification, and retry logic**. |
-| **notify.go**          | Structured logging and **sensor-based event tracking**.          |
-| **options.go**         | Functional options for **configurable HTTP request behavior**.   |
-| **httpclient.go**      | Core **Type Definition and Constructor**.                        |
-| **httpclient_test.go** | Unit tests ensuring **error handling, retries, and security**.   |
+| Capability                       | Meaning                                                                                                         |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 🌍 HTTP fetch                    | Make requests with `net/http` using a configured method/URL/headers/body.                                       |
+| 🧬 Typed decode                  | Decode the response body into `T` using a configured decoder/codec.                                             |
+| ⏱️ Timeouts                      | Bound request lifetime (client/server timeouts) and respect context cancellation.                               |
+| 📡 Telemetry hooks               | Optional sensor/logger events around request/response/errors (implementation-driven).                           |
+| 🔁 Polling support (when driven) | In polling setups, an interval is used to control cadence (usually via the generator or adapter configuration). |
 
 ---
 
-## 🔧 How the HTTP Client Adapter Works
+## ❌ What it does *not* do by default
 
-The **HTTP Client Adapter** **fetches data from APIs** and transforms it into structured pipeline output.
+* ❌ It is not a full HTTP framework.
+* ❌ It is not durable delivery.
+* ❌ It does not automatically give you OAuth2, JWT validation, or TLS pinning unless you explicitly wire those behaviors.
 
-### ✅ **Key Mechanisms**
-
-- **Interval-Based Requests:** Periodically fetches **HTTP data** with retry logic.
-- **OAuth2 Authentication:** **Requests and refreshes access tokens** dynamically.
-- **TLS Certificate Pinning:** Ensures **secure HTTPS connections**.
-- **Custom Headers & Metadata:** Configurable **per-request headers and parameters**.
-- **Multi-Format Decoding:** Handles **JSON, XML, binary, and plain text responses**.
+Electrician’s posture is explicit wiring: if you need auth, retries, or custom TLS behavior, you configure it or wrap it.
 
 ---
 
-## 🔧 Extending the HTTP Client Adapter
+## 🧠 How it fits in a pipeline
 
-To **add new features**, follow this **structured workflow**:
+Common composition:
 
-### 1️⃣ Modify `types/`
+**HTTP Client Adapter → Plug → Generator → Wire**
 
-- Define new methods inside `types/httpclient.go`.
-- This ensures **consistent interface support** across Electrician.
+* Adapter: owns HTTP request + decoding.
+* Plug: owns adapter wiring and optional ingestion shaping.
+* Generator: decides when to fetch (poll cadence / triggering).
+* Wire: does concurrent transformation and output.
 
-### 2️⃣ Implement in `api.go`
-
-- Update the **public API** to expose new configurations.
-
-### 3️⃣ Add a Functional Option in `options.go`
-
-- Supports **declarative HTTP client configuration**.
-
-### 4️⃣ Extend `notify.go` for logging & telemetry
-
-- If new events are introduced, add **sensor and logger hooks**.
-
-### 5️⃣ Unit Testing (`httpclient_test.go`)
-
-- **Validate authentication, retries, and response handling**.
+Keep the adapter focused on IO + decode. Put business logic in wire transformers.
 
 ---
+
+## 🔧 Request model
+
+At minimum, an HTTP adapter typically needs:
+
+* method (`GET`, `POST`, …)
+* URL
+* headers
+* optional body
+* timeout settings
+
+Context cancellation should cancel in-flight requests cleanly.
+
+If you need custom transport behavior (proxies, custom root CAs, mTLS, pinning), use a custom `http.Client` / `http.Transport` configuration where the adapter exposes that hook.
+
+---
+
+## 🧾 Response decoding
+
+Decoding should be treated as **pluggable**:
+
+* JSON: `encoding/json`
+* XML: `encoding/xml`
+* raw bytes / text: `io` + `bufio`
+* custom: your own decoder
+
+The adapter should not guess formats. If you want JSON, wire a JSON decoder. If the remote returns bytes, decode bytes.
+
+---
+
+## 🪪 Authentication posture
+
+Auth is usually handled by:
+
+* setting `Authorization`/API-key headers, or
+* wrapping the adapter with a token provider that refreshes and injects headers.
+
+Do not assume the adapter provides a full OAuth2 implementation unless you can point to the concrete option/implementation in code.
+
+---
+
+## 📂 Package structure
+
+| File            | Purpose                              |
+| --------------- | ------------------------------------ |
+| `httpclient.go` | Type definition + constructor        |
+| `api.go`        | Public methods / wiring              |
+| `internal.go`   | Request execution + decode logic     |
+| `options.go`    | Functional options for configuration |
+| `*_test.go`     | Tests                                |
+
+---
+
+## 🔧 Extending the adapter
+
+* Contract changes start in `pkg/internal/types/httpclient_adapter.go`.
+* Implementation changes go in this package.
+* User-facing knobs should be exposed via `pkg/builder` (`HTTPClientAdapterWith…`).
+
+Tests should cover:
+
+* request building + header behavior
+* decode success/failure
+* timeouts + cancellation
+* error classification (transport vs decode)
 
 ## 📖 Further Reading
 

@@ -1,85 +1,92 @@
 # 🎛️ Codec Package
 
-The **Codec** package provides **efficient, type-safe encoding and decoding**  
-for **JSON, XML, Text, Binary, HTML, and custom formats**.
+The `codec` package is Electrician’s **encode/decode toolbox**.
 
-It enables **seamless data transformation**, ensuring **reliable serialization**  
-for **network communication, storage, and structured logging**.
+It provides small, composable encoders/decoders used at system boundaries:
 
----
+* inbound ingestion (HTTP server / adapters)
+* outbound emission (relays / sinks)
+* internal buffering/serialization (optional wire encoder)
 
-## 📦 Package Overview
-
-| Feature                    | Description                                                        |
-| -------------------------- | ------------------------------------------------------------------ |
-| **JSON, XML, and Text**    | Supports **structured serialization and deserialization**.         |
-| **Binary & Waveform Data** | Encodes **raw bytes and complex waveforms** for signal processing. |
-| **HTML Parsing**           | Extracts **HTML nodes and document structure**.                    |
-| **Streaming Support**      | Works with **io.Reader and io.Writer** for efficient I/O handling. |
+Codecs are intentionally simple: they turn **bytes ↔ typed values** using `io.Reader` / `io.Writer`.
 
 ---
 
-## 📂 Package Structure
+## ✅ What it does
 
-| File              | Purpose                                                            |
-| ----------------- | ------------------------------------------------------------------ |
-| **api.go**        | Public API for **codec registration and usage**.                   |
-| **binary.go**     | Handles **binary encoding and decoding**.                          |
-| **codec.go**      | Core **Codec interface** defining common serialization methods.    |
-| **html.go**       | Parses **HTML documents into structured node representations**.    |
-| **json.go**       | Implements **JSON encoding/decoding for generic types**.           |
-| **line.go**       | Provides **line-based encoding** for text-based formats.           |
-| **text.go**       | Handles **plain text serialization and deserialization**.          |
-| **wave.go**       | Encodes and decodes **waveform data** with **frequency analysis**. |
-| **xml.go**        | Implements **XML serialization and deserialization**.              |
-| **codec_test.go** | Unit tests ensuring **correctness, efficiency, and reliability**.  |
+| Capability                      | Meaning                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| 🔁 Encode / decode              | Convert between `T` and bytes via streaming interfaces.                            |
+| 🧩 Small format implementations | JSON/XML/text/line/binary/html helpers (depending on what you import).             |
+| 🧬 Typed contracts              | Aligns with Electrician’s `types.Encoder[T]` / `types.Decoder[T]` style contracts. |
+| 📦 Boundary glue                | Makes it easy for adapters/relays to share the same serialization behavior.        |
 
 ---
 
-## ⚡ Notable Dependencies
+## ❌ What it isn’t
 
-Electrician is **built primarily on Go’s standard library**, with two notable exceptions:
-
-1. **Logging:** Uses Zap, which is the fastest structured logger for Go.
-2. **Compression & Encoding (Protobuf Relay Only):**  
-   Uses widely adopted **ZSTD, Snappy, Brotli, LZ4, and Deflate** for optimized performance.
-
-For **all other encoding formats** (JSON, XML, Text, Binary, and HTML),  
-Electrician **relies solely on Go’s standard library** for **maximum compatibility and efficiency**.
+* A universal serialization framework.
+* A guarantee that every format is “type-safe” in the strong sense (JSON/XML still depend on your struct tags and schema discipline).
+* A compression system for transport (compression choices are usually part of relays, parquet, or adapter implementations).
 
 ---
 
-## 🔧 How Codecs Work
+## 📂 Package layout
 
-A **Codec** provides a **unified interface** for **serializing and deserializing** data in multiple formats.
+This is the conceptual layout based on the current file split:
 
-### ✅ **Key Mechanisms**
+| File            | Responsibility                                                                 |
+| --------------- | ------------------------------------------------------------------------------ |
+| `codec.go`      | Core codec interface(s) and shared contracts                                   |
+| `api.go`        | Constructors/helpers for building codecs (and any registry helpers if present) |
+| `json.go`       | JSON encode/decode helpers                                                     |
+| `xml.go`        | XML encode/decode helpers                                                      |
+| `text.go`       | Plain text encode/decode helpers                                               |
+| `line.go`       | Line-oriented encoding/decoding (newline-delimited patterns)                   |
+| `binary.go`     | Binary encoding/decoding helpers (raw bytes, fixed layouts, etc.)              |
+| `html.go`       | HTML parsing helpers                                                           |
+| `wave.go`       | Waveform/signal encoding helpers (specialized)                                 |
+| `codec_test.go` | Tests                                                                          |
 
-- **Generic Serialization:** Supports **any Go type** via **generic encoders and decoders**.
-- **Stream-Based Processing:** Works with **io.Reader and io.Writer** for **efficient data handling**.
-- **Binary Encoding:** Supports **custom binary structures** like **Waveforms and Frequency Peaks**.
-- **HTML Decoding:** Extracts structured **HTML nodes for parsing and analysis**.
+---
+
+## 🧠 Dependency posture (accurate)
+
+Most codecs lean on the Go standard library (`encoding/json`, `encoding/xml`, `bufio`, `io`, etc.).
+
+There are two common reasons you’ll see non-stdlib deps here:
+
+* **HTML parsing**: Go’s HTML parser lives under `golang.org/x/net/html` (not the core stdlib).
+* **Wave/DSP utilities**: waveform/signal helpers may use math/DSP libraries (e.g., `gonum` / `go-dsp`) when you opt into those features.
+
+If you never import the HTML or wave code paths, those dependencies won’t matter to your final binary.
 
 ---
 
-## 🔧 Extending the Codec Package
+## 🔧 How codecs are used
 
-To **add new encoding formats**, follow this **structured workflow**:
+Typical patterns:
 
-### 1️⃣ Implement a New Encoder & Decoder
+* **Decode on ingress**: `io.Reader` → `T` (HTTP body, Kafka message, file input)
+* **Encode on egress**: `T` → `io.Writer` (relay payload, output buffer, file sink)
 
-- Create a new file inside the codec package.
-- Implement **Encoder[T]** and **Decoder[T]** interfaces.
-
-### 2️⃣ Register in `api.go`
-
-- Add the new encoder and decoder **to the codec registry**.
-
-### 3️⃣ Unit Testing (`codec_test.go`)
-
-- Ensure the **new format is tested under real-world conditions**.
+Keep heavy transforms out of codecs. Codecs should do serialization/deserialization only; business logic belongs in transformers.
 
 ---
+
+## 🔧 Extending the codec package
+
+When adding a new format:
+
+1. Implement an encoder and/or decoder using `io.Reader` / `io.Writer`.
+2. Keep the API boring: explicit constructors, explicit configuration.
+3. Add tests that cover:
+
+   * correct round-trip behavior where applicable
+   * error handling on invalid input
+   * no accidental allocations/regressions on hot paths (where relevant)
+
+Only update `types/` if multiple packages need a new shared contract; otherwise keep changes local to `codec`.
 
 ## 📖 Further Reading
 

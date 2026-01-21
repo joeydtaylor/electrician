@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Local aliases for compression, same as forward side:
@@ -47,6 +49,70 @@ const (
 	ENCRYPTION_NONE    relay.EncryptionSuite = 0
 	ENCRYPTION_AES_GCM relay.EncryptionSuite = 1
 )
+
+func isProtoTarget[T any](out *T) bool {
+	// Case A: T is a generated proto struct => *T implements proto.Message, so out (which is *T) satisfies proto.Message.
+	if _, ok := any(out).(proto.Message); ok {
+		return true
+	}
+
+	// Case B: T is a pointer type (e.g., *MyProto). Then *out is the pointer.
+	if _, ok := any(*out).(proto.Message); ok {
+		return true
+	}
+
+	return false
+}
+
+func decodeProtoInto[T any](payloadType string, b []byte, out *T) error {
+	// Case A: out itself is a proto.Message (common when T is a generated proto struct type).
+	if m, ok := any(out).(proto.Message); ok {
+		if err := validatePayloadType(payloadType, m); err != nil {
+			return err
+		}
+		return proto.Unmarshal(b, m)
+	}
+
+	// Case B: T is a pointer to a proto message; allocate if nil, then unmarshal into it.
+	rv := reflect.ValueOf(out).Elem() // value of T
+	if rv.IsValid() && rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			rv.Set(reflect.New(rv.Type().Elem()))
+		}
+		if m, ok := rv.Interface().(proto.Message); ok {
+			if err := validatePayloadType(payloadType, m); err != nil {
+				return err
+			}
+			return proto.Unmarshal(b, m)
+		}
+	}
+
+	return fmt.Errorf("payload_encoding=PROTO requires T to be a protobuf message type; got %T", out)
+}
+
+func validatePayloadType(want string, msg proto.Message) error {
+	if want == "" {
+		return nil
+	}
+
+	// Normalize type URLs (type.googleapis.com/pkg.Msg) to pkg.Msg
+	want = normalizeTypeName(want)
+
+	// msg must be non-nil here (we allocate before calling this when T is a pointer)
+	got := normalizeTypeName(string(msg.ProtoReflect().Descriptor().FullName()))
+
+	if want != got {
+		return fmt.Errorf("payload_type mismatch: want=%s got=%s", want, got)
+	}
+	return nil
+}
+
+func normalizeTypeName(s string) string {
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	return s
+}
 
 // decompressData returns a reader buffer with the decompressed payload according to the algorithm.
 func decompressData(data []byte, algorithm relay.CompressionAlgorithm) (*bytes.Buffer, error) {

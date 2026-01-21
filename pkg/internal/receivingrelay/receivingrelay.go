@@ -109,3 +109,9 @@ func NewReceivingRelay[T any](ctx context.Context, options ...types.Option[types
 
 	return rr
 }
+
+type Codec[T any] interface {
+	Encode(v T) ([]byte, error)
+	Decode(b []byte, out *T) error
+	ContentType() string // e.g. "application/x-gob" or "application/x-protobuf"
+}

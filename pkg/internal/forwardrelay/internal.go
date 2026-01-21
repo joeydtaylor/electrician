@@ -396,6 +396,9 @@ func (fr *ForwardRelay[T]) openStreamSession(ctx context.Context, address string
 	open := &relay.StreamOpen{
 		StreamId: utils.GenerateUniqueHash(),
 		Defaults: &relay.MessageMetadata{
+			Headers: map[string]string{
+				"source": "go",
+			},
 			ContentType: "application/octet-stream",
 			Version: &relay.VersionInfo{
 				Major: 1,

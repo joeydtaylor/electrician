@@ -52,9 +52,9 @@ func (a *agg) add(r Feedback) {
 const (
 	kBrokersCSV           = "127.0.0.1:19092" // external TLS+mTLS listener
 	kTLSServerName        = "localhost"       // must match server cert SAN; use "redpanda" if that’s what you issued
-	kCACandidates         = "./tls/ca.crt,../tls/ca.crt,../../tls/ca.crt"
-	kClientCertCandidates = "./tls/client.crt,../tls/client.crt,../../tls/client.crt"
-	kClientKeyCandidates  = "./tls/client.key,../tls/client.key,../../tls/client.key"
+	kCACandidates         = "../tls/ca.crt"
+	kClientCertCandidates = "../tls/client.crt"
+	kClientKeyCandidates  = "../tls/client.key"
 
 	kTopic = "feedback-demo"
 	kGroup = "feedback-demo-reader"

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -35,18 +36,74 @@ const (
 	orgIDEnvName     = "ORG_ID"
 	defaultOrgID     = "4d948fa0-084e-490b-aad5-cfd01eeab79a"
 
+	kTLSServerName        = "localhost" // must match server cert SAN; use "redpanda" if that’s what you issued
+	kCACandidates         = "../tls/ca.crt"
+	kClientCertCandidates = "../tls/client.crt"
+	kClientKeyCandidates  = "../tls/client.key"
+
 	// Kafka (matches your compose)
-	kafkaBroker   = "127.0.0.1:19092"
-	kafkaTopic    = "feedback-demo"
-	kafkaUser     = "app"
-	kafkaPass     = "app-secret"
-	kafkaMech     = "SCRAM-SHA-256"
-	kafkaCA1      = "./tls/ca.crt"
-	kafkaCA2      = "../tls/ca.crt"
-	kafkaCA3      = "../../tls/ca.crt"
-	kafkaSNI      = "localhost"
-	kafkaClientID = "electrician-writer"
+	kafkaBroker = "127.0.0.1:19092"
+	kafkaTopic  = "feedback-demo"
+	kafkaUser   = "app"
+	kafkaPass   = "app-secret"
+	kafkaMech   = "SCRAM-SHA-256"
+	kafkaCA1    = "./tls/ca.crt"
+	kafkaCA2    = "../tls/ca.crt"
+	kafkaCA3    = "../../tls/ca.crt"
+	kafkaSNI    = "localhost"
+	clientID    = "electrician-writer"
+	kSASLUser   = "app"
+	kSASLPass   = "app-secret"
+	kSASLMech   = "SCRAM-SHA-256"
 )
+
+func firstExisting(csv string) (string, error) {
+	for _, p := range strings.Split(csv, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no file found in: %s", csv)
+}
+
+func buildTLSConfig() (*tls.Config, error) {
+	caPath, err := firstExisting(kCACandidates)
+	if err != nil {
+		return nil, err
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("failed adding CA to pool: %s", caPath)
+	}
+
+	certPath, err := firstExisting(kClientCertCandidates)
+	if err != nil {
+		return nil, err
+	}
+	keyPath, err := firstExisting(kClientKeyCandidates)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		ServerName:   kTLSServerName, // SNI + name verification
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{cert}, // mTLS: present client cert
+	}, nil
+}
 
 func trueish(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -167,9 +224,27 @@ func main() {
 		tls.VersionTLS13, tls.VersionTLS13,
 	)
 
+	// Kafka (security)
+	// ---- security (only builder helpers you exported) ----
+	kTlsCfg, err := buildTLSConfig()
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
+	if err != nil {
+		panic(err)
+	}
+	sec := builder.NewKafkaSecurity(
+		builder.WithTLS(kTlsCfg),
+		builder.WithSASL(mech),
+		builder.WithClientID(clientID),
+		// Dialer defaults (10s, DualStack=true) are fine for a writer Transport
+	)
+
 	// OAuth (JWKS-only)
 	issuerBase := envOr("OAUTH_ISSUER_BASE", "https://localhost:3000")
-	jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/.well-known/jwks.json")
+	jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/oauth/jwks.json")
 	jwtOpts := builder.NewReceivingRelayOAuth2JWTOptions(
 		issuerBase,
 		jwksURL,
@@ -191,7 +266,7 @@ func main() {
 
 	recvA := builder.NewReceivingRelay[Feedback](
 		ctx,
-		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_A", "localhost:50053")),
+		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_A", "localhost:50052")),
 		builder.ReceivingRelayWithBufferSize[Feedback](1000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
 		builder.ReceivingRelayWithOutput(wireA),
@@ -203,7 +278,7 @@ func main() {
 	)
 	recvB := builder.NewReceivingRelay[Feedback](
 		ctx,
-		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_B", "localhost:50054")),
+		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_B", "localhost:50051")),
 		builder.ReceivingRelayWithBufferSize[Feedback](1000),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
 		builder.ReceivingRelayWithOutput(wireB),
@@ -221,24 +296,6 @@ func main() {
 	if err := recvB.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
-
-	// ------------------------
-	// Kafka writer (secure) – fan-in from the two wires
-	// ------------------------
-	// Security (client TLS + SASL)
-	kTLS, err := builder.TLSFromCAFilesStrict([]string{kafkaCA1, kafkaCA2, kafkaCA3}, kafkaSNI)
-	if err != nil {
-		log.Fatal(err)
-	}
-	mech, err := builder.SASLSCRAM(kafkaUser, kafkaPass, kafkaMech)
-	if err != nil {
-		log.Fatal(err)
-	}
-	sec := builder.NewKafkaSecurity(
-		builder.WithTLS(kTLS),
-		builder.WithSASL(mech),
-		builder.WithClientID(kafkaClientID),
-	)
 
 	// kafka-go Writer with security
 	kw := builder.NewKafkaGoWriterWithSecurity(

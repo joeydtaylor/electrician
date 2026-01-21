@@ -1,151 +1,105 @@
 # 📊 Meter Package
 
-The **Meter** package provides **real-time performance monitoring** and **metric tracking** for Electrician pipelines.  
-It collects, evaluates, and reports various **processing metrics** to ensure system **efficiency and reliability**.
+A **Meter** is Electrician’s **metrics accumulator + reporter**.
+
+It’s a lightweight component that tracks counts/rates/progress for a running pipeline and (optionally) emits periodic snapshots for observability.
+
+Meters don’t magically “monitor everything.” They track what you **increment** (usually via a `Sensor`) and what they can **sample** (runtime/host stats depending on configuration and implementation).
 
 ---
 
-## 📦 Package Overview
+## ✅ What a Meter does
 
-| Feature                      | Description                                                            |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| **Real-Time Monitoring**     | Tracks **throughput, error rates, and processing efficiency**.         |
-| **Idle Timeout Detection**   | Automatically stops processing if the system becomes idle.             |
-| **Event Logging & Sensors**  | Supports **structured logging and real-time telemetry hooks**.         |
-| **Performance Optimization** | Measures **CPU, RAM, and Go routine usage** for fine-tuning pipelines.   |
-
----
-
-## 📂 Package Structure
-
-| File              | Purpose                                                              |
-| ----------------- | -------------------------------------------------------------------- |
-| **api.go**        | Public API methods for **configuring meters and accessing metrics**. |
-| **internal.go**   | Low-level logic for **performance tracking and metric evaluation**.  |
-| **notify.go**     | Handles **event logging, telemetry, and alert notifications**.       |
-| **options.go**    | Functional options for **customizing metric tracking behavior**.     |
-| **meter.go**      | Core **Type Definition and Constructor**.                            |
-| **meter_test.go** | Unit tests ensuring **accuracy and stability of metric tracking**.    |
+| Capability                   | Meaning                                                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 🔢 Counters                  | Track totals like submitted/processed/errors, retry outcomes, etc.                                        |
+| ⏱️ Rates                     | Derive per-second rates from counters over time.                                                          |
+| 📈 Progress                  | If you provide an expected total, progress can be computed (e.g., `processed / total`).                   |
+| 🧵 Runtime sampling          | Optionally sample Go runtime stats (goroutines, heap, GC) at a cadence.                                   |
+| 🖥️ Host sampling (optional) | Some implementations may sample host-level stats (CPU/RAM) using external libs (e.g., `gopsutil`).        |
+| 📣 Reporting                 | `Monitor()`/ticker-driven reporting loops (logging, callbacks, or structured events depending on wiring). |
 
 ---
 
-## 🔧 How Meters Work
+## 🧠 How it fits in the system
 
-A **Meter** continuously monitors **pipeline performance**, tracking various metrics such as:
+Meters are usually updated by a **Sensor**:
 
-- **Throughput:** Number of processed elements per second.  
-- **Error Rates:** Percentage of failed transformations.  
-- **Resource Utilization:** CPU, memory, and active goroutines.  
-- **Pipeline Health:** Overall progress and remaining workload.
+* components emit events (`OnSubmit`, `OnError`, `OnElementProcessed`, …)
+* a sensor receives those events
+* the sensor increments meter counters / updates gauges
 
-### ✅ Key Mechanisms
+Typical wiring:
 
-- **Idle Detection:** Auto-terminates after a **specified idle duration**.  
-- **Live Metrics Reporting:** Continuously updates and prints system statistics.
+**Wire/CB/SP/etc → Sensor → Meter**
 
-### ✅ Lifecycle Management
-
-| Method             | Description                                                   |
-| ------------------ | ------------------------------------------------------------- |
-| `IncrementCount()` | Increases a specific **metric counter**.                      |
-| `Monitor()`        | Starts **real-time tracking** of pipeline performance.        |
-| `GetMetricCount()` | Retrieves the **current value** of a specific metric.         |
-| `SetIdleTimeout()` | **Terminates processing** if no activity occurs for a period.  |
+This keeps hot-path code free of “metrics logic” and makes the policy (what you measure) explicit.
 
 ---
 
-## 📑 Built-In Metrics Reference
+## 📂 Package structure
 
-Below is a list of **string constants** used when monitoring. Pass these string values (e.g., `"error_count"`) into your Meter methods or functional options to monitor each metric.
+| File          | Purpose                                               |
+| ------------- | ----------------------------------------------------- |
+| `meter.go`    | Type definition + constructor                         |
+| `api.go`      | Public methods (increment/read/report controls)       |
+| `options.go`  | Functional options (`With*`)                          |
+| `internal.go` | Sampling / evaluation helpers (implementation detail) |
+| `*_test.go`   | Tests                                                 |
 
-### System Usage Metrics
-
-- **`"current_cpu_percentage"`**  
-- **`"peak_cpu_percentage"`**  
-- **`"current_ram_percentage"`**  
-- **`"peak_ram_percentage"`**  
-- **`"current_go_routines_active"`**  
-- **`"peak_go_routines_active"`**  
-
-### Throughput & Performance
-
-- **`"processed_per_second"`**  
-- **`"transforms_per_second"`**  
-- **`"max_processed_per_second"`**  
-- **`"max_transformed_per_second"`**  
-- **`"errors_per_second"`**  
-- **`"max_transform_errors_per_second"`**  
-
-### Counts & Totals
-
-- **`"element_submitted_total_count"`**  
-- **`"element_processed_total_count"`**  
-- **`"element_transformed_total_count"`**  
-- **`"element_pending_total_count"`**  
-- **`"total_error_count"`**  
-- **`"progress_percentage"`**  
-
-### Transformation & Error Tracking
-
-- **`"transform_percentage"`**, **`"error_percentage"`**  
-- **`"element_transform_count"`**  
-- **`"element_transform_error_count"`**  
-- **`"element_error_count"`**  
-- **`"element_retry_count"`**, **`"element_recover_success_count"`**, **`"element_recover_failure_count"`**  
-
-### Circuit Breaker Metrics
-
-- **`"circuit_breaker_trip_count"`**, **`"circuit_breaker_reset_count"`**  
-- **`"circuit_breaker_current_trip_count"`**, **`"circuit_breaker_recorded_error_count"`**  
-- **`"circuit_breaker_diverted_element_count"`**  
-- **`"circuit_breaker_dropped_element_count"`**  
-- **`"circuit_breaker_last_trip_time"`**, **`"circuit_breaker_next_reset_time"`**  
-- **`"circuit_breaker_count"`**  
-
-### Surge Protector (High-Load) Metrics
-
-- **`"surge_attached_count"`**, **`"surge_current_trip_count"`**  
-- **`"surge_trip_count"`**, **`"surge_reset_count"`**  
-- **`"surge_rate_limit_exceed_count"`**, **`"surge_drop_count"`**  
-- **`"surge_backup_wire_submission_count"`**, **`"surge_backup_wire_submission_percentage"`**  
-
-### HTTP & Networking Metrics
-
-- **`"http_request_made_count"`**, **`"http_request_received_count"`**  
-- **`"http_client_error_count"`**, **`"http_client_retry_count"`**  
-- **`"http_response_error_count"`**, **`"http_client_json_unmarshal_error_count"`**  
-- **`"http_client_fetch_successful_count"`**  
-
-### Resister & Relay Metrics
-
-- **`"resister_element_queued_count"`**, **`"resister_element_dequeued"`**  
-- **`"resister_connected_count"`, `"resister_cleared_count"`**  
-- **`"receiving_relay_received_count"`, `"receiving_relay_relayed_count"`**  
-- **`"forward_relay_submit_count"`, `"forward_relay_error_count"`**  
-- **`"forward_relay_relayed_count"`, `"forward_relay_payload_compression_count"`**
-
-### Miscellaneous
-
-- **`"process_duration"`**  
-- **`"generator_running_count"`, `"generator_submit_count"`**  
-- **`"conduit_running_count"`, `"wires_running_count"`**  
-- **`"meter_connected_component_count"`, `"logger_connected_component_count"`**  
-- **`"component_lifecycle_error_count"`, `"component_restart_count"`**  
-- **`"error_count"`**
+If there is no `notify.go`, that’s intentional — instrumentation should live at the emission points, not as a separate “telemetry file” by default.
 
 ---
 
-## 🔧 Extending the Meter Package
+## ⚙️ Practical semantics (no false promises)
 
-To add new metrics or functionality, follow this structured workflow:
+### “Real-time monitoring”
 
-1. Modify `types/` to define new metrics and counters in `types/meter.go`.  
-2. Implement or update public API methods in `api.go` for your new metric(s).  
-3. Add a Functional Option in `options.go` for clean, composable configuration.  
-4. Extend `notify.go` if you introduce new events or sensor/logger hooks.  
-5. Write or update unit tests in `meter_test.go` to validate your new metric logic.
+A meter can *report periodically*, but it doesn’t control your pipeline. If you want a meter to trigger cancellation or restarts, you must wire that behavior explicitly (e.g., cancel a context when a threshold is crossed).
+
+### “Idle timeout”
+
+If an idle timeout exists, treat it as **a detection/signal** (“no events for N seconds”), not a guarantee that the pipeline will be stopped. Stopping work is a policy decision (and belongs in the owning component/context).
 
 ---
+
+## 📑 Metric keys / names
+
+Some meter implementations expose named metrics via string keys.
+
+Do not hard-code guesses in documentation. Treat the metric keys as part of the implementation surface and look for:
+
+* constants/enums in the meter package, or
+* public accessor methods that return supported keys
+
+If you need stable metric names across versions, define them in one place and write tests for them.
+
+---
+
+## 🚄 Performance stance
+
+Meters should be cheap:
+
+* keep increments fast (ideally atomic counters)
+* do heavier computation/reporting on a ticker, not on every event
+* never let reporting backpressure the pipeline
+
+If your meter does expensive work (string formatting, IO, host sampling), isolate that work in the monitor loop.
+
+---
+
+## 🔧 Extending the Meter package
+
+When adding new metrics:
+
+1. Decide whether it’s a shared contract change (update `types/meter.go`) or implementation-only.
+2. Implement the counter/gauge/rate logic.
+3. Ensure sensors increment it at the correct event points.
+4. Add tests that validate:
+
+   * increments are correct under concurrency
+   * reporting logic is stable
+   * no accidental allocations/regressions on hot paths
 
 ## 📖 Further Reading
 

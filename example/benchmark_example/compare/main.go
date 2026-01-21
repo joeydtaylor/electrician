@@ -147,31 +147,7 @@ func main() {
 		}
 	}
 
-	// Hash transform (near-zero alloc)
-	bufLen := *payloadSize + 8 + 32
-	bufPool := sync.Pool{New: func() any { return make([]byte, bufLen) }}
-
-	hashProcessor := func(e Event) (Event, error) {
-		b := bufPool.Get().([]byte)
-		if cap(b) < bufLen {
-			b = make([]byte, bufLen)
-		}
-		b = b[:bufLen]
-		defer bufPool.Put(b)
-
-		copy(b[:*payloadSize], e.Payload)
-		binary.LittleEndian.PutUint64(b[*payloadSize:*payloadSize+8], e.Seq)
-
-		var prev [32]byte
-		for i := 0; i < *rounds; i++ {
-			copy(b[*payloadSize+8:], prev[:])
-			prev = sha256.Sum256(b)
-		}
-
-		e.Hash = prev
-		return e, nil
-	}
-
+	// Error injection (optional)
 	injectError := func(e Event) (Event, error) {
 		if *errorEvery > 0 && (e.Seq%uint64(*errorEvery) == 0) {
 			atomic.AddUint64(&errCount, 1)
@@ -210,7 +186,7 @@ func main() {
 		}
 	}()
 
-	// CPU profiling (optional) – start as close to the benchmark as possible.
+	// CPU profiling (optional)
 	var cpuFile *os.File
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
@@ -228,13 +204,19 @@ func main() {
 
 	switch *engine {
 	case "electrician":
-		runElectrician(*items, *workers, *queue, *payloadSize, *bankItems, payloadBank, *errorEvery, *timeout,
-			injectError, hashProcessor, sink, &okCount, &errCount, maybeDone, done, &doneOnce)
-
+		runElectrician(
+			*items, *workers, *queue, *payloadSize, *bankItems, *rounds,
+			payloadBank, *errorEvery, *timeout,
+			injectError, sink,
+			&okCount, &errCount, maybeDone, done, &doneOnce,
+		)
 	case "baseline":
-		runBaseline(*items, *workers, *queue, *payloadSize, *bankItems, payloadBank, *errorEvery, *timeout,
-			injectError, hashProcessor, sink, &okCount, &errCount, maybeDone, done, &doneOnce)
-
+		runBaseline(
+			*items, *workers, *queue, *payloadSize, *bankItems, *rounds,
+			payloadBank, *errorEvery, *timeout,
+			injectError, sink,
+			&okCount, &errCount, maybeDone, done, &doneOnce,
+		)
 	default:
 		panic("engine must be electrician or baseline")
 	}
@@ -265,12 +247,11 @@ func main() {
 }
 
 func runElectrician(
-	items, workers, queue, payloadSize, bankItems int,
+	items, workers, queue, payloadSize, bankItems, rounds int,
 	payloadBank []byte,
 	errorEvery int,
 	timeout time.Duration,
 	injectError func(Event) (Event, error),
-	hashProcessor func(Event) (Event, error),
 	sink Sink,
 	okCount, errCount *uint64,
 	maybeDone func(),
@@ -301,6 +282,23 @@ func runElectrician(
 		),
 	)
 
+	// Use the new toy: per-worker scratch buffer (allocated once per worker).
+	bufLen := payloadSize + 8 + 32
+
+	hashTransformerWithScratch := builder.WireWithScratchBytes[Event](bufLen, func(buf []byte, e Event) (Event, error) {
+		// Layout: [payload][seq(8)][prev(32)]
+		copy(buf[:payloadSize], e.Payload)
+		binary.LittleEndian.PutUint64(buf[payloadSize:payloadSize+8], e.Seq)
+
+		var prev [32]byte
+		for i := 0; i < rounds; i++ {
+			copy(buf[payloadSize+8:], prev[:])
+			prev = sha256.Sum256(buf)
+		}
+		e.Hash = prev
+		return e, nil
+	})
+
 	var wire interface {
 		Start(context.Context) error
 		Stop() error
@@ -310,14 +308,15 @@ func runElectrician(
 	if errorEvery > 0 {
 		wire = builder.NewWire[Event](
 			ctx,
-			builder.WireWithTransformer[Event](injectError, hashProcessor),
+			builder.WireWithTransformer[Event](injectError),
+			hashTransformerWithScratch,
 			builder.WireWithGenerator[Event](gen),
 			builder.WireWithConcurrencyControl[Event](queue, workers),
 		)
 	} else {
 		wire = builder.NewWire[Event](
 			ctx,
-			builder.WireWithTransformer[Event](hashProcessor),
+			hashTransformerWithScratch,
 			builder.WireWithGenerator[Event](gen),
 			builder.WireWithConcurrencyControl[Event](queue, workers),
 		)
@@ -344,12 +343,11 @@ func runElectrician(
 }
 
 func runBaseline(
-	items, workers, queue, payloadSize, bankItems int,
+	items, workers, queue, payloadSize, bankItems, rounds int,
 	payloadBank []byte,
 	errorEvery int,
 	timeout time.Duration,
 	injectError func(Event) (Event, error),
-	hashProcessor func(Event) (Event, error),
 	sink Sink,
 	okCount, errCount *uint64,
 	maybeDone func(),
@@ -362,12 +360,16 @@ func runBaseline(
 	in := make(chan Event, queue)
 	out := make(chan Event, queue)
 
+	// Baseline keeps a per-worker scratch buffer too (fair comparison).
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
 	for i := 0; i < workers; i++ {
-		go func() {
+		scratch := make([]byte, payloadSize+8+32)
+
+		go func(buf []byte) {
 			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -376,6 +378,7 @@ func runBaseline(
 					if !ok {
 						return
 					}
+
 					if errorEvery > 0 {
 						var err error
 						e, err = injectError(e)
@@ -383,7 +386,18 @@ func runBaseline(
 							continue
 						}
 					}
-					e, _ = hashProcessor(e)
+
+					// Hash in worker-local scratch (no alloc)
+					copy(buf[:payloadSize], e.Payload)
+					binary.LittleEndian.PutUint64(buf[payloadSize:payloadSize+8], e.Seq)
+
+					var prev [32]byte
+					for r := 0; r < rounds; r++ {
+						copy(buf[payloadSize+8:], prev[:])
+						prev = sha256.Sum256(buf)
+					}
+					e.Hash = prev
+
 					select {
 					case out <- e:
 					case <-ctx.Done():
@@ -391,7 +405,7 @@ func runBaseline(
 					}
 				}
 			}
-		}()
+		}(scratch)
 	}
 
 	go func() {
