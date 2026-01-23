@@ -35,6 +35,15 @@ func (g *Generator[T]) Start(ctx context.Context) error {
 
 	cb := g.getCircuitBreaker()
 
+	for _, plug := range plugs {
+		if plug == nil {
+			continue
+		}
+		if freezer, ok := plug.(interface{ Freeze() }); ok {
+			freezer.Freeze()
+		}
+	}
+
 	g.wg.Add(1)
 	go g.runControlLoop(runCtx)
 
