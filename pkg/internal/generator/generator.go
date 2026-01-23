@@ -8,25 +8,35 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
+// Generator produces elements from plugs and submits them downstream.
+// Configuration is immutable after Start; stop the generator before mutating settings.
 type Generator[T any] struct {
-	wg                  sync.WaitGroup
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	configLock          sync.Mutex
-	loggers             []types.Logger
-	loggersLock         sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	configLock  sync.Mutex
+	loggers     []types.Logger
+	loggersLock sync.Mutex
+	sensors     []types.Sensor[T]
+
 	componentMetadata   types.ComponentMetadata
 	connectedComponents []types.Submitter[T]
 	plugs               []types.Plug[T]
-	started             int32
-	sensors             []types.Sensor[T]
-	CircuitBreaker      types.CircuitBreaker[T] // Circuit breaker for handling errors.
-	controlChan         chan bool               // Channel for controlling circuit breaker.
-	cbLock              sync.Mutex              // Protects access to the circuitBreaker.
-	stopOnce            sync.Once
+
+	started        int32
+	CircuitBreaker types.CircuitBreaker[T]
+	controlChan    chan bool
+	cbLock         sync.Mutex
+	stopLock       sync.Mutex
+	stopOnce       sync.Once
 }
 
+// NewGenerator constructs a Generator with defaults and applies options.
 func NewGenerator[T any](ctx context.Context, options ...types.Option[types.Generator[T]]) types.Generator[T] {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -37,22 +47,21 @@ func NewGenerator[T any](ctx context.Context, options ...types.Option[types.Gene
 			Type: "GENERATOR",
 			ID:   utils.GenerateUniqueHash(),
 		},
-		sensors:             []types.Sensor[T]{}, // Initialize empty list of sensors.
+		sensors:             make([]types.Sensor[T], 0),
 		loggers:             make([]types.Logger, 0),
 		connectedComponents: make([]types.Submitter[T], 0),
 		plugs:               make([]types.Plug[T], 0),
-		controlChan:         make(chan bool, 1), // Ensure non-blocking sends with buffered channel
+		controlChan:         make(chan bool, 1),
 	}
 
 	for _, opt := range options {
+		if opt == nil {
+			continue
+		}
 		opt(g)
 	}
 
-	if len(g.sensors) != 0 {
-		for _, p := range g.plugs {
-			p.ConnectSensor(g.sensors...)
-		}
-	}
+	g.attachSensorsToPlugs(g.plugs)
 
 	return g
 }
