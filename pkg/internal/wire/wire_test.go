@@ -1,6 +1,7 @@
 package wire_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/wire"
 )
 
@@ -33,7 +35,6 @@ func TestWire_StartStop(t *testing.T) {
 		t.Fatalf("expected wire to be stopped")
 	}
 
-	// Output channel must be closed after Stop().
 	select {
 	case _, ok := <-w.GetOutputChannel():
 		if ok {
@@ -73,11 +74,66 @@ func TestWire_Submit_ErrorDoesNotStopPipeline(t *testing.T) {
 	}
 }
 
+func TestWire_ConfigurationPanicsAfterStart(t *testing.T) {
+	ctx := context.Background()
+
+	w := wire.NewWire[int](ctx).(*wire.Wire[int])
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer func() { _ = w.Stop() }()
+
+	assertPanics(t, "ConnectCircuitBreaker", func() {
+		w.ConnectCircuitBreaker(types.CircuitBreaker[int](nil))
+	})
+	assertPanics(t, "ConnectGenerator", func() {
+		w.ConnectGenerator(types.Generator[int](nil))
+	})
+	assertPanics(t, "ConnectLogger", func() {
+		w.ConnectLogger(types.Logger(nil))
+	})
+	assertPanics(t, "ConnectSensor", func() {
+		w.ConnectSensor(types.Sensor[int](nil))
+	})
+	assertPanics(t, "ConnectSurgeProtector", func() {
+		w.ConnectSurgeProtector(types.SurgeProtector[int](nil))
+	})
+	assertPanics(t, "ConnectTransformer", func() {
+		w.ConnectTransformer(types.Transformer[int](nil))
+	})
+	assertPanics(t, "SetComponentMetadata", func() {
+		w.SetComponentMetadata("wire", "wire-1")
+	})
+	assertPanics(t, "SetConcurrencyControl", func() {
+		w.SetConcurrencyControl(1, 1)
+	})
+	assertPanics(t, "SetEncoder", func() {
+		w.SetEncoder(types.Encoder[int](nil))
+	})
+	assertPanics(t, "SetInsulator", func() {
+		w.SetInsulator(nil, 1, time.Millisecond)
+	})
+	assertPanics(t, "SetOutputBuffer", func() {
+		w.SetOutputBuffer(bytes.Buffer{})
+	})
+	assertPanics(t, "SetErrorChannel", func() {
+		w.SetErrorChannel(make(chan types.ElementError[int]))
+	})
+	assertPanics(t, "SetInputChannel", func() {
+		w.SetInputChannel(make(chan int))
+	})
+	assertPanics(t, "SetOutputChannel", func() {
+		w.SetOutputChannel(make(chan int))
+	})
+	assertPanics(t, "SetTransformerFactory", func() {
+		w.SetTransformerFactory(func() types.Transformer[int] {
+			return func(v int) (int, error) { return v, nil }
+		})
+	})
+}
+
 func TestWire_AllocBudget_ScratchBytes(t *testing.T) {
-	// This test is intended to catch accidental per-item allocations/regressions.
-	// It should stay stable across machines by using a generous bytes/item threshold.
-	//
-	// If you run with -short, reduce the workload.
+	// Enforce a per-item allocation budget for the scratch-bytes path.
 	items := 1_000_000
 	if testing.Short() {
 		items = 200_000
@@ -92,7 +148,6 @@ func TestWire_AllocBudget_ScratchBytes(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Reused read-only payload (no per-item allocations).
 	payload := make([]byte, payloadSize)
 	for i := range payload {
 		payload[i] = byte(i)
@@ -100,7 +155,6 @@ func TestWire_AllocBudget_ScratchBytes(t *testing.T) {
 
 	bufLen := payloadSize + 8 + 32
 
-	// Per-worker scratch, allocated once per worker, no pools required.
 	w := wire.NewWire[Event](ctx,
 		wire.WithConcurrencyControl[Event](queue, workers),
 		wire.WithScratchBytes[Event](bufLen, func(buf []byte, e Event) (Event, error) {
@@ -122,7 +176,6 @@ func TestWire_AllocBudget_ScratchBytes(t *testing.T) {
 		t.Fatalf("Start() error: %v", err)
 	}
 
-	// Drain exactly N outputs.
 	out := w.GetOutputChannel()
 	done := make(chan struct{})
 	go func() {
@@ -132,12 +185,10 @@ func TestWire_AllocBudget_ScratchBytes(t *testing.T) {
 		close(done)
 	}()
 
-	// Measure allocations for the processing phase (exclude startup).
 	runtime.GC()
 	var m0 runtime.MemStats
 	runtime.ReadMemStats(&m0)
 
-	// Submit
 	for i := 0; i < items; i++ {
 		_ = w.Submit(ctx, Event{
 			Seq:        uint64(i),
@@ -156,15 +207,22 @@ func TestWire_AllocBudget_ScratchBytes(t *testing.T) {
 	deltaAlloc := m1.TotalAlloc - m0.TotalAlloc
 	bytesPerItem := float64(deltaAlloc) / float64(items)
 
-	// This threshold is intentionally not "0" to avoid flakiness from runtime noise.
-	// It WILL catch real regressions (e.g., accidental boxing/pooling allocations per item).
 	const maxBytesPerItem = 8.0
 	if bytesPerItem > maxBytesPerItem {
 		t.Fatalf("alloc regression: %.2f bytes/item (delta=%d bytes over %d items)", bytesPerItem, deltaAlloc, items)
 	}
 
-	// Optional: ensure no errors were routed (sanity)
 	_ = atomic.LoadUint64(new(uint64))
+}
+
+func assertPanics(t *testing.T, name string, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("expected panic: %s", name)
+		}
+	}()
+	fn()
 }
 
 type Event struct {
