@@ -1,4 +1,3 @@
-// pkg/internal/adapter/s3client/options.go
 package s3client
 
 import (
