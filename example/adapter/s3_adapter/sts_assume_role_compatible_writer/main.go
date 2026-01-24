@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	parquet "github.com/parquet-go/parquet-go"
@@ -23,32 +22,15 @@ type Feedback struct {
 	Tags       []string `parquet:"name=tags, type=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8" json:"tags,omitempty"`
 }
 
-func envOr(k, def string) string {
-	if v := SystemGetenv(k); v != "" { // tiny shim to keep the example self-contained
-		return v
-	}
-	return def
-}
-
-// SystemGetenv is split so this file stays single-file runnable (no extra imports)
-func SystemGetenv(k string) string { return "" } // replace with os.Getenv if you prefer
-
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// ----- S3 client (LocalStack-compatible, via STS assume-role) -----
-	cli, err := builder.NewS3ClientAssumeRole(
-		ctx,
-		"us-east-1",
-		"arn:aws:iam::000000000000:role/exodus-dev-role",
-		"electrician-writer",
-		15*time.Minute,
-		"",
-		aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		"http://localhost:4566",
-		true,
-	)
+	cli, err := builder.NewS3ClientAssumeRoleLocalstack(ctx, builder.LocalstackS3AssumeRoleConfig{
+		RoleARN:     "arn:aws:iam::000000000000:role/exodus-dev-role",
+		SessionName: "electrician-writer",
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -56,7 +38,7 @@ func main() {
 	log := builder.NewLogger()
 
 	const bucket = "steeze-dev"
-	orgID := envOr("ORG_ID", "4d948fa0-084e-490b-aad5-cfd01eeab79a")
+	orgID := builder.EnvOr("ORG_ID", "4d948fa0-084e-490b-aad5-cfd01eeab79a")
 	prefix := fmt.Sprintf("org=%s/feedback/demo/{yyyy}/{MM}/{dd}/{HH}/{mm}/", orgID)
 
 	// idempotent for LocalStack

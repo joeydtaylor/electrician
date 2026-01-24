@@ -5,15 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
 )
@@ -28,7 +23,7 @@ type Feedback struct {
 	Tags       []string `parquet:"name=tags, type=LIST, valuetype=BYTE_ARRAY, valueconvertedtype=UTF8" json:"tags,omitempty"`
 }
 
-/* ------------ env helpers & org resolution ------------ */
+/* ------------ org resolution ------------ */
 
 const (
 	defaultOrgID     = "4d948fa0-084e-490b-aad5-cfd01eeab79a"
@@ -36,26 +31,6 @@ const (
 	bearerJWTEnvName = "BEARER_JWT"
 	orgIDEnvName     = "ORG_ID"
 )
-
-func getenv(k string) string {
-	v := strings.TrimSpace(strings.Trim(os.Getenv(k), `"`))
-	if v != "" {
-		return v
-	}
-	return ""
-}
-
-func getenvInt(k string, def int) int {
-	v := getenv(k)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
-}
 
 func b64UrlDecodeRaw(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
@@ -83,15 +58,15 @@ func orgFromJWT(tok string) (string, bool) {
 }
 
 func resolveOrgID() string {
-	if v := getenv(orgIDEnvName); v != "" {
+	if v := builder.EnvOr(orgIDEnvName, ""); v != "" {
 		return v
 	}
-	if v := getenv(assertJWTEnvName); v != "" {
+	if v := builder.EnvOr(assertJWTEnvName, ""); v != "" {
 		if org, ok := orgFromJWT(v); ok {
 			return org
 		}
 	}
-	if v := getenv(bearerJWTEnvName); v != "" {
+	if v := builder.EnvOr(bearerJWTEnvName, ""); v != "" {
 		if org, ok := orgFromJWT(v); ok {
 			return org
 		}
@@ -186,37 +161,25 @@ func main() {
 	defer cancel()
 
 	// LocalStack / creds
-	endpoint := getenv("S3_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "http://localhost:4566"
-	}
+	endpoint := builder.EnvOr("S3_ENDPOINT", "http://localhost:4566")
 
-	cli, err := builder.NewS3ClientAssumeRole(
-		ctx,
-		"us-east-1",
-		"arn:aws:iam::000000000000:role/exodus-dev-role",
-		"electrician-reader",
-		15*time.Minute,
-		"",
-		aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		endpoint,
-		true, // use_path_style
-	)
+	cli, err := builder.NewS3ClientAssumeRoleLocalstack(ctx, builder.LocalstackS3AssumeRoleConfig{
+		RoleARN:     "arn:aws:iam::000000000000:role/exodus-dev-role",
+		SessionName: "electrician-reader",
+		Endpoint:    endpoint,
+	})
 	if err != nil {
 		panic(err)
 	}
 
 	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
-	bucket := getenv("S3_BUCKET")
-	if bucket == "" {
-		bucket = "steeze-dev"
-	}
+	bucket := builder.EnvOr("S3_BUCKET", "steeze-dev")
 
 	orgID := resolveOrgID()
 	basePrefix := fmt.Sprintf("org=%s/feedback/demo/", orgID)
-	filter := getenv("FILTER_CONTENT_SUBSTR")   // e.g. "great"
-	windowMin := getenvInt("WINDOW_MINUTES", 0) // 0 = no time filter
-	sampleN := getenvInt("SAMPLE_N", 5)         // how many examples to print
+	filter := builder.EnvOr("FILTER_CONTENT_SUBSTR", "") // e.g. "great"
+	windowMin := builder.EnvIntOr("WINDOW_MINUTES", 0)   // 0 = no time filter
+	sampleN := builder.EnvIntOr("SAMPLE_N", 5)           // how many examples to print
 	fmt.Printf("scanning prefix: s3://%s/%s (endpoint=%s)\n", bucket, basePrefix, endpoint)
 	if filter != "" {
 		fmt.Printf("filter: content CONTAINS %q (case-insensitive)\n", filter)
@@ -226,31 +189,9 @@ func main() {
 	}
 
 	// 1) Quick inventory (optional but nice to print)
-	var (
-		keys []string
-		cont *string
-	)
-	for {
-		out, err := cli.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:            aws.String(bucket),
-			Prefix:            aws.String(basePrefix),
-			ContinuationToken: cont,
-			MaxKeys:           aws.Int32(1000),
-		})
-		if err != nil {
-			panic(err)
-		}
-		for _, o := range out.Contents {
-			k := aws.ToString(o.Key)
-			if strings.HasSuffix(strings.ToLower(k), ".parquet") {
-				keys = append(keys, k)
-			}
-		}
-		if aws.ToBool(out.IsTruncated) {
-			cont = out.NextContinuationToken
-			continue
-		}
-		break
+	keys, err := builder.S3ListKeys(ctx, cli, bucket, basePrefix, ".parquet")
+	if err != nil {
+		panic(err)
 	}
 	fmt.Printf("found %d parquet objects under prefix (via ListObjectsV2)\n", len(keys))
 
