@@ -47,11 +47,6 @@ func (g *Generator[T]) Start(ctx context.Context) error {
 	g.wg.Add(1)
 	go g.runControlLoop(runCtx)
 
-	go func() {
-		g.wg.Wait()
-		_ = g.Stop()
-	}()
-
 	if cb != nil {
 		go g.startCircuitBreakerTicker(runCtx)
 	}

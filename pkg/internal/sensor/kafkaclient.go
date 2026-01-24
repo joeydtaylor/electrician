@@ -1,4 +1,3 @@
-// pkg/internal/sensor/kafka_hooks.go
 package sensor
 
 import (
@@ -7,378 +6,422 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
-// ---------- Writer lifecycle ----------
-
-func (m *Sensor[T]) RegisterOnKafkaWriterStart(callback ...func(types.ComponentMetadata, string, string)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaWriterStart = append(m.OnKafkaWriterStart, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaWriterStart, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaWriterStart registers callbacks for Kafka writer start.
+func (s *Sensor[T]) RegisterOnKafkaWriterStart(callback ...func(types.ComponentMetadata, string, string)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaWriterStart = append(s.OnKafkaWriterStart, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaWriterStart(c types.ComponentMetadata, topic, format string) {
-	for _, cb := range m.OnKafkaWriterStart {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaWriterStart, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaWriterStart invokes callbacks for Kafka writer start.
+func (s *Sensor[T]) InvokeOnKafkaWriterStart(c types.ComponentMetadata, topic, format string) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaWriterStart) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, format)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaWriterStop(callback ...func(types.ComponentMetadata)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaWriterStop = append(m.OnKafkaWriterStop, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaWriterStop, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaWriterStop registers callbacks for Kafka writer stop.
+func (s *Sensor[T]) RegisterOnKafkaWriterStop(callback ...func(types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaWriterStop = append(s.OnKafkaWriterStop, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaWriterStop(c types.ComponentMetadata) {
-	for _, cb := range m.OnKafkaWriterStop {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaWriterStop, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaWriterStop invokes callbacks for Kafka writer stop.
+func (s *Sensor[T]) InvokeOnKafkaWriterStop(c types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaWriterStop) {
+		if cb == nil {
+			continue
+		}
 		cb(c)
-		m.callbackLock.Unlock()
 	}
 }
 
-// ---------- Produce lifecycle ----------
-
-func (m *Sensor[T]) RegisterOnKafkaProduceAttempt(callback ...func(types.ComponentMetadata, string, int, int, int)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaProduceAttempt = append(m.OnKafkaProduceAttempt, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaProduceAttempt, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaProduceAttempt registers callbacks for Kafka produce attempts.
+func (s *Sensor[T]) RegisterOnKafkaProduceAttempt(callback ...func(types.ComponentMetadata, string, int, int, int)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaProduceAttempt = append(s.OnKafkaProduceAttempt, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaProduceAttempt(c types.ComponentMetadata, topic string, partition, keyBytes, valueBytes int) {
-	for _, cb := range m.OnKafkaProduceAttempt {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaProduceAttempt, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaProduceAttempt invokes callbacks for Kafka produce attempts.
+func (s *Sensor[T]) InvokeOnKafkaProduceAttempt(c types.ComponentMetadata, topic string, partition, keyBytes, valueBytes int) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaProduceAttempt) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, partition, keyBytes, valueBytes)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaProduceSuccess(callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaProduceSuccess = append(m.OnKafkaProduceSuccess, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaProduceSuccess, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaProduceSuccess registers callbacks for Kafka produce successes.
+func (s *Sensor[T]) RegisterOnKafkaProduceSuccess(callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaProduceSuccess = append(s.OnKafkaProduceSuccess, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaProduceSuccess(c types.ComponentMetadata, topic string, partition int, offset int64, dur time.Duration) {
-	for _, cb := range m.OnKafkaProduceSuccess {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaProduceSuccess, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaProduceSuccess invokes callbacks for Kafka produce successes.
+func (s *Sensor[T]) InvokeOnKafkaProduceSuccess(c types.ComponentMetadata, topic string, partition int, offset int64, dur time.Duration) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaProduceSuccess) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, partition, offset, dur)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaProduceError(callback ...func(types.ComponentMetadata, string, int, error)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaProduceError = append(m.OnKafkaProduceError, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaProduceError, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaProduceError registers callbacks for Kafka produce errors.
+func (s *Sensor[T]) RegisterOnKafkaProduceError(callback ...func(types.ComponentMetadata, string, int, error)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaProduceError = append(s.OnKafkaProduceError, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaProduceError(c types.ComponentMetadata, topic string, partition int, err error) {
-	for _, cb := range m.OnKafkaProduceError {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaProduceError, error: %v, target: %v", m.componentMetadata, err, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaProduceError invokes callbacks for Kafka produce errors.
+func (s *Sensor[T]) InvokeOnKafkaProduceError(c types.ComponentMetadata, topic string, partition int, err error) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaProduceError) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, partition, err)
-		m.callbackLock.Unlock()
 	}
 }
 
-// ---------- Writer batching/flush ----------
-
-func (m *Sensor[T]) RegisterOnKafkaBatchFlush(callback ...func(types.ComponentMetadata, string, int, int, string)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaBatchFlush = append(m.OnKafkaBatchFlush, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaBatchFlush, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaBatchFlush registers callbacks for Kafka batch flush.
+func (s *Sensor[T]) RegisterOnKafkaBatchFlush(callback ...func(types.ComponentMetadata, string, int, int, string)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaBatchFlush = append(s.OnKafkaBatchFlush, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaBatchFlush(c types.ComponentMetadata, topic string, records, bytes int, compression string) {
-	for _, cb := range m.OnKafkaBatchFlush {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaBatchFlush, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaBatchFlush invokes callbacks for Kafka batch flush.
+func (s *Sensor[T]) InvokeOnKafkaBatchFlush(c types.ComponentMetadata, topic string, records, bytes int, compression string) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaBatchFlush) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, records, bytes, compression)
-		m.callbackLock.Unlock()
 	}
 }
 
-// ---------- Record adornments ----------
-
-func (m *Sensor[T]) RegisterOnKafkaKeyRendered(callback ...func(types.ComponentMetadata, []byte)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaKeyRendered = append(m.OnKafkaKeyRendered, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaKeyRendered, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaKeyRendered registers callbacks for Kafka key rendering.
+func (s *Sensor[T]) RegisterOnKafkaKeyRendered(callback ...func(types.ComponentMetadata, []byte)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaKeyRendered = append(s.OnKafkaKeyRendered, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaKeyRendered(c types.ComponentMetadata, key []byte) {
-	for _, cb := range m.OnKafkaKeyRendered {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaKeyRendered, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaKeyRendered invokes callbacks for Kafka key rendering.
+func (s *Sensor[T]) InvokeOnKafkaKeyRendered(c types.ComponentMetadata, key []byte) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaKeyRendered) {
+		if cb == nil {
+			continue
+		}
 		cb(c, key)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaHeadersRendered(callback ...func(types.ComponentMetadata, []struct{ Key, Value string })) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaHeadersRendered = append(m.OnKafkaHeadersRendered, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaHeadersRendered, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaHeadersRendered registers callbacks for Kafka header rendering.
+func (s *Sensor[T]) RegisterOnKafkaHeadersRendered(callback ...func(types.ComponentMetadata, []struct{ Key, Value string })) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaHeadersRendered = append(s.OnKafkaHeadersRendered, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaHeadersRendered(c types.ComponentMetadata, headers []struct{ Key, Value string }) {
-	for _, cb := range m.OnKafkaHeadersRendered {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaHeadersRendered, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaHeadersRendered invokes callbacks for Kafka header rendering.
+func (s *Sensor[T]) InvokeOnKafkaHeadersRendered(c types.ComponentMetadata, headers []struct{ Key, Value string }) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaHeadersRendered) {
+		if cb == nil {
+			continue
+		}
 		cb(c, headers)
-		m.callbackLock.Unlock()
 	}
 }
 
-// ---------- Consumer lifecycle & flow ----------
-
-func (m *Sensor[T]) RegisterOnKafkaConsumerStart(callback ...func(types.ComponentMetadata, string, []string, string)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaConsumerStart = append(m.OnKafkaConsumerStart, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaConsumerStart, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaConsumerStart registers callbacks for Kafka consumer start.
+func (s *Sensor[T]) RegisterOnKafkaConsumerStart(callback ...func(types.ComponentMetadata, string, []string, string)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaConsumerStart = append(s.OnKafkaConsumerStart, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaConsumerStart(c types.ComponentMetadata, group string, topics []string, startAt string) {
-	for _, cb := range m.OnKafkaConsumerStart {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaConsumerStart, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaConsumerStart invokes callbacks for Kafka consumer start.
+func (s *Sensor[T]) InvokeOnKafkaConsumerStart(c types.ComponentMetadata, group string, topics []string, startAt string) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaConsumerStart) {
+		if cb == nil {
+			continue
+		}
 		cb(c, group, topics, startAt)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaConsumerStop(callback ...func(types.ComponentMetadata)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaConsumerStop = append(m.OnKafkaConsumerStop, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaConsumerStop, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaConsumerStop registers callbacks for Kafka consumer stop.
+func (s *Sensor[T]) RegisterOnKafkaConsumerStop(callback ...func(types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaConsumerStop = append(s.OnKafkaConsumerStop, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaConsumerStop(c types.ComponentMetadata) {
-	for _, cb := range m.OnKafkaConsumerStop {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaConsumerStop, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaConsumerStop invokes callbacks for Kafka consumer stop.
+func (s *Sensor[T]) InvokeOnKafkaConsumerStop(c types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaConsumerStop) {
+		if cb == nil {
+			continue
+		}
 		cb(c)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaPartitionAssigned(callback ...func(types.ComponentMetadata, string, int, int64, int64)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaPartitionAssigned = append(m.OnKafkaPartitionAssigned, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaPartitionAssigned, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaPartitionAssigned registers callbacks for partition assignment.
+func (s *Sensor[T]) RegisterOnKafkaPartitionAssigned(callback ...func(types.ComponentMetadata, string, int, int64, int64)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaPartitionAssigned = append(s.OnKafkaPartitionAssigned, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaPartitionAssigned(c types.ComponentMetadata, topic string, partition int, startOffset, endOffset int64) {
-	for _, cb := range m.OnKafkaPartitionAssigned {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaPartitionAssigned, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaPartitionAssigned invokes callbacks for partition assignment.
+func (s *Sensor[T]) InvokeOnKafkaPartitionAssigned(c types.ComponentMetadata, topic string, partition int, startOffset int64, endOffset int64) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaPartitionAssigned) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, partition, startOffset, endOffset)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaPartitionRevoked(callback ...func(types.ComponentMetadata, string, int)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaPartitionRevoked = append(m.OnKafkaPartitionRevoked, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaPartitionRevoked, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaPartitionRevoked registers callbacks for partition revocation.
+func (s *Sensor[T]) RegisterOnKafkaPartitionRevoked(callback ...func(types.ComponentMetadata, string, int)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaPartitionRevoked = append(s.OnKafkaPartitionRevoked, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaPartitionRevoked(c types.ComponentMetadata, topic string, partition int) {
-	for _, cb := range m.OnKafkaPartitionRevoked {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaPartitionRevoked, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaPartitionRevoked invokes callbacks for partition revocation.
+func (s *Sensor[T]) InvokeOnKafkaPartitionRevoked(c types.ComponentMetadata, topic string, partition int) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaPartitionRevoked) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, partition)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaMessage(callback ...func(types.ComponentMetadata, string, int, int64, int, int)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaMessage = append(m.OnKafkaMessage, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaMessage, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaMessage registers callbacks for consumed messages.
+func (s *Sensor[T]) RegisterOnKafkaMessage(callback ...func(types.ComponentMetadata, string, int, int64, int, int)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaMessage = append(s.OnKafkaMessage, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaMessage(c types.ComponentMetadata, topic string, partition int, offset int64, keyBytes, valueBytes int) {
-	for _, cb := range m.OnKafkaMessage {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaMessage, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaMessage invokes callbacks for consumed messages.
+func (s *Sensor[T]) InvokeOnKafkaMessage(c types.ComponentMetadata, topic string, partition int, offset int64, keyBytes int, valueBytes int) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaMessage) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, partition, offset, keyBytes, valueBytes)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaDecode(callback ...func(types.ComponentMetadata, string, int, string)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaDecode = append(m.OnKafkaDecode, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaDecode, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaDecode registers callbacks for decoded Kafka records.
+func (s *Sensor[T]) RegisterOnKafkaDecode(callback ...func(types.ComponentMetadata, string, int, string)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaDecode = append(s.OnKafkaDecode, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaDecode(c types.ComponentMetadata, topic string, rows int, format string) {
-	for _, cb := range m.OnKafkaDecode {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaDecode, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaDecode invokes callbacks for decoded Kafka records.
+func (s *Sensor[T]) InvokeOnKafkaDecode(c types.ComponentMetadata, topic string, rows int, format string) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaDecode) {
+		if cb == nil {
+			continue
+		}
 		cb(c, topic, rows, format)
-		m.callbackLock.Unlock()
 	}
 }
 
-// ---------- Commits ----------
-
-func (m *Sensor[T]) RegisterOnKafkaCommitSuccess(callback ...func(types.ComponentMetadata, string, map[string]int64)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaCommitSuccess = append(m.OnKafkaCommitSuccess, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaCommitSuccess, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaCommitSuccess registers callbacks for commit success.
+func (s *Sensor[T]) RegisterOnKafkaCommitSuccess(callback ...func(types.ComponentMetadata, string, map[string]int64)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaCommitSuccess = append(s.OnKafkaCommitSuccess, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaCommitSuccess(c types.ComponentMetadata, group string, offsets map[string]int64) {
-	for _, cb := range m.OnKafkaCommitSuccess {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaCommitSuccess, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaCommitSuccess invokes callbacks for commit success.
+func (s *Sensor[T]) InvokeOnKafkaCommitSuccess(c types.ComponentMetadata, group string, offsets map[string]int64) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaCommitSuccess) {
+		if cb == nil {
+			continue
+		}
 		cb(c, group, offsets)
-		m.callbackLock.Unlock()
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaCommitError(callback ...func(types.ComponentMetadata, string, error)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaCommitError = append(m.OnKafkaCommitError, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaCommitError, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaCommitError registers callbacks for commit errors.
+func (s *Sensor[T]) RegisterOnKafkaCommitError(callback ...func(types.ComponentMetadata, string, error)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaCommitError = append(s.OnKafkaCommitError, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) InvokeOnKafkaCommitError(c types.ComponentMetadata, group string, err error) {
-	for _, cb := range m.OnKafkaCommitError {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaCommitError, error: %v, target: %v", m.componentMetadata, err, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaCommitError invokes callbacks for commit errors.
+func (s *Sensor[T]) InvokeOnKafkaCommitError(c types.ComponentMetadata, group string, err error) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaCommitError) {
+		if cb == nil {
+			continue
+		}
 		cb(c, group, err)
-		m.callbackLock.Unlock()
 	}
 }
 
-// ---------- DLQ ----------
+// RegisterOnKafkaDLQProduceAttempt registers callbacks for DLQ produce attempts.
+func (s *Sensor[T]) RegisterOnKafkaDLQProduceAttempt(callback ...func(types.ComponentMetadata, string, int, int, int)) {
+	if len(callback) == 0 {
+		return
+	}
 
-func (m *Sensor[T]) RegisterOnKafkaDLQProduceAttempt(callback ...func(types.ComponentMetadata, string, int, int, int)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaDLQProduceAttempt = append(m.OnKafkaDLQProduceAttempt, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaDLQProduceAttempt, target: %v", m.componentMetadata, cb)
+	s.callbackLock.Lock()
+	s.OnKafkaDLQProduceAttempt = append(s.OnKafkaDLQProduceAttempt, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnKafkaDLQProduceAttempt invokes callbacks for DLQ produce attempts.
+func (s *Sensor[T]) InvokeOnKafkaDLQProduceAttempt(c types.ComponentMetadata, topic string, partition int, keyBytes int, valueBytes int) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaDLQProduceAttempt) {
+		if cb == nil {
+			continue
+		}
+		cb(c, topic, partition, keyBytes, valueBytes)
 	}
 }
 
-func (m *Sensor[T]) InvokeOnKafkaDLQProduceAttempt(c types.ComponentMetadata, dlqTopic string, partition, keyBytes, valueBytes int) {
-	for _, cb := range m.OnKafkaDLQProduceAttempt {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaDLQProduceAttempt, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
-		cb(c, dlqTopic, partition, keyBytes, valueBytes)
-		m.callbackLock.Unlock()
+// RegisterOnKafkaDLQProduceSuccess registers callbacks for DLQ produce success.
+func (s *Sensor[T]) RegisterOnKafkaDLQProduceSuccess(callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaDLQProduceSuccess = append(s.OnKafkaDLQProduceSuccess, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnKafkaDLQProduceSuccess invokes callbacks for DLQ produce success.
+func (s *Sensor[T]) InvokeOnKafkaDLQProduceSuccess(c types.ComponentMetadata, topic string, partition int, offset int64, dur time.Duration) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaDLQProduceSuccess) {
+		if cb == nil {
+			continue
+		}
+		cb(c, topic, partition, offset, dur)
 	}
 }
 
-func (m *Sensor[T]) RegisterOnKafkaDLQProduceSuccess(callback ...func(types.ComponentMetadata, string, int, int64, time.Duration)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaDLQProduceSuccess = append(m.OnKafkaDLQProduceSuccess, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaDLQProduceSuccess, target: %v", m.componentMetadata, cb)
+// RegisterOnKafkaDLQProduceError registers callbacks for DLQ produce errors.
+func (s *Sensor[T]) RegisterOnKafkaDLQProduceError(callback ...func(types.ComponentMetadata, string, int, error)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaDLQProduceError = append(s.OnKafkaDLQProduceError, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnKafkaDLQProduceError invokes callbacks for DLQ produce errors.
+func (s *Sensor[T]) InvokeOnKafkaDLQProduceError(c types.ComponentMetadata, topic string, partition int, err error) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaDLQProduceError) {
+		if cb == nil {
+			continue
+		}
+		cb(c, topic, partition, err)
 	}
 }
 
-func (m *Sensor[T]) InvokeOnKafkaDLQProduceSuccess(c types.ComponentMetadata, dlqTopic string, partition int, offset int64, dur time.Duration) {
-	for _, cb := range m.OnKafkaDLQProduceSuccess {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaDLQProduceSuccess, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
-		cb(c, dlqTopic, partition, offset, dur)
-		m.callbackLock.Unlock()
+// RegisterOnKafkaBillingSample registers callbacks for billing samples.
+func (s *Sensor[T]) RegisterOnKafkaBillingSample(callback ...func(types.ComponentMetadata, string, int64, int64)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnKafkaBillingSample = append(s.OnKafkaBillingSample, callback...)
+	s.callbackLock.Unlock()
 }
 
-func (m *Sensor[T]) RegisterOnKafkaDLQProduceError(callback ...func(types.ComponentMetadata, string, int, error)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaDLQProduceError = append(m.OnKafkaDLQProduceError, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaDLQProduceError, target: %v", m.componentMetadata, cb)
-	}
-}
-
-func (m *Sensor[T]) InvokeOnKafkaDLQProduceError(c types.ComponentMetadata, dlqTopic string, partition int, err error) {
-	for _, cb := range m.OnKafkaDLQProduceError {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaDLQProduceError, error: %v, target: %v", m.componentMetadata, err, cb)
-		m.callbackLock.Lock()
-		cb(c, dlqTopic, partition, err)
-		m.callbackLock.Unlock()
-	}
-}
-
-// ---------- Billing (optional) ----------
-
-func (m *Sensor[T]) RegisterOnKafkaBillingSample(callback ...func(types.ComponentMetadata, string, int64, int64)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnKafkaBillingSample = append(m.OnKafkaBillingSample, callback...)
-	for _, cb := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: RegisterOnKafkaBillingSample, target: %v", m.componentMetadata, cb)
-	}
-}
-
-func (m *Sensor[T]) InvokeOnKafkaBillingSample(c types.ComponentMetadata, op string, requestUnits, bytes int64) {
-	for _, cb := range m.OnKafkaBillingSample {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, event: InvokeOnKafkaBillingSample, target: %v", m.componentMetadata, cb)
-		m.callbackLock.Lock()
+// InvokeOnKafkaBillingSample invokes callbacks for billing samples.
+func (s *Sensor[T]) InvokeOnKafkaBillingSample(c types.ComponentMetadata, op string, requestUnits int64, bytes int64) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnKafkaBillingSample) {
+		if cb == nil {
+			continue
+		}
 		cb(c, op, requestUnits, bytes)
-		m.callbackLock.Unlock()
 	}
 }

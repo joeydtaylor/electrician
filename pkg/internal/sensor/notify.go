@@ -1,57 +1,52 @@
 package sensor
 
-import (
-	"github.com/joeydtaylor/electrician/pkg/internal/types"
-)
+import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
-// NotifyLoggers sends a formatted log message to all attached loggers, enhancing traceability and debugging.
-//
-// Parameters:
-//   - level: The log level of the message.
-//   - format: The format string for the log message.
-//   - args: Additional arguments to be formatted into the message.
-//
-// NotifyLoggers notifies loggers with the specified log level, format, and arguments.
-// This function notifies registered loggers with the specified log level, format, and arguments,
-// allowing them to log relevant events and information during data processing.
-// Parameters:
-//   - level: The log level of the message.
-//   - format: The format string for the log message.
-//   - args: The arguments to be formatted into the log message.
+// NotifyLoggers emits a log entry to configured loggers.
 func (s *Sensor[T]) NotifyLoggers(level types.LogLevel, msg string, keysAndValues ...interface{}) {
-	if s.loggers != nil {
-		for _, logger := range s.loggers {
-			if logger == nil {
-				continue
-			}
-			// Ensure we only acquire the lock once per logger to avoid deadlock or excessive locking overhead
-			s.loggersLock.Lock()
-			// Check if the logger supports the IsLevelEnabled method dynamically
-			type levelChecker interface {
-				IsLevelEnabled(types.LogLevel) bool
-			}
-			if lc, ok := logger.(levelChecker); ok && !lc.IsLevelEnabled(level) {
-				s.loggersLock.Unlock()
-				continue
-			}
+	loggers := s.snapshotLoggers()
+	if len(loggers) == 0 {
+		return
+	}
 
-			switch level {
-			case types.DebugLevel:
-				logger.Debug(msg, keysAndValues...)
-			case types.InfoLevel:
-				logger.Info(msg, keysAndValues...)
-			case types.WarnLevel:
-				logger.Warn(msg, keysAndValues...)
-			case types.ErrorLevel:
-				logger.Error(msg, keysAndValues...)
-			case types.DPanicLevel:
-				logger.DPanic(msg, keysAndValues...)
-			case types.PanicLevel:
-				logger.Panic(msg, keysAndValues...)
-			case types.FatalLevel:
-				logger.Fatal(msg, keysAndValues...)
+	type levelChecker interface {
+		IsLevelEnabled(types.LogLevel) bool
+	}
+
+	for _, logger := range loggers {
+		if logger == nil {
+			continue
+		}
+		if lc, ok := logger.(levelChecker); ok {
+			if !lc.IsLevelEnabled(level) {
+				continue
 			}
-			s.loggersLock.Unlock()
+		} else if logger.GetLevel() > level {
+			continue
+		}
+
+		switch level {
+		case types.DebugLevel:
+			logger.Debug(msg, keysAndValues...)
+		case types.InfoLevel:
+			logger.Info(msg, keysAndValues...)
+		case types.WarnLevel:
+			logger.Warn(msg, keysAndValues...)
+		case types.ErrorLevel:
+			logger.Error(msg, keysAndValues...)
+		case types.DPanicLevel:
+			logger.DPanic(msg, keysAndValues...)
+		case types.PanicLevel:
+			logger.Panic(msg, keysAndValues...)
+		case types.FatalLevel:
+			logger.Fatal(msg, keysAndValues...)
 		}
 	}
+}
+
+func (s *Sensor[T]) snapshotLoggers() []types.Logger {
+	s.loggersLock.Lock()
+	loggers := append([]types.Logger(nil), s.loggers...)
+	s.loggersLock.Unlock()
+	return loggers
 }

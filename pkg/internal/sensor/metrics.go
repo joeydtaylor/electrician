@@ -2,43 +2,44 @@ package sensor
 
 import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
+func (s *Sensor[T]) snapshotMeters() []types.Meter[T] {
+	s.metersLock.Lock()
+	meters := append([]types.Meter[T](nil), s.meters...)
+	s.metersLock.Unlock()
+	return meters
+}
+
 func (s *Sensor[T]) incrementMeterCounters(metric string) {
-	for _, m := range s.meters {
+	for _, m := range s.snapshotMeters() {
 		m.IncrementCount(metric)
 	}
 }
 
 func (s *Sensor[T]) setMetricTimestampValue(metric string, time int64) {
-	for _, m := range s.meters {
+	for _, m := range s.snapshotMeters() {
 		m.SetMetricTimestamp(metric, time)
 	}
 }
 
 func (s *Sensor[T]) incrementMeterCountersAndReportActivity(metric string) {
-	for _, m := range s.meters {
+	for _, m := range s.snapshotMeters() {
 		m.ReportData()
 		m.IncrementCount(metric)
 	}
 }
 
 func (s *Sensor[T]) decrementMeterCounters(metric string) {
-	for _, m := range s.meters {
+	for _, m := range s.snapshotMeters() {
 		m.DecrementCount(metric)
 	}
 }
 
 func (s *Sensor[T]) decorateCallbacks(options ...types.Option[types.Sensor[T]]) []types.Option[types.Sensor[T]] {
-
-	cbCallbacks := s.decorateCircuitBreakerCallbacks()
-	options = append(options, cbCallbacks...)
-	httpClientCallbacks := s.decorateHttpClientCallbacks()
-	options = append(options, httpClientCallbacks...)
-	surgeProtectorCallbacks := s.decorateSurgeProtectorCallbacks()
-	options = append(options, surgeProtectorCallbacks...)
-	wireCallbacks := s.decorateWireCallbacks()
-	options = append(options, wireCallbacks...)
-	resisterCallbacks := s.decorateResisterCallbacks()
-	options = append(options, resisterCallbacks...)
+	options = append(options, s.decorateCircuitBreakerCallbacks()...)
+	options = append(options, s.decorateHttpClientCallbacks()...)
+	options = append(options, s.decorateSurgeProtectorCallbacks()...)
+	options = append(options, s.decorateWireCallbacks()...)
+	options = append(options, s.decorateResisterCallbacks()...)
 
 	options = append(
 		options,
@@ -78,5 +79,4 @@ func (s *Sensor[T]) decorateCallbacks(options ...types.Option[types.Sensor[T]]) 
 	)
 
 	return options
-
 }

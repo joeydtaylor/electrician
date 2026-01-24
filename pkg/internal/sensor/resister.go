@@ -3,8 +3,7 @@ package sensor
 import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
 func (s *Sensor[T]) decorateResisterCallbacks() []types.Option[types.Sensor[T]] {
-	var resisterOptions []types.Option[types.Sensor[T]]
-	resisterOptions = append(resisterOptions,
+	return []types.Option[types.Sensor[T]]{
 		WithResisterDequeuedFunc[T](func(r types.ComponentMetadata, elem T) {
 			s.decrementMeterCounters(types.MetricResisterElementCurrentlyQueuedCount)
 			s.incrementMeterCounters(types.MetricResisterElementDequeued)
@@ -19,98 +18,89 @@ func (s *Sensor[T]) decorateResisterCallbacks() []types.Option[types.Sensor[T]] 
 		WithResisterRequeuedFunc[T](func(r types.ComponentMetadata, elem T) {
 			s.incrementMeterCounters(types.MetricResisterElementRequeued)
 		}),
-	)
-	return resisterOptions
-}
-
-// RegisterOnSurgeProtectorQueueProcessed registers callbacks to be invoked when the surge protector processes its queue.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector queue processing, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnResisterDequeued(callback ...func(r types.ComponentMetadata, elem T)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnResisterDequeued = append(m.OnResisterDequeued, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnSurgeProtectorQueueProcessed, target: %v => Registered OnResisterDequeued function", m.componentMetadata, callback)
 	}
 }
 
-// InvokeOnSurgeProtectorResisterProcessed triggers callbacks registered for surge protector queue processed events.
-func (m *Sensor[T]) InvokeOnResisterDequeued(r types.ComponentMetadata, elem T) {
-	for _, callback := range m.OnResisterDequeued {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnResisterDequeued, target: %v => Invoked OnResisterDequeued function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(r, elem)
-		m.callbackLock.Unlock()
+// RegisterOnResisterDequeued registers callbacks for dequeued elements.
+func (s *Sensor[T]) RegisterOnResisterDequeued(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnResisterDequeued = append(s.OnResisterDequeued, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnResisterDequeued invokes callbacks for dequeued elements.
+func (s *Sensor[T]) InvokeOnResisterDequeued(r types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnResisterDequeued) {
+		if cb == nil {
+			continue
+		}
+		cb(r, elem)
 	}
 }
 
-// RegisterOnSurgeProtectorQueueProcessed registers callbacks to be invoked when the surge protector processes its queue.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector queue processing, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnResisterQueued(callback ...func(r types.ComponentMetadata, elem T)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnResisterQueued = append(m.OnResisterQueued, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnResisterQueued, target: %v => Registered OnResisterQueued function", m.componentMetadata, callback)
+// RegisterOnResisterQueued registers callbacks for queued elements.
+func (s *Sensor[T]) RegisterOnResisterQueued(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnResisterQueued = append(s.OnResisterQueued, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnResisterQueued invokes callbacks for queued elements.
+func (s *Sensor[T]) InvokeOnResisterQueued(r types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnResisterQueued) {
+		if cb == nil {
+			continue
+		}
+		cb(r, elem)
 	}
 }
 
-// InvokeOnSurgeProtectorResisterProcessed triggers callbacks registered for surge protector queue processed events.
-func (m *Sensor[T]) InvokeOnResisterQueued(r types.ComponentMetadata, elem T) {
-	for _, callback := range m.OnResisterQueued {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnResisterQueued, target: %v => Invoked OnResisterQueued function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(r, elem)
-		m.callbackLock.Unlock()
+// RegisterOnResisterEmpty registers callbacks for empty queue events.
+func (s *Sensor[T]) RegisterOnResisterEmpty(callback ...func(types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnResisterEmpty = append(s.OnResisterEmpty, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnResisterEmpty invokes callbacks for empty queue events.
+func (s *Sensor[T]) InvokeOnResisterEmpty(r types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnResisterEmpty) {
+		if cb == nil {
+			continue
+		}
+		cb(r)
 	}
 }
 
-// RegisterOnSurgeProtectorQueueEmpty registers callbacks to be invoked when the surge protector's queue becomes empty.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector queue empty, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnResisterEmpty(callback ...func(r types.ComponentMetadata)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnResisterEmpty = append(m.OnResisterEmpty, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnSurgeProtectorQueueEmpty, target: %v => Registered OnSurgeProtectorQueueEmpty function", m.componentMetadata, callback)
+// RegisterOnResisterRequeued registers callbacks for requeued elements.
+func (s *Sensor[T]) RegisterOnResisterRequeued(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
 	}
+
+	s.callbackLock.Lock()
+	s.OnResisterRequeued = append(s.OnResisterRequeued, callback...)
+	s.callbackLock.Unlock()
 }
 
-// InvokeOnSurgeProtectorQueueEmpty triggers callbacks registered for surge protector queue empty events.
-func (m *Sensor[T]) InvokeOnResisterEmpty(r types.ComponentMetadata) {
-	for _, callback := range m.OnResisterEmpty {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnSurgeProtectorQueueEmpty, target: %v => Invoked OnSurgeProtectorQueueEmpty function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(r)
-		m.callbackLock.Unlock()
-	}
-}
-
-// RegisterOnSurgeProtectorQueueEmpty registers callbacks to be invoked when the surge protector's queue becomes empty.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector queue empty, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnResisterRequeued(callback ...func(r types.ComponentMetadata, elem T)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnResisterRequeued = append(m.OnResisterRequeued, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnResisterRequeued, target: %v => Registered RegisterOnResisterRequeued function", m.componentMetadata, callback)
-	}
-}
-
-// InvokeOnSurgeProtectorQueueEmpty triggers callbacks registered for surge protector queue empty events.
-func (m *Sensor[T]) InvokeOnResisterRequeued(r types.ComponentMetadata, elem T) {
-	for _, callback := range m.OnResisterRequeued {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnResisterRequeued, target: %v => Invoked InvokeOnResisterRequeued function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(r, elem)
-		m.callbackLock.Unlock()
+// InvokeOnResisterRequeued invokes callbacks for requeued elements.
+func (s *Sensor[T]) InvokeOnResisterRequeued(r types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnResisterRequeued) {
+		if cb == nil {
+			continue
+		}
+		cb(r, elem)
 	}
 }

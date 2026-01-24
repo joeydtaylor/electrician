@@ -3,20 +3,20 @@ package sensor
 import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
 func (s *Sensor[T]) decorateSurgeProtectorCallbacks() []types.Option[types.Sensor[T]] {
-	var surgeProtectorOptions []types.Option[types.Sensor[T]]
-	surgeProtectorOptions = append(surgeProtectorOptions,
+	return []types.Option[types.Sensor[T]]{
 		WithSurgeProtectorTripFunc[T](func(c types.ComponentMetadata) {
-			s.incrementMeterCounters(types.MetricComponentRunningCount)
 			s.incrementMeterCounters(types.MetricSurgeTripCount)
 			s.incrementMeterCounters(types.MetricSurgeProtectorCurrentTripCount)
 		}),
 		WithSurgeProtectorResetFunc[T](func(c types.ComponentMetadata) {
-			s.decrementMeterCounters(types.MetricComponentRunningCount)
 			s.incrementMeterCounters(types.MetricSurgeResetCount)
 			s.decrementMeterCounters(types.MetricSurgeProtectorCurrentTripCount)
 		}),
 		WithSurgeProtectorBackupFailureFunc[T](func(c types.ComponentMetadata, err error) {
 			s.incrementMeterCounters(types.MetricSurgeBackupFailureCount)
+		}),
+		WithSurgeProtectorRateLimitExceededFunc[T](func(c types.ComponentMetadata, elem T) {
+			s.incrementMeterCounters(types.MetricSurgeRateLimitExceedCount)
 		}),
 		WithSurgeProtectorBackupWireSubmissionFunc[T](func(c types.ComponentMetadata, elem T) {
 			s.incrementMeterCounters(types.MetricSurgeProtectorBackupWireSubmissionCount)
@@ -24,124 +24,221 @@ func (s *Sensor[T]) decorateSurgeProtectorCallbacks() []types.Option[types.Senso
 		WithSurgeProtectorDroppedSubmissionFunc[T](func(c types.ComponentMetadata, elem T) {
 			s.incrementMeterCounters(types.MetricSurgeProtectorDropCount)
 		}),
-		WithSurgeProtectorConnectResisterFunc[T](func(c, r types.ComponentMetadata) {
+		WithSurgeProtectorSubmitFunc[T](func(c types.ComponentMetadata, elem T) {
+			s.incrementMeterCounters(types.MetricSurgeProtectorAttachedCount)
+		}),
+		WithSurgeProtectorConnectResisterFunc[T](func(c types.ComponentMetadata, r types.ComponentMetadata) {
 			s.incrementMeterCounters(types.MetricResisterConnectedCount)
 		}),
-	)
-	return surgeProtectorOptions
-}
-
-// RegisterOnSurgeProtectorTrip registers callbacks to be invoked when the surge protector trips.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector trip, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnSurgeProtectorTrip(callback ...func(c types.ComponentMetadata)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnSurgeProtectorTrip = append(m.OnSurgeProtectorTrip, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnSurgeProtectorTrip, target: %v => Registered OnSurgeProtectorTrip function", m.componentMetadata, callback)
 	}
 }
 
-// InvokeOnSurgeProtectorTrip triggers callbacks registered for surge protector trip events.
-func (m *Sensor[T]) InvokeOnSurgeProtectorTrip(c types.ComponentMetadata) {
-	for _, callback := range m.OnSurgeProtectorTrip {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnSurgeProtectorTrip, target: %v => Invoked OnSurgeProtectorTrip function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(c)
-		m.callbackLock.Unlock()
+// RegisterOnSurgeProtectorTrip registers callbacks for trip events.
+func (s *Sensor[T]) RegisterOnSurgeProtectorTrip(callback ...func(types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
 	}
-}
 
-// RegisterOnSurgeProtectorReset registers callbacks to be invoked when the surge protector resets.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector reset, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnSurgeProtectorReset(callback ...func(c types.ComponentMetadata)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnSurgeProtectorReset = append(m.OnSurgeProtectorReset, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnSurgeProtectorReset, target: %v => Registered OnSurgeProtectorReset function", m.componentMetadata, callback)
-	}
-}
-
-// InvokeOnSurgeProtectorReset triggers callbacks registered for surge protector reset events.
-func (m *Sensor[T]) InvokeOnSurgeProtectorReset(c types.ComponentMetadata) {
-	for _, callback := range m.OnSurgeProtectorReset {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnSurgeProtectorReset, target: %v => Invoked OnSurgeProtectorReset function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(c)
-		m.callbackLock.Unlock()
-	}
-}
-
-// RegisterOnSurgeProtectorBackupFailure registers callbacks to be invoked when the surge protector encounters backup failures.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector backup failure, each accepting an error parameter.
-func (m *Sensor[T]) RegisterOnSurgeProtectorBackupFailure(callback ...func(c types.ComponentMetadata, err error)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnSurgeProtectorBackupFailure = append(m.OnSurgeProtectorBackupFailure, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnSurgeProtectorBackupFailure, target: %v => Registered OnSurgeProtectorBackupFailure function", m.componentMetadata, callback)
-	}
-}
-
-// InvokeOnSurgeProtectorBackupFailure triggers callbacks registered for surge protector backup failure events, passing the error to each callback.
-//
-// Parameters:
-//   - err: The error encountered during the surge protector backup process.
-func (m *Sensor[T]) InvokeOnSurgeProtectorBackupFailure(c types.ComponentMetadata, err error) {
-	for _, callback := range m.OnSurgeProtectorBackupFailure {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnSurgeProtectorBackupFailure, error: %v, target: %v => Invoked OnSurgeProtectorBackupFailure function", m.componentMetadata, err, callback)
-		m.callbackLock.Lock()
-		callback(c, err)
-		m.callbackLock.Unlock()
-	}
-}
-
-// RegisterOnSurgeProtectorRateLimitExceeded registers callbacks to be invoked when the surge protector's rate limit is exceeded.
-//
-// Parameters:
-//   - callback: One or more callback functions to be invoked upon surge protector rate limit exceeded, each accepting no parameters.
-func (m *Sensor[T]) RegisterOnSurgeProtectorRateLimitExceeded(callback ...func(c types.ComponentMetadata, elem T)) {
-	m.callbackLock.Lock()
-	defer m.callbackLock.Unlock()
-	m.OnSurgeProtectorRateLimitExceeded = append(m.OnSurgeProtectorRateLimitExceeded, callback...)
-	for _, callback := range callback {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnSurgeProtectorRateLimitExceeded, target: %v => Registered OnSurgeProtectorRateLimitExceeded function", m.componentMetadata, callback)
-	}
-}
-
-// InvokeOnSurgeProtectorRateLimitExceeded triggers callbacks registered for surge protector rate limit exceeded events.
-func (m *Sensor[T]) InvokeOnSurgeProtectorRateLimitExceeded(c types.ComponentMetadata, elem T) {
-	for _, callback := range m.OnSurgeProtectorRateLimitExceeded {
-		m.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnSurgeProtectorRateLimitExceeded, target: %v => Invoked OnSurgeProtectorRateLimitExceeded function", m.componentMetadata, callback)
-		m.callbackLock.Lock()
-		callback(c, elem)
-		m.callbackLock.Unlock()
-	}
-}
-
-// RegisterOnCircuitBreakerDrop registers a callback to be invoked when a circuit breaker drops an element.
-func (s *Sensor[T]) RegisterOnSurgeProtectorSubmit(callback ...func(cmd types.ComponentMetadata, elem T)) {
 	s.callbackLock.Lock()
-	defer s.callbackLock.Unlock()
-	s.OnSurgeProtectorSubmit = append(s.OnSurgeProtectorSubmit, callback...)
-	for _, cb := range callback {
-		s.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: RegisterOnCircuitBreakerDrop, target: %v => Registered OnCircuitBreakerDrop function", s.componentMetadata, cb)
+	s.OnSurgeProtectorTrip = append(s.OnSurgeProtectorTrip, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorTrip invokes callbacks for trip events.
+func (s *Sensor[T]) InvokeOnSurgeProtectorTrip(c types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorTrip) {
+		if cb == nil {
+			continue
+		}
+		cb(c)
 	}
 }
 
-// InvokeOnCircuitBreakerDrop invokes registered callbacks for the circuit breaker drop event, passing the dropped element to each callback.
-func (s *Sensor[T]) InvokeOnSurgeProtectorSubmit(cmd types.ComponentMetadata, elem T) {
-	for _, callback := range s.OnSurgeProtectorSubmit {
-		s.NotifyLoggers(types.DebugLevel, "component: %s, level: DEBUG, result: SUCCESS, event: InvokeOnCircuitBreakerDrop, target: %v => Invoked OnCircuitBreakerDrop function", s.componentMetadata, callback)
-		s.callbackLock.Lock()
-		callback(cmd, elem)
-		s.callbackLock.Unlock()
+// RegisterOnSurgeProtectorReset registers callbacks for reset events.
+func (s *Sensor[T]) RegisterOnSurgeProtectorReset(callback ...func(types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorReset = append(s.OnSurgeProtectorReset, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorReset invokes callbacks for reset events.
+func (s *Sensor[T]) InvokeOnSurgeProtectorReset(c types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorReset) {
+		if cb == nil {
+			continue
+		}
+		cb(c)
+	}
+}
+
+// RegisterOnSurgeProtectorBackupFailure registers callbacks for backup failures.
+func (s *Sensor[T]) RegisterOnSurgeProtectorBackupFailure(callback ...func(types.ComponentMetadata, error)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorBackupFailure = append(s.OnSurgeProtectorBackupFailure, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorBackupFailure invokes callbacks for backup failures.
+func (s *Sensor[T]) InvokeOnSurgeProtectorBackupFailure(c types.ComponentMetadata, err error) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorBackupFailure) {
+		if cb == nil {
+			continue
+		}
+		cb(c, err)
+	}
+}
+
+// RegisterOnSurgeProtectorRateLimitExceeded registers callbacks for rate limit events.
+func (s *Sensor[T]) RegisterOnSurgeProtectorRateLimitExceeded(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorRateLimitExceeded = append(s.OnSurgeProtectorRateLimitExceeded, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorRateLimitExceeded invokes callbacks for rate limit events.
+func (s *Sensor[T]) InvokeOnSurgeProtectorRateLimitExceeded(c types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorRateLimitExceeded) {
+		if cb == nil {
+			continue
+		}
+		cb(c, elem)
+	}
+}
+
+// RegisterOnSurgeProtectorBackupWireSubmit registers callbacks for backup submissions.
+func (s *Sensor[T]) RegisterOnSurgeProtectorBackupWireSubmit(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorBackupWireSubmit = append(s.OnSurgeProtectorBackupWireSubmit, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorBackupWireSubmit invokes callbacks for backup submissions.
+func (s *Sensor[T]) InvokeOnSurgeProtectorBackupWireSubmit(c types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorBackupWireSubmit) {
+		if cb == nil {
+			continue
+		}
+		cb(c, elem)
+	}
+}
+
+// RegisterOnSurgeProtectorSubmit registers callbacks for submissions.
+func (s *Sensor[T]) RegisterOnSurgeProtectorSubmit(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorSubmit = append(s.OnSurgeProtectorSubmit, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorSubmit invokes callbacks for submissions.
+func (s *Sensor[T]) InvokeOnSurgeProtectorSubmit(c types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorSubmit) {
+		if cb == nil {
+			continue
+		}
+		cb(c, elem)
+	}
+}
+
+// RegisterOnSurgeProtectorDrop registers callbacks for dropped elements.
+func (s *Sensor[T]) RegisterOnSurgeProtectorDrop(callback ...func(types.ComponentMetadata, T)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorDrop = append(s.OnSurgeProtectorDrop, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorDrop invokes callbacks for dropped elements.
+func (s *Sensor[T]) InvokeOnSurgeProtectorDrop(c types.ComponentMetadata, elem T) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorDrop) {
+		if cb == nil {
+			continue
+		}
+		cb(c, elem)
+	}
+}
+
+// RegisterOnSurgeProtectorReleaseToken registers callbacks for token release events.
+func (s *Sensor[T]) RegisterOnSurgeProtectorReleaseToken(callback ...func(types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorReleaseToken = append(s.OnSurgeProtectorReleaseToken, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorReleaseToken invokes callbacks for token release events.
+func (s *Sensor[T]) InvokeOnSurgeProtectorReleaseToken(c types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorReleaseToken) {
+		if cb == nil {
+			continue
+		}
+		cb(c)
+	}
+}
+
+// RegisterOnSurgeProtectorConnectResister registers callbacks for resister connections.
+func (s *Sensor[T]) RegisterOnSurgeProtectorConnectResister(callback ...func(types.ComponentMetadata, types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorConnectResister = append(s.OnSurgeProtectorConnectResister, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorConnectResister invokes callbacks for resister connections.
+func (s *Sensor[T]) InvokeOnSurgeProtectorConnectResister(c types.ComponentMetadata, r types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorConnectResister) {
+		if cb == nil {
+			continue
+		}
+		cb(c, r)
+	}
+}
+
+// RegisterOnSurgeProtectorDetachedBackups registers callbacks for detached backup systems.
+func (s *Sensor[T]) RegisterOnSurgeProtectorDetachedBackups(callback ...func(types.ComponentMetadata, types.ComponentMetadata)) {
+	if len(callback) == 0 {
+		return
+	}
+
+	s.callbackLock.Lock()
+	s.OnSurgeProtectorDetachedBackups = append(s.OnSurgeProtectorDetachedBackups, callback...)
+	s.callbackLock.Unlock()
+}
+
+// InvokeOnSurgeProtectorDetachedBackups invokes callbacks for detached backup systems.
+func (s *Sensor[T]) InvokeOnSurgeProtectorDetachedBackups(c types.ComponentMetadata, b types.ComponentMetadata) {
+	for _, cb := range snapshotCallbacks(&s.callbackLock, s.OnSurgeProtectorDetachedBackups) {
+		if cb == nil {
+			continue
+		}
+		cb(c, b)
 	}
 }

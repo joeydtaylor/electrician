@@ -11,15 +11,17 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// Use a UTC time format, for clear, universal understanding
+// TimeFormat provides a stable UTC format for timestamps in logs.
 const TimeFormat = "2006-01-02 15:04:05 UTC"
 
+// RequestConfig describes the HTTP request to execute.
 type RequestConfig struct {
 	Method   string
 	Endpoint string
 	Body     io.Reader
 }
 
+// OAuth2Config contains OAuth client credentials settings.
 type OAuth2Config struct {
 	ClientID string
 	Secret   string
@@ -28,57 +30,67 @@ type OAuth2Config struct {
 	Scopes   []string
 }
 
+// OAuthToken stores access token metadata.
 type OAuthToken struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time // Calculate the expiry time when token is set
+	AccessToken string `json:"access_token"`
+	ExpiresAt   time.Time
 }
 
+// HTTPClientAdapter fetches remote resources and decodes responses into T.
 type HTTPClientAdapter[T any] struct {
 	componentMetadata types.ComponentMetadata
-	ctx               context.Context
-	cancel            context.CancelFunc
-	configLock        sync.Mutex
-	plugFunc          []types.AdapterFunc[T]
-	baseURL           string
-	httpClient        *http.Client
-	headers           map[string]string
-	interval          time.Duration
-	sensors           []types.Sensor[T]
-	sensorLock        sync.Mutex
-	loggers           []types.Logger
-	loggersLock       sync.Mutex
-	requestConfig     RequestConfig // Stores the current request configuration
-	isServing         int32         // atomic flag to check if Serve is already running
-	maxRetries        int
-	timeout           time.Duration
-	oAuthToken        *OAuthToken
-	tokenMutex        sync.Mutex // Ensure thread-safe token access
-	oauth2Config      *OAuth2Config
-	tlsPinningEnabled bool
-	pinnedCert        []byte // This could be the DER-encoded bytes of the certificate
+
+	ctx context.Context
+
+	httpClient *http.Client
+
+	configLock  sync.Mutex
+	request     RequestConfig
+	headers     map[string]string
+	interval    time.Duration
+	maxRetries  int
+	timeout     time.Duration
+	oauthConfig *OAuth2Config
+	pinnedCert  []byte
+	pinEnabled  bool
+
+	tokenLock  sync.Mutex
+	oAuthToken *OAuthToken
+
+	sensorsLock sync.Mutex
+	sensors     []types.Sensor[T]
+
+	loggersLock sync.Mutex
+	loggers     []types.Logger
+
+	isServing int32
 }
 
-// NewHTTPClientAdapter creates a new HTTP plug with a base URL, custom headers, and an interval.
+// NewHTTPClientAdapter constructs an adapter with defaults and applies options.
 func NewHTTPClientAdapter[T any](ctx context.Context, options ...types.Option[types.HTTPClientAdapter[T]]) types.HTTPClientAdapter[T] {
-	ctx, cancel := context.WithCancel(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	http := &HTTPClientAdapter[T]{
-		ctx:    ctx,
-		cancel: cancel,
+		ctx: ctx,
 		componentMetadata: types.ComponentMetadata{
 			ID:   utils.GenerateUniqueHash(),
 			Type: "HTTP_ADAPTER",
 		},
-		headers:    make(map[string]string), // Initialize the map to prevent nil map assignment panic
-		loggers:    make([]types.Logger, 0),
+		headers:    make(map[string]string),
 		sensors:    make([]types.Sensor[T], 0),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		plugFunc:   make([]types.AdapterFunc[T], 0),
+		loggers:    make([]types.Logger, 0),
+		interval:   time.Second,
 		maxRetries: 0,
 		timeout:    30 * time.Second,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 
 	for _, opt := range options {
+		if opt == nil {
+			continue
+		}
 		opt(http)
 	}
 
