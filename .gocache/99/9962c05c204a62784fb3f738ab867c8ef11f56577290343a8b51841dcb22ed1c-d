@@ -1,8 +1,0 @@
-./binary.go
-./codec.go
-./html.go
-./json.go
-./line.go
-./text.go
-./wave.go
-./xml.go

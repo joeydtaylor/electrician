@@ -1,6 +1,0 @@
-./block.go
-./block_optimized.go
-./bloom.go
-./filter.go
-./filter_default.go
-./hash.go

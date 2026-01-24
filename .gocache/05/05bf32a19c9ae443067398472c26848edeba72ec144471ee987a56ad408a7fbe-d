@@ -1,7 +1,0 @@
-./accessors.go
-./config.go
-./connect.go
-./options.go
-./queue.go
-./resister.go
-./telemetry.go

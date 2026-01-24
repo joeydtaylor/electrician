@@ -1,6 +1,0 @@
-./bitpack.go
-./pack.go
-./unpack.go
-./unpack_int32_le.go
-./unpack_int32_purego.go
-./unpack_int64_purego.go
