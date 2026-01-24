@@ -9,30 +9,24 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// KafkaClient[T] concrete implementation (read + write in one component).
-// Driver-agnostic: callers inject concrete producer/consumer via types.KafkaClientDeps.
+// KafkaClient implements the read/write Kafka adapter using injected driver handles.
 type KafkaClient[T any] struct {
-	// --- meta / lifecycle ---
 	componentMetadata types.ComponentMetadata
 	ctx               context.Context
 	cancel            context.CancelFunc
-	isServingWriter   int32 // atomic
-	isServingReader   int32 // atomic
+	isServingWriter   int32
+	isServingReader   int32
 
-	// --- logging / sensors ---
 	loggers     []types.Logger
 	loggersLock sync.Mutex
 	sensors     []types.Sensor[T]
 	sensorLock  sync.Mutex
 
-	// --- deps (driver-agnostic) ---
 	brokers  []string
 	producer any
 	consumer any
 	dlqTopic string
 
-	// --- writer config/state ---
-	// destination / format
 	wTopic        string
 	wFormat       string
 	wFormatOpts   map[string]string
@@ -40,38 +34,34 @@ type KafkaClient[T any] struct {
 	wKeyTemplate  string
 	wHdrTemplates map[string]string
 
-	// batching
 	wBatchMaxRecords int
 	wBatchMaxBytes   int
 	wBatchMaxAge     time.Duration
 
-	// producer semantics
 	wAcks            string
 	wReqTimeout      time.Duration
 	wPartitionStrat  string
 	wManualPartition *int
 	wEnableDLQ       bool
 
-	// --- reader config/state ---
 	rGroupID      string
 	rTopics       []string
-	rStartAt      string // "latest"|"earliest"|"timestamp"
+	rStartAt      string
 	rStartAtTime  time.Time
 	rPollInterval time.Duration
 	rMaxPollRecs  int
 	rMaxPollBytes int
 	rFormat       string
 	rFormatOpts   map[string]string
-	rCommitMode   string // "auto"|"manual"
-	rCommitPolicy string // "after-each"|"after-batch"|"time"
+	rCommitMode   string
+	rCommitPolicy string
 	rCommitEvery  time.Duration
 
-	// --- inputs from Wire(s) (fan-in) ---
-	inputWires []types.Wire[T] // wires connected via ConnectInput(...)
-	mergedIn   chan T          // internal merged channel fed by fan-in goroutines
+	inputWires []types.Wire[T]
+	mergedIn   chan T
 }
 
-// NewKafkaClientAdapter mirrors the public constructor; options mutate the concrete impl.
+// NewKafkaClientAdapter constructs a Kafka adapter with defaults and applies options.
 func NewKafkaClientAdapter[T any](ctx context.Context, options ...types.KafkaClientOption[T]) types.KafkaClientAdapter[T] {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -85,12 +75,11 @@ func NewKafkaClientAdapter[T any](ctx context.Context, options ...types.KafkaCli
 		loggers: make([]types.Logger, 0),
 		sensors: make([]types.Sensor[T], 0),
 
-		// writer defaults
 		wFormat:          "ndjson",
 		wFormatOpts:      map[string]string{},
-		wCompression:     "", // driver default
+		wCompression:     "",
 		wBatchMaxRecords: 50_000,
-		wBatchMaxBytes:   4 << 20, // 4 MiB conservative default
+		wBatchMaxBytes:   4 << 20,
 		wBatchMaxAge:     1 * time.Second,
 		wAcks:            "all",
 		wReqTimeout:      30 * time.Second,
@@ -99,18 +88,16 @@ func NewKafkaClientAdapter[T any](ctx context.Context, options ...types.KafkaCli
 		wEnableDLQ:       false,
 		wHdrTemplates:    map[string]string{},
 
-		// reader defaults
 		rStartAt:      "latest",
 		rPollInterval: 1 * time.Second,
 		rMaxPollRecs:  10_000,
-		rMaxPollBytes: 1 << 20, // 1 MiB
+		rMaxPollBytes: 1 << 20,
 		rFormat:       "ndjson",
 		rFormatOpts:   map[string]string{},
 		rCommitMode:   "auto",
 		rCommitPolicy: "after-batch",
 		rCommitEvery:  5 * time.Second,
 
-		// wire fan-in
 		inputWires: make([]types.Wire[T], 0),
 		mergedIn:   nil,
 	}

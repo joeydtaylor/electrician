@@ -1,4 +1,3 @@
-// pkg/internal/adapter/kafkaclient/options.go
 package kafkaclient
 
 import (
@@ -49,9 +48,7 @@ func WithWire[T any](wires ...types.Wire[T]) types.KafkaClientOption[T] {
 	}
 }
 
-//
-// ---------- Writer helpers ----------
-//
+// Writer options.
 
 // WithWriterTopic sets the output topic.
 func WithWriterTopic[T any](topic string) types.KafkaClientOption[T] {
@@ -146,9 +143,7 @@ func WithWriterHeaderTemplates[T any](hdrs map[string]string) types.KafkaClientO
 	}
 }
 
-//
-// ---------- Reader helpers ----------
-//
+// Reader options.
 
 // WithReaderGroup sets the consumer group id.
 func WithReaderGroup[T any](groupID string) types.KafkaClientOption[T] {

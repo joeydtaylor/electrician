@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,98 +46,64 @@ func (a *agg) add(r Feedback) {
 	}
 }
 
-// --- prod-ish config (matches compose) ----
 const (
-	kBrokersCSV           = "127.0.0.1:19092" // external TLS+mTLS listener
-	kTLSServerName        = "localhost"       // must match server cert SAN; use "redpanda" if that’s what you issued
-	kCACandidates         = "../tls/ca.crt"
-	kClientCertCandidates = "../tls/client.crt"
-	kClientKeyCandidates  = "../tls/client.key"
+	brokersCSV = "127.0.0.1:19092"
+	topic      = "feedback-demo"
+	group      = "feedback-demo-reader"
 
-	kTopic = "feedback-demo"
-	kGroup = "feedback-demo-reader"
+	tlsServerName        = "localhost"
+	caCandidates         = "../tls/ca.crt"
+	clientCertCandidates = "../tls/client.crt"
+	clientKeyCandidates  = "../tls/client.key"
 
-	kSASLUser = "app"
-	kSASLPass = "app-secret"
-	kSASLMech = "SCRAM-SHA-256"
+	saslUser = "app"
+	saslPass = "app-secret"
+	saslMech = "SCRAM-SHA-256"
 )
 
-func firstExisting(csv string) (string, error) {
-	for _, p := range strings.Split(csv, ",") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+func splitCSV(csv string) []string {
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
 		}
 	}
-	return "", fmt.Errorf("no file found in: %s", csv)
-}
-
-func buildTLSConfig() (*tls.Config, error) {
-	caPath, err := firstExisting(kCACandidates)
-	if err != nil {
-		return nil, err
-	}
-	caPEM, err := os.ReadFile(caPath)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("failed adding CA to pool: %s", caPath)
-	}
-
-	certPath, err := firstExisting(kClientCertCandidates)
-	if err != nil {
-		return nil, err
-	}
-	keyPath, err := firstExisting(kClientKeyCandidates)
-	if err != nil {
-		return nil, err
-	}
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		ServerName:   kTLSServerName, // SNI + name verification
-		RootCAs:      pool,
-		Certificates: []tls.Certificate{cert}, // mTLS: present client cert
-	}, nil
+	return out
 }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	groupID := fmt.Sprintf("%s-%d", group, time.Now().UnixNano())
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() { <-sig; fmt.Println("\n[signal] interrupt received, shutting down..."); cancel() }()
 
-	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
+	mech, err := builder.SASLSCRAM(saslUser, saslPass, saslMech)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
 
-	tlsCfg, err := buildTLSConfig()
+	tlsCfg, err := builder.TLSFromMTLSPathCSV(caCandidates, clientCertCandidates, clientKeyCandidates, tlsServerName)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
 
-	kr := builder.NewKafkaGoReaderSecure(
-		strings.Split(kBrokersCSV, ","),
-		kGroup,
-		[]string{kTopic},
-		tlsCfg,
-		mech,
-		10*time.Second, // dialer timeout
-		true,           // dual stack
+	sec := builder.NewKafkaSecurity(
+		builder.WithTLS(tlsCfg),
+		builder.WithSASL(mech),
+	)
+
+	kr := builder.NewKafkaGoReaderWithSecurity(
+		splitCSV(brokersCSV),
+		groupID,
+		[]string{topic},
+		sec,
 		builder.KafkaGoReaderWithLatestStart(),
 		builder.KafkaGoReaderWithMinBytes(1<<10),
 		builder.KafkaGoReaderWithMaxBytes(10<<20),
@@ -154,8 +118,8 @@ func main() {
 	reader := builder.NewKafkaClientAdapter[Feedback](
 		ctx,
 		builder.KafkaClientAdapterWithKafkaGoReader[Feedback](kr),
-		builder.KafkaClientAdapterWithReaderTopics[Feedback](kTopic),
-		builder.KafkaClientAdapterWithReaderGroup[Feedback](kGroup),
+		builder.KafkaClientAdapterWithReaderTopics[Feedback](topic),
+		builder.KafkaClientAdapterWithReaderGroup[Feedback](groupID),
 		builder.KafkaClientAdapterWithReaderStartAt[Feedback]("latest", time.Time{}),
 		builder.KafkaClientAdapterWithReaderPollSettings[Feedback](1*time.Second, 10000, 4<<20),
 		builder.KafkaClientAdapterWithReaderFormat[Feedback]("ndjson", ""),

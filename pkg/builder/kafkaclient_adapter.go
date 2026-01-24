@@ -262,19 +262,33 @@ func KafkaGoReaderWithCommitInterval(d time.Duration) KafkaGoReaderOption {
 // Security helpers (TLS + SASL) to reduce boilerplate
 // -------------------------------------------------
 
+func splitCSVPaths(csv string) []string {
+	var paths []string
+	for _, p := range strings.Split(csv, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+func firstExistingFile(label string, candidates []string) (string, error) {
+	for _, p := range candidates {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no %s file found in candidates: %v", label, candidates)
+}
+
 // TLSFromCAFilesStrict loads a strict TLS config (Min TLS1.2) using the first
 // existing file path from candidates. If serverName != "", it is set for SNI
 // and hostname verification.
 func TLSFromCAFilesStrict(candidates []string, serverName string) (*tls.Config, error) {
-	var picked string
-	for _, p := range candidates {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			picked = p
-			break
-		}
-	}
-	if picked == "" {
-		return nil, fmt.Errorf("no CA file found in candidates: %v", candidates)
+	picked, err := firstExistingFile("CA", candidates)
+	if err != nil {
+		return nil, err
 	}
 	pem, err := os.ReadFile(filepath.Clean(picked))
 	if err != nil {
@@ -296,14 +310,41 @@ func TLSFromCAFilesStrict(candidates []string, serverName string) (*tls.Config, 
 
 // TLSFromCAPathCSV convenience wrapper around TLSFromCAFilesStrict.
 func TLSFromCAPathCSV(csv, serverName string) (*tls.Config, error) {
-	var paths []string
-	for _, p := range strings.Split(csv, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			paths = append(paths, p)
-		}
+	return TLSFromCAFilesStrict(splitCSVPaths(csv), serverName)
+}
+
+// TLSFromMTLSFilesStrict loads a strict TLS config from CA plus client cert/key.
+func TLSFromMTLSFilesStrict(caCandidates, certCandidates, keyCandidates []string, serverName string) (*tls.Config, error) {
+	cfg, err := TLSFromCAFilesStrict(caCandidates, serverName)
+	if err != nil {
+		return nil, err
 	}
-	return TLSFromCAFilesStrict(paths, serverName)
+
+	certPath, err := firstExistingFile("client cert", certCandidates)
+	if err != nil {
+		return nil, err
+	}
+	keyPath, err := firstExistingFile("client key", keyCandidates)
+	if err != nil {
+		return nil, err
+	}
+
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Certificates = []tls.Certificate{cert}
+	return cfg, nil
+}
+
+// TLSFromMTLSPathCSV loads TLS config from CSV candidate paths (CA + client cert/key).
+func TLSFromMTLSPathCSV(caCSV, certCSV, keyCSV, serverName string) (*tls.Config, error) {
+	return TLSFromMTLSFilesStrict(
+		splitCSVPaths(caCSV),
+		splitCSVPaths(certCSV),
+		splitCSVPaths(keyCSV),
+		serverName,
+	)
 }
 
 // SASLSCRAM returns a sasl.Mechanism for kafka-go from a common name.

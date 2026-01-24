@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,108 +20,60 @@ type Feedback struct {
 }
 
 const (
-	broker       = "127.0.0.1:19092" // TLS+SASL listener from compose
+	brokersCSV   = "127.0.0.1:19092" // TLS+SASL listener from compose
 	topic        = "feedback-demo"
-	serverName   = "localhost"
 	clientID     = "electrician-producer"
 	batchTimeout = 400 * time.Millisecond
+
+	tlsServerName        = "localhost"
+	caCandidates         = "../tls/ca.crt"
+	clientCertCandidates = "../tls/client.crt"
+	clientKeyCandidates  = "../tls/client.key"
+
+	saslUser = "app"
+	saslPass = "app-secret"
+	saslMech = "SCRAM-SHA-256"
 )
 
-const (
-	kBrokersCSV           = "127.0.0.1:19092" // external TLS+mTLS listener
-	kTLSServerName        = "localhost"       // must match server cert SAN; use "redpanda" if that’s what you issued
-	kCACandidates         = "../tls/ca.crt"
-	kClientCertCandidates = "../tls/client.crt"
-	kClientKeyCandidates  = "../tls/client.key"
-
-	kTopic = "feedback-demo"
-	kGroup = "feedback-demo-reader"
-
-	kSASLUser = "app"
-	kSASLPass = "app-secret"
-	kSASLMech = "SCRAM-SHA-256"
-)
-
-func firstExisting(csv string) (string, error) {
-	for _, p := range strings.Split(csv, ",") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+func splitCSV(csv string) []string {
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
 		}
 	}
-	return "", fmt.Errorf("no file found in: %s", csv)
-}
-
-func buildTLSConfig() (*tls.Config, error) {
-	caPath, err := firstExisting(kCACandidates)
-	if err != nil {
-		return nil, err
-	}
-	caPEM, err := os.ReadFile(caPath)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("failed adding CA to pool: %s", caPath)
-	}
-
-	certPath, err := firstExisting(kClientCertCandidates)
-	if err != nil {
-		return nil, err
-	}
-	keyPath, err := firstExisting(kClientKeyCandidates)
-	if err != nil {
-		return nil, err
-	}
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		ServerName:   kTLSServerName, // SNI + name verification
-		RootCAs:      pool,
-		Certificates: []tls.Certificate{cert}, // mTLS: present client cert
-	}, nil
+	return out
 }
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// ---- security (only builder helpers you exported) ----
-	tlsCfg, err := buildTLSConfig()
+	tlsCfg, err := builder.TLSFromMTLSPathCSV(caCandidates, clientCertCandidates, clientKeyCandidates, tlsServerName)
 	if err != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
 		return
 	}
-	mech, err := builder.SASLSCRAM(kSASLUser, kSASLPass, kSASLMech)
+	mech, err := builder.SASLSCRAM(saslUser, saslPass, saslMech)
 	if err != nil {
-		panic(err)
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err.Error()})
+		return
 	}
 	sec := builder.NewKafkaSecurity(
 		builder.WithTLS(tlsCfg),
 		builder.WithSASL(mech),
 		builder.WithClientID(clientID),
-		// Dialer defaults (10s, DualStack=true) are fine for a writer Transport
 	)
 
-	// ---- kafka-go writer (secured via NewKafkaGoWriterWithSecurity) ----
 	kw := builder.NewKafkaGoWriterWithSecurity(
-		[]string{broker},
+		splitCSV(brokersCSV),
 		topic,
 		sec,
 		builder.KafkaGoWriterWithLeastBytes(),
 		builder.KafkaGoWriterWithBatchTimeout(batchTimeout),
 	)
-	// (RequiredAcks defaults to All in NewKafkaGoWriter)
 
-	// ---- sensors/loggers (unchanged from your example) ----
 	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
 	s := builder.NewSensor[Feedback](
 		builder.SensorWithOnKafkaWriterStartFunc[Feedback](func(_ builder.ComponentMetadata, t, f string) {
@@ -140,7 +90,6 @@ func main() {
 		}),
 	)
 
-	// ---- adapter wiring ----
 	w := builder.NewKafkaClientAdapter[Feedback](
 		ctx,
 		builder.KafkaClientAdapterWithKafkaGoWriter[Feedback](kw),
@@ -152,7 +101,6 @@ func main() {
 		builder.KafkaClientAdapterWithLogger[Feedback](log),
 	)
 
-	// demo records
 	in := make(chan Feedback, 2)
 	in <- Feedback{CustomerID: "C-01", Content: "I love this", Tags: []string{"demo"}}
 	in <- Feedback{CustomerID: "C-02", Content: "Not great", IsNegative: true, Category: "ux"}
