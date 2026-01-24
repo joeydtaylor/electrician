@@ -1,0 +1,7 @@
+./binary_packed.go
+./binary_packed_purego.go
+./byte_array.go
+./byte_array_purego.go
+./delta.go
+./length_byte_array.go
+./length_byte_array_purego.go

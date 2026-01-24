@@ -1,146 +1,78 @@
-# 📡 Forward Relay Package
+# Forward Relay
 
-The **Forward Relay** is Electrician’s **egress gRPC client**.
+The forward relay is Electrician's gRPC client for sending relay envelopes to a receiving relay. It wraps items into `WrappedPayload` messages and streams them to configured targets.
 
-It takes items from your local pipeline, wraps them in the Electrician relay envelope (`WrappedPayload` / `RelayEnvelope`), and forwards them to a remote `RelayService`.
+## Responsibilities
 
-This package is about **transporting bytes + metadata**. Delivery guarantees, retry strategy, compression/encryption behavior, and auth policy are implementation/config decisions.
+- Wrap items into relay envelopes with metadata, timestamps, and sequencing.
+- Apply optional compression and payload encryption.
+- Attach optional auth metadata and custom headers per RPC.
+- Maintain a streaming connection and handle acknowledgments.
 
----
+## Non-goals
 
-## ✅ What it does
+- Durable delivery or replay guarantees.
+- Exactly-once processing.
+- Queue semantics or persistence.
 
-| Capability              | Meaning                                                                         |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| 🛰️ gRPC egress         | Connect to a remote relay server and send messages via unary or streaming RPCs. |
-| 📦 Envelope wrapping    | Populate `id`, `timestamp`, `seq`, `metadata`, and `payload` bytes.             |
-| ✅ Acknowledgments       | Read `StreamAcknowledgment` as application-level status from the receiver.      |
-| 🔐 Transport security   | Use TLS/mTLS on the gRPC channel when configured.                               |
-| 🧾 Metadata propagation | Forward headers/content type/version/trace/priority hints to receivers.         |
+## Pipeline fit
 
-What it does **not** do by definition:
+Typical flow:
 
-* durable delivery
-* exactly-once semantics
-* “priority queues” or guaranteed ordering across restarts
+`Wire -> ForwardRelay -> ReceivingRelay`
 
----
+The forward relay is an egress adapter. It should not implement business logic.
 
-## 🧠 How it fits in a pipeline
-
-Common shape:
-
-**Wire → ForwardRelay → Remote ReceivingRelay**
-
-* Your local pipeline produces values.
-* The forward relay turns those into relay envelopes.
-* The remote receiving relay ingests and submits into the remote pipeline.
-
-Forward relay is a sink/egress adapter. It should not contain business logic.
-
----
-
-## 🧬 Message model (what actually goes on the wire)
+## Message model
 
 The relay protocol is defined in protobuf:
 
-* `WrappedPayload` is the core envelope.
-* `RelayEnvelope` wraps streaming messages (`StreamOpen`, `payload`, `StreamClose`).
+- `WrappedPayload` is the core envelope.
+- `RelayEnvelope` wraps streaming messages (`StreamOpen`, payloads, `StreamClose`).
 
-Key fields you should care about:
+Important fields:
 
-* `payload` is `bytes` — you decide serialization (`application/json`, protobuf, msgpack, custom).
-* `metadata.content_type` describes the payload bytes.
-* `metadata.headers` carries arbitrary key/value context.
-* `trace_id`, `priority`, and `version` are hints that receivers may use.
+- `payload` contains serialized bytes (gob by default).
+- `metadata.content_type` describes the payload bytes.
+- `metadata.headers` carries optional context.
+- `trace_id` is used for correlation.
 
----
+## Compression, encryption, auth
 
-## 🗜️ Compression / 🔐 Encryption / 🪪 Auth (metadata vs enforcement)
+- Compression and encryption are opt-in via `PerformanceOptions` and `SecurityOptions`.
+- TLS/mTLS protects the transport; payload encryption is separate and explicit.
+- Auth options and metadata are hints; enforcement is handled by the receiver.
 
-The schema includes fields for:
+## Lifecycle
 
-* compression preferences (`PerformanceOptions`, `CompressionAlgorithm`)
-* payload encryption declaration (`SecurityOptions`, `EncryptionSuite`)
-* auth hints (`AuthenticationOptions`) and receiver-populated `AuthContext`
+Forward relays follow the standard component lifecycle:
 
-Reality checks:
+1. Configure options.
+2. Call `Start(ctx)`.
+3. Submit items or connect inputs.
+4. Call `Stop()` to shut down.
 
-* Protobuf/gRPC will not automatically compress/encrypt your payload based on these fields.
-* Transport security (TLS/mTLS) is separate from payload encryption.
-* `AuthenticationOptions` is **advisory**. Enforcement belongs to the receiver’s configured policy.
-* Don’t ship secrets (client secrets, bearer tokens) in metadata unless both ends explicitly agree and your threat model allows it.
+Configuration is immutable after `Start()`.
 
----
+## Package layout
 
-## ✅ Acks are application status, not durability
+- `forwardrelay.go`: type definition and constructor
+- `connect.go`: inputs and loggers
+- `config.go`: configuration setters
+- `lifecycle.go`: start/stop
+- `payload.go`: wrapping, compression, encryption
+- `stream.go`: gRPC streaming and acks
+- `options.go`: functional options
+- `*_test.go`: tests
 
-`StreamAcknowledgment` tells you what the receiver claims happened.
+## Extending
 
-It does **not** guarantee persistence or replay across failures.
+- Protocol changes: update `.proto`, regenerate, then update forward/receiving relays.
+- Cross-component behavior: update `pkg/internal/types/forwardrelay.go` first.
+- User-facing knobs: expose via `pkg/builder`.
 
-If you need stronger guarantees, design them explicitly:
+## References
 
-* idempotency keys (`id`/`seq` usage)
-* retry with backoff
-* durable upstream queues (Kafka/SQS/etc.)
-
----
-
-## ⚙️ Lifecycle + configuration contract
-
-Forward relays follow Electrician’s standard operational model:
-
-✅ Configure → Start → Submit/Run → Stop/Restart
-
-* Configure target address/credentials/options before `Start()`.
-* Don’t mutate configuration while running.
-* Respect contexts on submit paths (cancellation/shutdown behavior should be clean).
-
----
-
-## 📂 Package structure
-
-| File              | Purpose                                  |
-| ----------------- | ---------------------------------------- |
-| `forwardrelay.go` | Type definition + constructor            |
-| `api.go`          | Public methods / wiring                  |
-| `internal.go`     | gRPC client + send/stream implementation |
-| `options.go`      | Functional options for configuration     |
-| `*_test.go`       | Tests                                    |
-
----
-
-## 🔧 Extending the forward relay
-
-* Proto change → update `.proto`, regenerate bindings, then update send/receive relays.
-* Cross-component contract → update `types/forwardrelay.go` first.
-* User-facing knob → expose via `pkg/builder` (`ForwardRelayWith…`).
-
-Tests should cover:
-
-* unary send path
-* streaming path + ack handling
-* cancellation/shutdown
-* error propagation (network errors vs receiver errors)
-* (if implemented) payload compression/encryption handling
-
-## 📖 Further Reading
-
-- **[Root README](../../../README.md)** – Electrician’s overall architecture and principles.
-- **[Internal README](../README.md)** – How `internal/` packages interact with `types/`.
-- **[Protobuf README](../../../proto/README.md)** – Full details on **Relay’s gRPC message format**.
-- **[Examples Directory](../../../example/relay_example/relay_a/)** – Demonstrates **Forward Relay in a basic real-world deployment**.
-- **[Examples Directory](../../../example/relay_example/advanced_relay_a/)** – Demonstrates **Forward Relay in a more advanced real-world deployment**.
-- **[Examples Directory](../../../example/relay_example/blockchain_hub/)** – Demonstrates **Forward Relay in a contrived blockchain hub deployment**.
-
----
-
-## 📝 License
-
-The **Forward Relay package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
-You’re free to use, modify, and distribute it within these terms.
-
----
-
-**Happy forwarding! ⚡📡** If you have questions or need support, feel free to open a GitHub issue.
+- `README.md`
+- `proto/README.md`
+- `example/relay_example/`

@@ -1,0 +1,14 @@
+./config.go
+./connect.go
+./helpers.go
+./lifecycle.go
+./metadata.go
+./notify.go
+./options.go
+./parquet_reader.go
+./parquet_writer.go
+./reader.go
+./s3client.go
+./writer.go
+./writer_helpers.go
+./writer_raw.go

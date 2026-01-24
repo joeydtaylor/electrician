@@ -1,0 +1,4 @@
+./array.go
+./gather.go
+./gather_purego.go
+./sparse.go

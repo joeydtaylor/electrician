@@ -1,0 +1,6 @@
+# test log
+getenv TMPDIR
+stat /var/folders/29/lfksj4097d52g43jlf0nn6j80000gn/T/TestLogger_AddRemoveListSinks2080026127/001
+open /var/folders/29/lfksj4097d52g43jlf0nn6j80000gn/T/TestLogger_AddRemoveListSinks2080026127/001/app.log
+stat /var/folders/29/lfksj4097d52g43jlf0nn6j80000gn/T/TestLogger_AddRemoveListSinks2080026127/001/app.log
+open /var/folders/29/lfksj4097d52g43jlf0nn6j80000gn/T

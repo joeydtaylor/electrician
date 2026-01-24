@@ -2,88 +2,105 @@ package forwardrelay_test
 
 import (
 	"context"
-	"crypto/tls"
+	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/joeydtaylor/electrician/pkg/builder"
+	"github.com/joeydtaylor/electrician/pkg/internal/forwardrelay"
+	"github.com/joeydtaylor/electrician/pkg/internal/receivingrelay"
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
+	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
-func TestForwardRelayInitialization(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+type stubReceiver[T any] struct {
+	ch      chan T
+	started int32
+	meta    types.ComponentMetadata
+}
 
-	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt",
-		tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
-		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3)
-
-	relay := builder.NewForwardRelay[string](
-		ctx,
-		builder.ForwardRelayWithTarget[string]("localhost:50051"),
-		builder.ForwardRelayWithTLSConfig[string](tlsConfig),
-	)
-
-	if relay == nil {
-		t.Errorf("Failed to initialize ForwardRelay")
+func newStubReceiver[T any]() *stubReceiver[T] {
+	return &stubReceiver[T]{
+		ch: make(chan T),
+		meta: types.ComponentMetadata{
+			ID:   "stub",
+			Type: "STUB_RECEIVER",
+		},
 	}
 }
 
-func TestForwardRelayShutdown(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+func (s *stubReceiver[T]) ConnectCircuitBreaker(types.CircuitBreaker[T])        {}
+func (s *stubReceiver[T]) ConnectLogger(...types.Logger)                        {}
+func (s *stubReceiver[T]) NotifyLoggers(types.LogLevel, string, ...interface{}) {}
+func (s *stubReceiver[T]) GetComponentMetadata() types.ComponentMetadata        { return s.meta }
+func (s *stubReceiver[T]) SetComponentMetadata(name string, id string) {
+	s.meta.Name = name
+	s.meta.ID = id
+}
+func (s *stubReceiver[T]) GetOutputChannel() chan T { return s.ch }
+func (s *stubReceiver[T]) IsStarted() bool          { return atomic.LoadInt32(&s.started) == 1 }
+func (s *stubReceiver[T]) Start(context.Context) error {
+	atomic.StoreInt32(&s.started, 1)
+	return nil
+}
 
-	inputConduit := builder.NewConduit[string](ctx)
+func TestForwardRelayDefaults(t *testing.T) {
+	ctx := context.Background()
+	fr := forwardrelay.NewForwardRelay[string](ctx)
+	impl, ok := fr.(*forwardrelay.ForwardRelay[string])
+	if !ok {
+		t.Fatalf("expected ForwardRelay implementation")
+	}
 
-	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt", tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
-		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3)
-	relay := builder.NewForwardRelay[string](
-		ctx,
-		builder.ForwardRelayWithTarget[string]("localhost:50051"),
-		builder.ForwardRelayWithTLSConfig[string](tlsConfig),
-		builder.ForwardRelayWithInput[string](inputConduit),
-	)
-
-	relay.Start(ctx) // This should block until ctx is done.
-
-	<-ctx.Done()
-
-	relay.Stop()
-
-	if relay.IsRunning() { // Assuming IsRunning() checks if the relay is still active
-		t.Errorf("Relay did not shut down gracefully")
+	if !fr.GetAuthRequired() {
+		t.Fatalf("expected auth required by default")
+	}
+	if got := fr.GetTargets(); len(got) != 0 {
+		t.Fatalf("expected no targets, got %v", got)
+	}
+	if impl.GetPerformanceOptions() == nil {
+		t.Fatalf("expected performance options to be set")
 	}
 }
 
-/* func TestForwardRelayThroughput(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+func TestForwardRelayFreeze(t *testing.T) {
+	ctx := context.Background()
+	input := newStubReceiver[string]()
 
-	concurrencyConfig := builder.NewConcurrencyConfig[string](1000, 10000)
+	fr := forwardrelay.NewForwardRelay[string](ctx, forwardrelay.WithInput[string](input))
+	if err := fr.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer fr.Stop()
 
-	logger := builder.NewLogger(builder.InfoLevel)
-
-	inputConduit := builder.NewConduit[string](ctx, concurrencyConfig, nil, nil, nil)
-	tlsConfig := builder.NewTlsClientConfig(true, "../../../cmd/example/relay_example/tls/client.crt", "../../../cmd/example/relay_example/tls/client.key", "../../../cmd/example/relay_example/tls/ca.crt")
-	relay := builder.NewForwardRelay[string](ctx, "localhost:50051", inputConduit, logger, tlsConfig, nil)
-
-	relay.Start(ctx)
-	defer relay.Stop()
-
-	// Bombard the relay with a high volume of messages
-	go func() {
-		for i := 0; i < 10000; i++ {
-			if ctx.Err() != nil {
-				return
-			}
-			inputConduit.Submit(ctx, fmt.Sprintf("Message %d", i))
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic when mutating after Start")
 		}
 	}()
 
-	<-ctx.Done()
-	if ctx.Err() == context.DeadlineExceeded {
-		t.Error("Timeout reached, potential performance issues with handling high throughput")
-	} else {
-		t.Log("High throughput test completed successfully")
+	fr.SetTargets("localhost:50051")
+}
+
+func TestWrapPayloadRoundTrip(t *testing.T) {
+	key := "0123456789abcdef0123456789abcdef"
+	perf := &relay.PerformanceOptions{UseCompression: true, CompressionAlgorithm: forwardrelay.COMPRESS_SNAPPY}
+	sec := &relay.SecurityOptions{Enabled: true, Suite: forwardrelay.ENCRYPT_AES_GCM}
+
+	type sample struct {
+		ID   int
+		Name string
+	}
+	in := sample{ID: 42, Name: "alpha"}
+
+	wp, err := forwardrelay.WrapPayload(in, perf, sec, key)
+	if err != nil {
+		t.Fatalf("WrapPayload error: %v", err)
+	}
+
+	var out sample
+	if err := receivingrelay.UnwrapPayload(wp, key, &out); err != nil {
+		t.Fatalf("UnwrapPayload error: %v", err)
+	}
+	if out != in {
+		t.Fatalf("round-trip mismatch: got %+v want %+v", out, in)
 	}
 }
-*/

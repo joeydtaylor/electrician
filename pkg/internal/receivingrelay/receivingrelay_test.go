@@ -2,55 +2,71 @@ package receivingrelay_test
 
 import (
 	"context"
-	"crypto/tls"
+	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/joeydtaylor/electrician/pkg/builder"
+	"github.com/joeydtaylor/electrician/pkg/internal/forwardrelay"
+	"github.com/joeydtaylor/electrician/pkg/internal/receivingrelay"
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 )
 
-func TestReceivingRelayInitialization(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+type sample struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
 
-	tlsConfig := builder.NewTlsServerConfig(true, "../../../cmd/example/relay_example/tls/server.crt", "../../../cmd/example/relay_example/tls/server.key", "../../../cmd/example/relay_example/tls/ca.crt", "localhost", tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
-		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3
+func TestUnwrapPayloadJSON(t *testing.T) {
+	in := sample{ID: 7, Name: "delta"}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("json marshal error: %v", err)
+	}
 
-	relay := builder.NewReceivingRelay[string](
-		ctx,
-		builder.ReceivingRelayWithAddress[string]("localhost:50051"),
-		builder.ReceivingRelayWithTLSConfig[string](tlsConfig),
-	)
+	wp := &relay.WrappedPayload{
+		Payload: b,
+		Metadata: &relay.MessageMetadata{
+			ContentType: "application/json",
+		},
+	}
 
-	<-ctx.Done()
-
-	if relay == nil {
-		t.Errorf("Failed to initialize ReceivingRelay")
+	var out sample
+	if err := receivingrelay.UnwrapPayload(wp, "", &out); err != nil {
+		t.Fatalf("UnwrapPayload error: %v", err)
+	}
+	if out != in {
+		t.Fatalf("json decode mismatch: got %+v want %+v", out, in)
 	}
 }
 
-func TestReceivingRelayShutdown(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+func TestReceivingRelayReceive(t *testing.T) {
+	ctx := context.Background()
+	rr := receivingrelay.NewReceivingRelay[sample](ctx)
+	impl, ok := rr.(*receivingrelay.ReceivingRelay[sample])
+	if !ok {
+		t.Fatalf("expected ReceivingRelay implementation")
+	}
 
-	output := builder.NewConduit[string](ctx)
+	in := sample{ID: 42, Name: "alpha"}
+	wp, err := forwardrelay.WrapPayload(in, nil, nil, "")
+	if err != nil {
+		t.Fatalf("WrapPayload error: %v", err)
+	}
 
-	tlsConfig := builder.NewTlsServerConfig(true, "../../../cmd/example/relay_example/tls/server.crt", "../../../cmd/example/relay_example/tls/server.key", "../../../cmd/example/relay_example/tls/ca.crt", "localhost", tls.VersionTLS13, // MinVersion: Only allow TLS 1.3
-		tls.VersionTLS13) // MaxVersion: Only allow TLS 1.3)
-	relay := builder.NewReceivingRelay[string](
-		ctx,
-		builder.ReceivingRelayWithAddress[string]("localhost:50051"),
-		builder.ReceivingRelayWithTLSConfig[string](tlsConfig),
-		builder.ReceivingRelayWithOutput[string](output),
-	)
+	ack, err := rr.Receive(ctx, wp)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if ack == nil || !ack.Success {
+		t.Fatalf("expected success ack")
+	}
 
-	relay.Start(ctx) // This should block until ctx is done.
-
-	<-ctx.Done()
-
-	relay.Stop()
-
-	if relay.IsRunning() { // Assuming IsRunning() checks if the relay is still active
-		t.Errorf("Relay did not shut down gracefully")
+	select {
+	case got := <-impl.GetDataChannel():
+		if got != in {
+			t.Fatalf("received mismatch: got %+v want %+v", got, in)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for receive")
 	}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -25,54 +24,7 @@ type Feedback struct {
 
 /* ------------ org resolution ------------ */
 
-const (
-	defaultOrgID     = "4d948fa0-084e-490b-aad5-cfd01eeab79a"
-	assertJWTEnvName = "ASSERT_JWT"
-	bearerJWTEnvName = "BEARER_JWT"
-	orgIDEnvName     = "ORG_ID"
-)
-
-func b64UrlDecodeRaw(s string) ([]byte, error) {
-	return base64.RawURLEncoding.DecodeString(s)
-}
-
-func orgFromJWT(tok string) (string, bool) {
-	parts := strings.Split(tok, ".")
-	if len(parts) != 3 {
-		return "", false
-	}
-	payload, err := b64UrlDecodeRaw(parts[1])
-	if err != nil {
-		return "", false
-	}
-	var claims map[string]string
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", false
-	}
-	for _, k := range []string{"org", "org_id", "orgId", "organization"} {
-		if v := strings.TrimSpace(claims[k]); v != "" {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-func resolveOrgID() string {
-	if v := builder.EnvOr(orgIDEnvName, ""); v != "" {
-		return v
-	}
-	if v := builder.EnvOr(assertJWTEnvName, ""); v != "" {
-		if org, ok := orgFromJWT(v); ok {
-			return org
-		}
-	}
-	if v := builder.EnvOr(bearerJWTEnvName, ""); v != "" {
-		if org, ok := orgFromJWT(v); ok {
-			return org
-		}
-	}
-	return defaultOrgID
-}
+const defaultOrgID = "4d948fa0-084e-490b-aad5-cfd01eeab79a"
 
 /* ------------ utilities ------------ */
 
@@ -175,7 +127,7 @@ func main() {
 	log := builder.NewLogger(builder.LoggerWithDevelopment(true))
 	bucket := builder.EnvOr("S3_BUCKET", "steeze-dev")
 
-	orgID := resolveOrgID()
+	orgID := builder.ResolveOrgIDFromEnv(builder.DefaultOrgResolverConfig(defaultOrgID))
 	basePrefix := fmt.Sprintf("org=%s/feedback/demo/", orgID)
 	filter := builder.EnvOr("FILTER_CONTENT_SUBSTR", "") // e.g. "great"
 	windowMin := builder.EnvIntOr("WINDOW_MINUTES", 0)   // 0 = no time filter

@@ -1,0 +1,10 @@
+./block.go
+./debug_stub.go
+./decode_other.go
+./errors.go
+./lz4.go
+./lz4_go1.10.go
+./reader.go
+./reader_legacy.go
+./writer.go
+./writer_legacy.go

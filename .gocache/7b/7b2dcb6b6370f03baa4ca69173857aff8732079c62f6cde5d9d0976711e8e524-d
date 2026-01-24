@@ -1,0 +1,14 @@
+# test log
+getenv ELECTRICIAN_TEST_ENV_OR
+getenv ELECTRICIAN_TEST_ENV_OR
+getenv ELECTRICIAN_TEST_ENV_INT
+getenv ELECTRICIAN_TEST_ENV_INT
+getenv ELECTRICIAN_TEST_ENV_INT
+getenv ORG_ID
+getenv ASSERT_JWT
+getenv BEARER_JWT
+getenv ORG_ID
+getenv ASSERT_JWT
+getenv BEARER_JWT
+getenv ORG_ID
+getenv ORG_ID
