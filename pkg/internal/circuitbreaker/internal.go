@@ -2,36 +2,30 @@ package circuitbreaker
 
 import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
-func (cb *CircuitBreaker[T]) notifyCircuitBreakerCreation() {
-	for _, s := range cb.sensors {
-		cb.sensorLock.Lock()
-		defer cb.sensorLock.Unlock()
-		for _, ms := range s.GetMeters() {
-			ms.IncrementCount(types.MetricCircuitBreakerCount)
-		}
-	}
+func (cb *CircuitBreaker[T]) snapshotLoggers() []types.Logger {
+	cb.configLock.Lock()
+	loggers := append([]types.Logger(nil), cb.loggers...)
+	cb.configLock.Unlock()
+	return loggers
 }
 
-func (cb *CircuitBreaker[T]) notifyError(time int64) {
-	for _, s := range cb.sensors {
-		cb.sensorLock.Lock()
-		defer cb.sensorLock.Unlock()
-		s.InvokeOnCircuitBreakerRecordError(cb.componentMetadata, time)
-	}
+func (cb *CircuitBreaker[T]) snapshotSensors() []types.Sensor[T] {
+	cb.configLock.Lock()
+	sensors := append([]types.Sensor[T](nil), cb.sensors...)
+	cb.configLock.Unlock()
+	return sensors
 }
 
-func (cb *CircuitBreaker[T]) notifyTrip(time int64, resetTime int64) {
-	for _, s := range cb.sensors {
-		cb.sensorLock.Lock()
-		defer cb.sensorLock.Unlock()
-		s.InvokeOnCircuitBreakerTrip(cb.componentMetadata, time, resetTime)
-	}
+func (cb *CircuitBreaker[T]) snapshotMetadata() types.ComponentMetadata {
+	cb.configLock.Lock()
+	metadata := cb.componentMetadata
+	cb.configLock.Unlock()
+	return metadata
 }
 
-func (cb *CircuitBreaker[T]) notifyReset(time int64) {
-	for _, s := range cb.sensors {
-		cb.sensorLock.Lock()
-		defer cb.sensorLock.Unlock()
-		s.InvokeOnCircuitBreakerReset(cb.componentMetadata, time)
+func (cb *CircuitBreaker[T]) signalReset() {
+	select {
+	case cb.resetNotifyChan <- struct{}{}:
+	default:
 	}
 }

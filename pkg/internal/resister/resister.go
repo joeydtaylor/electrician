@@ -8,39 +8,44 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// A PriorityQueue implements heap.Interface and holds Items.
-type PriorityQueue[T any] []*types.Element[T]
-
-// Resister is a thread-safe wrapper around PriorityQueue.
+// Resister is an in-memory, concurrency-safe queue used by surge protection logic.
 type Resister[T any] struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	pq                PriorityQueue[T]
-	indexMap          map[string]*types.Element[T]
-	lock              sync.Mutex
-	loggersLock       sync.Mutex
-	loggers           []types.Logger
 	componentMetadata types.ComponentMetadata
-	sensors           []types.Sensor[T]
-	sensorLock        sync.Mutex
+
+	queue     priorityQueue[T]
+	indexByID map[string]*types.Element[T]
+	queueLock sync.Mutex
+
+	loggers     []types.Logger
+	loggersLock sync.Mutex
+
+	sensors    []types.Sensor[T]
+	sensorLock sync.Mutex
+
+	metadataLock sync.Mutex
 }
 
+// NewResister constructs a new resister instance.
 func NewResister[T any](ctx context.Context, options ...types.Option[types.Resister[T]]) types.Resister[T] {
-	ctx, cancel := context.WithCancel(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	r := &Resister[T]{
 		componentMetadata: types.ComponentMetadata{
 			ID:   utils.GenerateUniqueHash(),
 			Type: "RESISTER",
 		},
-		ctx:      ctx,
-		cancel:   cancel,
-		pq:       make(PriorityQueue[T], 0),
-		indexMap: make(map[string]*types.Element[T]),
-		loggers:  make([]types.Logger, 0),
+		queue:     make(priorityQueue[T], 0),
+		indexByID: make(map[string]*types.Element[T]),
+		loggers:   make([]types.Logger, 0),
+		sensors:   make([]types.Sensor[T], 0),
 	}
 
 	for _, opt := range options {
+		if opt == nil {
+			continue
+		}
 		opt(r)
 	}
 

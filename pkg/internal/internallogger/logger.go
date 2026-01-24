@@ -8,39 +8,46 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-type LoggerOption func(*zap.Config, *zapcore.Level, *int) // Updated to include caller skip management
+// LoggerOption configures the zap logger adapter.
+type LoggerOption func(*zap.Config, *zapcore.Level, *int)
 
+// ZapLoggerAdapter implements the internal logger contract with zap.
 type ZapLoggerAdapter struct {
-	logger       *zap.Logger
-	level        zapcore.Level
-	callerDepth  int
-	mu           sync.Mutex
-	sinks        map[string]zapcore.Core
-	combinedCore zapcore.Core
+	logger      *zap.Logger
+	atomicLevel zap.AtomicLevel
+	callerDepth int
+	mu          sync.Mutex
+	sinks       map[string]zapcore.Core
+	baseCore    zapcore.Core
 }
 
-// NewLogger initializes a new ZapLoggerAdapter with configurable options.
+// NewLogger initializes a ZapLoggerAdapter with optional configuration.
 func NewLogger(options ...LoggerOption) *ZapLoggerAdapter {
 	config := zap.NewProductionConfig()
-	var level zapcore.Level
-	var callerDepth int = 3 // Default caller depth
+	level := config.Level.Level()
+	callerDepth := 3
 
-	// Apply each provided option to the configuration
 	for _, option := range options {
+		if option == nil {
+			continue
+		}
 		option(&config, &level, &callerDepth)
 	}
 
-	// Ensure at least one core is created to prevent nil logger
-	defaultCore := zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(os.Stdout), zap.NewAtomicLevelAt(zapcore.InfoLevel))
-	cores := []zapcore.Core{defaultCore} // Start with a default core
+	config.Level = zap.NewAtomicLevelAt(level)
+	baseCore := zapcore.NewCore(
+		zapcore.NewJSONEncoder(config.EncoderConfig),
+		zapcore.AddSync(os.Stdout),
+		config.Level,
+	)
 
-	logger := zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddCallerSkip(callerDepth))
+	logger := zap.New(zapcore.NewTee(baseCore), zap.AddCaller(), zap.AddCallerSkip(callerDepth))
 
 	return &ZapLoggerAdapter{
-		logger:       logger,
-		level:        level,
-		callerDepth:  callerDepth,
-		sinks:        make(map[string]zapcore.Core), // Initialize sinks map
-		combinedCore: zapcore.NewTee(cores...),      // Combine cores
+		logger:      logger,
+		atomicLevel: config.Level,
+		callerDepth: callerDepth,
+		sinks:       make(map[string]zapcore.Core),
+		baseCore:    baseCore,
 	}
 }

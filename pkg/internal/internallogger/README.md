@@ -1,109 +1,39 @@
-# 📜 Internal Logger Package
+# Internal Logger
 
-The **internal logger** package provides a Zap-backed implementation of Electrician’s logging interface (`types.Logger`).
+Package `internallogger` provides Electrician's default logger implementation using zap. External consumers should use the builder APIs under `pkg/builder`.
 
-Electrician components emit structured events (start/stop/submit/errors/etc.) as key/value pairs. This package is the default “structured logger” implementation used by the framework.
+The logger exposes the internal `types.Logger` contract, supports multiple sinks, and handles level mapping between Electrician and zap.
 
----
+## Configuration
 
-## ✅ What it is
-
-* A **Zap-based logger** wired to Electrician’s `types.Logger` contract.
-* A **structured logging** sink for pipeline events.
-* A place to standardize field shapes (component metadata, event names, results, errors).
-
-## ❌ What it isn’t
-
-* A promise of “zero allocations everywhere.”
-* A metrics system (that’s meters + sensors).
-* A network transport.
-
-Zap is chosen because it’s widely deployed and designed for **low-overhead structured logging**. Actual allocation behavior depends on how you use it.
-
----
-
-## 🧠 How it’s used by the pipeline
-
-Core components (e.g. `wire`) call into loggers with the pattern:
-
-* `level` (debug/info/warn/error…)
-* `msg`
-* `keysAndValues ...interface{}`
-
-To keep hot paths lean, components may skip log calls when there are no connected loggers.
-
-### Level filtering
-
-Some components optionally check for a level gate via:
+Construct a logger with optional settings:
 
 ```go
-type levelChecker interface { IsLevelEnabled(types.LogLevel) bool }
+logger := internallogger.NewLogger(
+	internallogger.LoggerWithLevel("info"),
+	internallogger.LoggerWithDevelopment(true),
+)
 ```
 
-If your logger implements `IsLevelEnabled`, components can avoid emitting logs at disabled levels (less work and fewer allocations).
+Sinks can be added or removed at runtime:
 
----
+```go
+_ = logger.AddSink("stdout", types.SinkConfig{Type: "stdout"})
+_ = logger.AddSink("file", types.SinkConfig{Type: "file", Config: map[string]interface{}{"path": "/tmp/app.log"}})
+```
 
-## 🚄 Performance stance (accurate)
+## Behavior
 
-Zap is optimized for structured logging, but “zero alloc” depends on usage.
+- Log levels are mapped to zap levels with `ConvertLevel`.
+- `SetLevel` updates the atomic level used by all sinks.
+- `AddSink` rebuilds the logger to include the new destination.
+- `RemoveSink` rebuilds the logger to exclude the removed destination.
 
-To keep overhead down:
+## Package layout
 
-* Prefer typed fields over string formatting.
-* Avoid `fmt.Sprintf` in log paths.
-* Avoid logging large structs/maps on hot paths.
-* Gate noisy logs behind `Debug` and ensure debug is disabled in production.
-
-If you need hard numbers, benchmark with your actual event volume and field payload sizes.
-
----
-
-## 📂 Package structure
-
-| File                | Purpose                              |
-| ------------------- | ------------------------------------ |
-| `internallogger.go` | Type definition + constructor        |
-| `api.go`            | Methods that satisfy `types.Logger`  |
-| `options.go`        | Functional options for configuration |
-| `internal.go`       | Zap configuration helpers            |
-| `*_test.go`         | Tests                                |
-
----
-
-## ⚙️ Configuration model
-
-Configuration is intended to be done at construction time via options (typically exposed through `pkg/builder`).
-
-Common knobs in a Zap-backed logger (exact options depend on the builder wrapper):
-
-* output encoding (JSON vs console)
-* minimum log level
-* development vs production presets
-* caller / stacktrace behavior
-
----
-
-## 🔧 Extending the internal logger
-
-* If you need new behavior exposed to consumers, add a builder option that configures the underlying Zap logger.
-* Only change `types/logger.go` if you need to change the **logging contract** across the framework.
-* Keep the logger implementation boring: logging must never become the bottleneck of the pipeline.
-
-
-## 📖 Further Reading
-
-- **[Root README](../../../README.md)** – Electrician’s overall architecture and principles.
-- **[Internal README](../README.MD)** – How `internal/` packages interact with `types/`.
-- **[Examples Directory](../../../example/logging/)** – Demonstrates **real-world logging configurations**.
-
----
-
-## 📝 License
-
-The **Internal Logger package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
-You’re free to use, modify, and distribute it within these terms.
-
----
-
-**Happy logging! 📝⚡** If you have questions or need support, feel free to open a GitHub issue.
+- `logger.go`: adapter type and constructor.
+- `levels.go`: level parsing and conversions.
+- `log.go`: logging and level accessors.
+- `options.go`: functional options.
+- `sinks.go`: sink management.
+- `*_test.go`: tests.
