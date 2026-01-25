@@ -57,15 +57,43 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	topic := envOr("KAFKA_TOPIC", "feedback-demo")
-	groupID := fmt.Sprintf("electrician-it-%d", time.Now().UnixNano())
+	topicPrefix := envOr("KAFKA_TOPIC", "electrician-it")
+	topic := fmt.Sprintf("%s-%d", strings.TrimSuffix(topicPrefix, "-"), time.Now().UnixNano())
+
+	if err := ensureTopic(dialer, brokers[0], topic); err != nil {
+		t.Fatalf("create topic %s: %v", topic, err)
+	}
 
 	writer := builder.NewKafkaGoWriterSecure(brokers, topic, tlsCfg, mech, "electrician-it")
 	defer func() { _ = writer.Close() }()
 
+	writerAdapter := builder.NewKafkaClientAdapter[kafkaIntegrationMsg](
+		ctx,
+		builder.KafkaClientAdapterWithKafkaGoWriter[kafkaIntegrationMsg](writer),
+		builder.KafkaClientAdapterWithWriterTopic[kafkaIntegrationMsg](topic),
+	)
+
+	want := []kafkaIntegrationMsg{
+		{ID: "one", Seq: 1},
+		{ID: "two", Seq: 2},
+		{ID: "three", Seq: 3},
+	}
+
+	in := make(chan kafkaIntegrationMsg, len(want))
+	writeErr := make(chan error, 1)
+	go func() { writeErr <- writerAdapter.ServeWriter(ctx, in) }()
+	for _, m := range want {
+		in <- m
+	}
+	close(in)
+
+	if err := <-writeErr; err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
 	reader := builder.NewKafkaGoReaderSecure(
 		brokers,
-		groupID,
+		"",
 		[]string{topic},
 		tlsCfg,
 		mech,
@@ -73,36 +101,23 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 		true,
 		builder.KafkaGoReaderWithEarliestStart(),
 		builder.KafkaGoReaderWithMinBytes(1),
-		builder.KafkaGoReaderWithMaxWait(250*time.Millisecond),
+		builder.KafkaGoReaderWithMaxWait(1*time.Second),
 	)
 	defer func() { _ = reader.Close() }()
 
-	adapter := builder.NewKafkaClientAdapter[kafkaIntegrationMsg](
+	readerAdapter := builder.NewKafkaClientAdapter[kafkaIntegrationMsg](
 		ctx,
-		builder.KafkaClientAdapterWithKafkaGoWriter[kafkaIntegrationMsg](writer),
 		builder.KafkaClientAdapterWithKafkaGoReader[kafkaIntegrationMsg](reader),
-		builder.KafkaClientAdapterWithWriterTopic[kafkaIntegrationMsg](topic),
 		builder.KafkaClientAdapterWithReaderTopics[kafkaIntegrationMsg](topic),
-		builder.KafkaClientAdapterWithReaderGroup[kafkaIntegrationMsg](groupID),
 		builder.KafkaClientAdapterWithReaderStartAt[kafkaIntegrationMsg]("earliest", time.Time{}),
-		builder.KafkaClientAdapterWithReaderPollSettings[kafkaIntegrationMsg](250*time.Millisecond, 1000, 1<<20),
+		builder.KafkaClientAdapterWithReaderPollSettings[kafkaIntegrationMsg](1*time.Second, 1000, 1<<20),
 	)
-
-	testID := fmt.Sprintf("it-%d", time.Now().UnixNano())
-	want := []kafkaIntegrationMsg{
-		{ID: testID, Seq: 1},
-		{ID: testID, Seq: 2},
-		{ID: testID, Seq: 3},
-	}
 
 	gotCh := make(chan kafkaIntegrationMsg, len(want))
 	serveErr := make(chan error, 1)
 	serveCtx, serveCancel := context.WithTimeout(ctx, 30*time.Second)
 	go func() {
-		serveErr <- adapter.Serve(serveCtx, func(_ context.Context, v kafkaIntegrationMsg) error {
-			if v.ID != testID {
-				return nil
-			}
+		serveErr <- readerAdapter.Serve(serveCtx, func(_ context.Context, v kafkaIntegrationMsg) error {
 			select {
 			case gotCh <- v:
 			default:
@@ -113,21 +128,6 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 			return nil
 		})
 	}()
-
-	time.Sleep(250 * time.Millisecond)
-
-	in := make(chan kafkaIntegrationMsg, len(want))
-	writeErr := make(chan error, 1)
-	go func() { writeErr <- adapter.ServeWriter(ctx, in) }()
-	for _, m := range want {
-		in <- m
-	}
-	close(in)
-
-	if err := <-writeErr; err != nil {
-		serveCancel()
-		t.Fatalf("write failed: %v", err)
-	}
 
 	got := make([]kafkaIntegrationMsg, 0, len(want))
 	timeout := time.After(30 * time.Second)
@@ -159,9 +159,6 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 		wantSeq[m.Seq] = true
 	}
 	for _, m := range got {
-		if m.ID != testID {
-			continue
-		}
 		if !wantSeq[m.Seq] {
 			t.Fatalf("unexpected message: %+v", m)
 		}
@@ -182,6 +179,31 @@ func probeKafka(dialer *kafka.Dialer, broker string) error {
 		return err
 	}
 	return conn.Close()
+}
+
+func ensureTopic(dialer *kafka.Dialer, broker, topic string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := dialer.DialContext(ctx, "tcp", broker)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	err = conn.CreateTopics(kafka.TopicConfig{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	})
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "already exists") || strings.Contains(msg, "topic_already_exists") {
+		return nil
+	}
+	return err
 }
 
 func repoRoot(t *testing.T) string {
