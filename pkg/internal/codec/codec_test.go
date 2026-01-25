@@ -3,9 +3,11 @@ package codec_test
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/codec"
+	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
 // DummyType is a placeholder type for testing purposes.
@@ -119,5 +121,135 @@ func TestJSONSliceEncodingDecodingEmpty(t *testing.T) {
 	// Check if the decoded slice is empty
 	if len(decodedSlice) != 0 {
 		t.Errorf("Decoded slice for empty slice should be empty, but got: %v", decodedSlice)
+	}
+}
+
+func TestJSONDecodeInvalid(t *testing.T) {
+	decoder := codec.NewJSONDecoder[DummyType]()
+	_, err := decoder.Decode(strings.NewReader("{invalid json"))
+	if err == nil {
+		t.Fatalf("expected JSON decode error")
+	}
+}
+
+func TestTextDecoder(t *testing.T) {
+	decoder := codec.NewTextDecoder()
+	got, err := decoder.Decode(strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if got != "hello" {
+		t.Fatalf("expected hello, got %q", got)
+	}
+}
+
+func TestBinaryDecoder(t *testing.T) {
+	decoder := codec.NewBinaryDecoder()
+	got, err := decoder.Decode(strings.NewReader("data"))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if string(got) != "data" {
+		t.Fatalf("expected data, got %q", string(got))
+	}
+}
+
+func TestLineDecoderEmpty(t *testing.T) {
+	decoder := codec.NewLineDecoder()
+	_, err := decoder.Decode(strings.NewReader(""))
+	if err == nil {
+		t.Fatalf("expected EOF on empty input")
+	}
+}
+
+func TestLineDecoderLongLine(t *testing.T) {
+	decoder := codec.NewLineDecoder()
+	longLine := strings.Repeat("a", 70000) + "\n"
+	_, err := decoder.Decode(strings.NewReader(longLine))
+	if err == nil {
+		t.Fatalf("expected error for long line")
+	}
+}
+
+func TestXMLCodec(t *testing.T) {
+	type xmlItem struct {
+		XMLName string `xml:"item"`
+		Name    string `xml:"name"`
+	}
+
+	encoder := codec.NewXMLEncoder[xmlItem]()
+	decoder := codec.NewXMLDecoder[xmlItem]()
+
+	var buf bytes.Buffer
+	item := xmlItem{Name: "alpha"}
+	if err := encoder.Encode(&buf, item); err != nil {
+		t.Fatalf("encode error: %v", err)
+	}
+
+	got, err := decoder.Decode(&buf)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if got.Name != item.Name {
+		t.Fatalf("expected %q, got %q", item.Name, got.Name)
+	}
+}
+
+func TestHTMLDecoder(t *testing.T) {
+	decoder := codec.NewHTMLDecoder()
+	node, err := decoder.Decode(strings.NewReader("<html><body><p>hi</p></body></html>"))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if node == nil || node.FirstChild == nil {
+		t.Fatalf("expected parsed HTML node")
+	}
+}
+
+func TestWaveCodec(t *testing.T) {
+	encoder := codec.WaveEncoder[types.WaveData]{}
+	decoder := codec.WaveDecoder[types.WaveData]{}
+
+	wave := types.WaveData{
+		ID:               7,
+		OriginalWave:     []complex128{complex(1, 2), complex(3, 4)},
+		CompressedHex:    "deadbeef",
+		DominantFreq:     3.14,
+		TotalEnergy:      9.9,
+		CompressionRatio: 0.5,
+		MSE:              1.2,
+		SNR:              2.3,
+		FrequencyPeaks: []types.Peak{
+			{Freq: 1.0, Value: 2.0},
+			{Freq: 3.0, Value: 4.0},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := encoder.Encode(&buf, wave); err != nil {
+		t.Fatalf("encode error: %v", err)
+	}
+
+	got, err := decoder.Decode(&buf)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if got.ID != wave.ID || got.CompressedHex != wave.CompressedHex || len(got.OriginalWave) != len(wave.OriginalWave) {
+		t.Fatalf("decoded wave mismatch")
+	}
+}
+
+func TestWaveEncoderWrongType(t *testing.T) {
+	encoder := codec.WaveEncoder[any]{}
+	if err := encoder.Encode(&bytes.Buffer{}, "not-wave"); err == nil {
+		t.Fatalf("expected error for wrong type")
+	}
+}
+
+func TestWaveDecoderTruncated(t *testing.T) {
+	decoder := codec.WaveDecoder[types.WaveData]{}
+	_, err := decoder.Decode(bytes.NewReader([]byte{0x01, 0x02}))
+	if err == nil {
+		t.Fatalf("expected decode error for truncated data")
 	}
 }
