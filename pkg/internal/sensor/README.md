@@ -1,34 +1,47 @@
-# Sensor
+# sensor
 
-Sensor provides callback hooks for observing pipeline activity across the core components. It is the
-preferred way to emit telemetry without mutating live components at runtime.
+The sensor package provides structured callbacks for pipeline events. Sensors are the primary integration point for observability and instrumentation; they emit events that meters and loggers consume.
 
 ## Responsibilities
 
-- Register callbacks for lifecycle, error, and submission events.
-- Emit adapter-specific hooks for HTTP, S3, and Kafka behaviors.
-- Increment meter counters and timestamps through internal decorators.
+- Register callbacks for lifecycle, submit, error, and processing events.
+- Connect meters and loggers to emit structured telemetry.
+- Keep instrumentation separate from hot-path processing logic.
+
+## Key types and functions
+
+- Sensor[T]: main type.
+- Register* and Invoke* callback methods.
+- WithSensor options for components.
+
+## Configuration
+
+Sensors are configured with:
+
+- A meter (optional)
+- A logger (optional)
+- Custom callbacks
+
+Sensors should be attached before Start().
+
+## Behavior
+
+Sensors are best-effort. They should not block the pipeline or introduce heavy work in the hot path.
 
 ## Usage
 
-Sensors are attached to components during construction. Callbacks are executed synchronously on
-invocation, so they should be fast and non-blocking.
+```go
+meter := builder.NewMeter[Item](ctx)
+logger := builder.NewLogger()
 
-## Configuration Notes
+sensor := builder.NewSensor(
+    builder.SensorWithMeter[Item](meter),
+    builder.SensorWithLogger[Item](logger),
+)
+```
 
-Sensor callbacks are safe to register before runtime. Avoid long-running work inside callbacks to
-keep hot paths responsive.
+## References
 
-## Extending
-
-- Contracts: `pkg/internal/types/sensor.go`
-- Implementation: `pkg/internal/sensor`
-- Builder entry points: `pkg/builder/sensor.go`
-
-## Examples
-
-See `example/sensor_example/`.
-
-## License
-
-Apache 2.0. See `LICENSE`.
+- examples: example/sensor_example/
+- builder: pkg/builder/sensor.go
+- internal contracts: pkg/internal/types/sensor.go

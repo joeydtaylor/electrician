@@ -1,44 +1,47 @@
-# Plug
+# plug
 
-Package `plug` implements Electrician's ingestion binding layer. External consumers should use the builder APIs under `pkg/builder`.
+The plug package defines a pluggable input source. A plug wraps one or more adapters (or adapter functions) and exposes a uniform interface for generators to pull or receive data.
 
-A plug owns adapter wiring and adapter functions. It provides generators with a single surface to pull from without coupling to specific adapter implementations.
+## Responsibilities
+
+- Encapsulate adapter(s) that produce items.
+- Provide a consistent API for generators.
+- Emit telemetry through sensors and loggers.
+
+## Key types and functions
+
+- Plug[T]: main type.
+- Serve(ctx, submit): invoke adapters and submit items.
 
 ## Configuration
 
-Configuration is expected to happen before use. Once a plug is frozen by a generator, `Connect*`, `AddAdapterFunc`, and `SetComponentMetadata` panic if called.
+Plugs are configured with:
 
-Typical construction:
+- Adapter implementations or adapter functions
+- Optional sensor and logger
+
+Configuration must be complete before Start/Serve.
+
+## Lifecycle
+
+Plugs are typically driven by a generator. They do not manage long-lived goroutines unless an adapter does so internally.
+
+## Observability
+
+Plugs emit start/stop and submission events to sensors, enabling meters and loggers to track ingestion.
+
+## Usage
 
 ```go
-ctx := context.Background()
-
-p := plug.NewPlug[Item](ctx,
-	plug.WithAdapter[Item](httpAdapter),
-	plug.WithAdapterFunc[Item](adapterFunc),
+plug := builder.NewPlug(
+    ctx,
+    builder.PlugWithAdapterFunc(myAdapter),
+    builder.PlugWithSensor(sensor),
 )
 ```
 
-## Execution model
+## References
 
-Plugs do not execute work directly. Generators call `GetAdapterFuncs` and `GetConnectors` and invoke adapters according to their own scheduling and cancellation rules.
-
-## Telemetry
-
-Plugs store sensors and loggers for ingestion components. Loggers receive best-effort events via `NotifyLoggers`.
-
-## Package layout
-
-- `plug.go`: `Plug` type and constructor.
-- `accessors.go`: getters for adapter funcs, connectors, and metadata.
-- `config.go`: configuration setters.
-- `connect.go`: adapter and sensor wiring helpers.
-- `immutability.go`: runtime guard against mutation after Freeze.
-- `options.go`: functional options.
-- `telemetry.go`: logger notifications.
-- `*_test.go`: tests.
-
-## Notes
-
-- Plug configuration should be completed before a generator starts.
-- Adapter functions should remain small; use dedicated adapters for complex ingestion logic.
+- examples: example/plug_example/
+- builder: pkg/builder/plug.go
+- internal contracts: pkg/internal/types/plug.go

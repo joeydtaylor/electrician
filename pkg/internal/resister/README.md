@@ -1,40 +1,45 @@
-# Resister
+# resister
 
-Resister is an in-memory queue used to buffer elements when a pipeline cannot accept work immediately.
-It is typically paired with a surge protector and drained by a wire loop once capacity returns.
+The resister package provides a queue-based smoothing layer. It buffers items when downstream systems are overloaded and releases them later according to policy.
 
 ## Responsibilities
 
-- Enqueue and dequeue elements with priority awareness.
-- Expose queue size for monitoring and control decisions.
-- Emit sensor and logger events for queue activity.
+- Queue items for deferred processing.
+- Dequeue items in order when capacity is available.
+- Emit telemetry for queue depth and dequeue events.
+
+## Key types and functions
+
+- Resister[T]: main type.
+- Queue/Dequeue operations and lifecycle controls.
+
+## Configuration
+
+Resisters are configured with:
+
+- Queue size and behavior
+- Optional sensor and logger
+
+Configuration must be finalized before Start().
 
 ## Behavior
 
-- Higher `QueuePriority` elements are dequeued first.
-- Requeueing an existing element updates its position instead of duplicating it.
-- `DecayPriorities` can lower priority for elements that have exceeded retry thresholds.
+Resisters are often paired with surge protectors or circuit breakers to avoid dropping data during temporary overloads.
 
-## Integration With Surge Protector
+## Observability
 
-The surge protector uses resister as a temporary buffer when it is tripped or rate-limited.
-The wire drain loop replays items directly into the wire so queued elements are not re-enqueued.
+Sensors emit queue/dequeue/empty events. Meters can track depth and throughput.
 
-## Configuration Notes
+## Usage
 
-Resister is in-memory only. It is not durable storage and makes no ordering guarantees beyond
-priority-based dequeueing.
+```go
+resister := builder.NewResister(
+    ctx,
+    builder.ResisterWithSensor(sensor),
+)
+```
 
-## Extending
+## References
 
-- Contracts: `pkg/internal/types/resister.go`
-- Implementation: `pkg/internal/resister`
-- Builder entry points: `pkg/builder/resister.go`
-
-## Examples
-
-See `example/surge_protector_example/`.
-
-## License
-
-Apache 2.0. See `LICENSE`.
+- builder: pkg/builder/resister.go
+- internal contracts: pkg/internal/types/resister.go

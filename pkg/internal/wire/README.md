@@ -1,94 +1,79 @@
-# Wire
+# wire
 
-Package `wire` implements the core in-process pipeline stage used by Electrician. It is an internal package; external consumers should use the builder APIs under `pkg/builder`.
+The wire package is the core pipeline primitive in Electrician. A wire accepts inputs, applies one or more transforms, and emits outputs with bounded concurrency. It is designed for predictable lifecycle behavior and a low-allocation hot path.
 
-A wire receives elements, applies a sequence of transforms, and emits results. Optional components can enforce circuit breaking, rate limiting, retry, encoding, and telemetry.
+## Responsibilities
 
-## Quick start
+- Accept submissions and route them to workers.
+- Apply transform functions in order.
+- Emit outputs and collect errors.
+- Integrate optional reliability components (circuit breaker, insulator, surge protector, resister).
+- Emit telemetry through sensors and loggers.
 
-```go
-ctx := context.Background()
+## Key types and functions
 
-w := wire.NewWire[int](ctx,
-	wire.WithConcurrencyControl[int](1024, 4),
-	wire.WithTransformer[int](func(v int) (int, error) {
-		return v * 2, nil
-	}),
-)
-
-_ = w.Start(ctx)
-_ = w.Submit(ctx, 21)
-
-out := <-w.GetOutputChannel()
-_ = w.Stop()
-```
+- Wire[T]: the main pipeline type.
+- Start(ctx): starts worker goroutines and begins processing.
+- Stop(): stops processing and closes outputs.
+- Submit(ctx, item): submit an item into the wire.
+- GetOutputChannel(): read processed output.
+- LoadAsJSONArray(): convenience helper for debugging and tests.
 
 ## Configuration
 
-Configuration is expected to happen before `Start`. `Connect*` and `Set*` methods panic if called after the wire has started.
+Wires are configured via functional options before Start(). Common options include:
 
-You can configure a wire using options at construction time:
+- Transformer functions or transformer factories
+- Concurrency and buffering
+- Circuit breaker or insulator (retry)
+- Surge protector / resister
+- Sensor (telemetry)
+- Logger
 
-```go
-w := wire.NewWire[Event](ctx,
-	wire.WithComponentMetadata[Event]("ingest", "wire-1"),
-	wire.WithConcurrencyControl[Event](65536, 12),
-	wire.WithInsulator[Event](retryFn, 3, 50*time.Millisecond),
-	wire.WithSurgeProtector[Event](protector),
-	wire.WithCircuitBreaker[Event](breaker),
-	wire.WithLogger[Event](logger),
-	wire.WithSensor[Event](sensor),
-)
-```
-
-Direct connect/set methods are also available (`Connect*`, `Set*`) but should be treated as configuration-time operations.
+Configuration mutation after Start() is not supported and will panic to avoid races.
 
 ## Lifecycle
 
-- `Start(ctx)` starts workers, resister processing, and generators.
-- `Stop()` cancels the wire context, waits for workers, and closes output/error channels.
-- `Restart(ctx)` stops the wire, reinitializes channels, and starts again.
+1) Construct with options
+2) Start(ctx)
+3) Submit items
+4) Stop() when done
 
-## Fast path
+The wire manages its own worker lifecycle and respects the provided context for cancellation.
 
-A fast path is used when the wire has no optional components and exactly one transform source:
+## Concurrency and performance
 
-- no circuit breaker
-- no surge protector
-- no insulator
-- no encoder
-- no loggers/sensors
-- one transform (explicit or factory)
+- Workers process items concurrently with bounded queues.
+- The fast path avoids per-element allocations when optional components are disabled.
+- Transform factories and scratch buffers allow worker-local state without shared pools.
 
-This avoids per-element overhead in the hot loop. User transforms can still allocate.
+## Error handling
 
-## Output
+- Transform errors can be counted, reported, and routed to an insulator if configured.
+- Circuit breakers can trip and divert or drop items based on policy.
+- Surge protectors and resisters handle rate limiting and queueing.
 
-Processed elements are sent to the output channel (`GetOutputChannel`). If an encoder is configured, elements are also written to `OutputBuffer` under a mutex.
+## Observability
 
-`Load()` stops the wire and returns a copy of the output buffer. `LoadAsJSONArray()` stops the wire and drains available output into a JSON array (non-blocking).
+Wire integrates with Sensor and Logger. Sensors emit events (submit, processed, error), and meters aggregate counts and rates.
 
-## Package layout
+## Usage
 
-- `wire.go`: `Wire` type and constructor.
-- `accessors.go`: getters and state accessors.
-- `breaker.go`: circuit breaker polling loop.
-- `config.go`: setters for configuration-time state.
-- `connect.go`: component attachment helpers.
-- `error.go`: error routing.
-- `internal.go`: worker loops and fast-path processing.
-- `lifecycle.go`: start/stop/restart.
-- `load.go`: load helpers.
-- `options.go`: functional options.
-- `resister.go`: resister queue processing.
-- `routing.go`: diversion and output routing.
-- `submit.go`: submit paths.
-- `telemetry*.go`: logging and sensor hooks.
-- `transform.go`: transform and retry helpers.
-- `wire_test.go`: tests.
+```go
+w := builder.NewWire[Item](
+    ctx,
+    builder.WireWithTransformer(process),
+    builder.WireWithConcurrencyControl[Item](1024, 8),
+    builder.WireWithSensor(sensor),
+)
 
-## Notes
+_ = w.Start(ctx)
+_ = w.Submit(ctx, item)
+_ = w.Stop()
+```
 
-- The wire is designed for predictable lifecycle behavior. Mutating configuration while running is unsupported.
-- Telemetry is best-effort and should not backpressure the pipeline.
-- If you add a new capability, ensure it is configuration-time, add tests, and keep hot-path allocations in check.
+## References
+
+- examples: example/wire_example/
+- builder: pkg/builder/wire.go
+- internal contracts: pkg/internal/types/wire.go

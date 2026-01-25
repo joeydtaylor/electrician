@@ -1,41 +1,58 @@
-# HTTP Server
+# jack/httpserver
 
-The HTTP server adapter exposes a webhook-style endpoint that decodes request bodies into `T` and routes them into your pipeline via a submit function. It is intentionally minimal and focused on ingestion.
+The httpserver package provides an inbound HTTP/HTTPS server adapter. It exposes a typed request handler, handles request decoding, and returns structured responses suitable for pipeline entrypoints.
 
 ## Responsibilities
 
-- Accept inbound HTTP requests for a single method/path.
-- Decode request bodies into `T` (JSON by default).
-- Invoke a submit function and shape the HTTP response.
-- Optionally run with TLS using `types.TLSConfig`.
+- Bind an HTTP server and route requests.
+- Decode request bodies into typed structs.
+- Invoke user handlers with context and typed requests.
+- Build responses with status codes, headers, and byte payloads.
+- Support TLS configuration.
 
-## Non-goals
+## Key types and functions
 
-- General web framework features.
-- Routing beyond a single method/path.
-- Durable delivery or retry semantics.
-
-## Lifecycle
-
-Configure the server with options, then call `Serve(ctx, submitFunc)`. Configuration is frozen once `Serve` starts.
+- HTTPServer[T]: main server type.
+- Serve(ctx, handler): start the server and handle requests.
+- HTTPServerResponse: structured response (status, headers, body).
 
 ## Configuration
 
-- `WithAddress` sets the listen address.
-- `WithServerConfig` sets the method and endpoint.
-- `WithHeader` sets default response headers.
-- `WithTimeout` sets read/write timeouts.
-- `WithTLS` enables TLS.
+Common options include:
+
+- Address, method, and route
+- TLS configuration
+- Read/write timeouts
+- Default headers
+- Logger and sensor
+
+Configuration must be finalized before Serve(). Mutation after start panics to avoid races.
 
 ## Error handling
 
-If `submitFunc` returns an error, the server responds with a 500 by default. You can return a `*types.HTTPServerError` to control the status code and message.
+Handler errors can be mapped to HTTP error responses. The server propagates fatal errors via Serve() and respects context cancellation.
 
-## Package layout
+## Observability
 
-- `httpserver.go`: type and constructor
-- `serve.go`: server lifecycle and request handling
-- `decode.go`: request decoding
-- `tls.go`: TLS config loading
-- `options.go`: functional options
-- `*_test.go`: tests
+Sensors emit request start/finish/error events. Loggers capture structured access and error logs.
+
+## Usage
+
+```go
+server := builder.NewHTTPServer[Request](
+    ctx,
+    builder.HTTPServerWithAddress[Request](":8443"),
+    builder.HTTPServerWithServerConfig[Request]("POST", "/hello"),
+    builder.HTTPServerWithTLS[Request](tlsConfig),
+)
+
+err := server.Serve(ctx, func(ctx context.Context, req Request) (builder.HTTPServerResponse, error) {
+    return builder.HTTPServerResponse{StatusCode: 200, Body: []byte("ok")}, nil
+})
+```
+
+## References
+
+- examples: example/httpserverJack/
+- builder: pkg/builder/jack.go
+- internal contracts: pkg/internal/types/httpserver_adapter.go

@@ -1,183 +1,115 @@
-# ⚡ Electrician
+# Electrician
 
-**Electrician** is a Go library for building **typed, concurrent pipelines**.
+Electrician is a Go library for building typed, concurrent pipelines. It focuses on clear lifecycle semantics, explicit wiring, and predictable behavior under load. The library provides a small set of primitives that cover the common problems of ingestion, transformation, and delivery without forcing you to hand-roll goroutine topologies or channel plumbing.
 
-It’s generics-first and centered around a small set of primitives (Wire, Conduit, Relays) that let you build ingestion → transform → emit flows without hand-rolling goroutine topologies and channel plumbing every time.
+## What problems it solves
 
----
+Electrician targets the hard parts of production pipeline work:
 
-## 🚀 What it is
+- Coordinating concurrent stages while keeping type safety end-to-end.
+- Avoiding data races when configuration is updated at runtime.
+- Keeping hot paths allocation-light while still supporting rich integrations.
+- Handling failure modes (trip/reset, retries, queueing, rate limits) in a repeatable way.
+- Adding observability without coupling metrics/logging to the processing path.
 
-* 🧬 **Generics-first**: end-to-end type safety without `interface{}`.
-* ⚙️ **Configurable concurrency**: buffer sizes + worker counts are first-class.
-* 🧯 **Reliability components**: circuit breakers, retry/recovery (insulators), surge protection / queueing.
-* 🧱 **Composable pipelines**: wires + conduits to build multi-stage flows.
-* 📡 **Telemetry hooks**: structured logging + sensors/meters for visibility.
-* 🌐 **Integration surfaces**: optional adapters/relays for gRPC, Kafka, AWS, Parquet/codecs, etc.
+These problems are solvable with bespoke goroutines and channels, but the complexity grows quickly. Electrician makes the lifecycle and wiring explicit so you can focus on the business logic.
 
-Electrician is designed to be boring under load: predictable lifecycle, explicit wiring, and hot paths that don’t allocate per item unless you make them.
+## Core concepts
 
----
+- Wire: bounded concurrent stage (ingest -> transform -> emit).
+- Conduit: composition for multi-stage pipelines.
+- Plug + Generator: pluggable sources for ingestion.
+- Circuit breaker: trip/reset behavior on failure.
+- Surge protector + Resister: rate limiting and queueing under pressure.
+- Sensor + Meter + Logger: observability hooks and counters.
+- Relays: gRPC contracts for cross-service streaming.
+- Adapters: HTTP, Kafka, S3, codecs, and more.
+- Jack HTTP server: inbound HTTP/HTTPS entrypoint.
 
-## 🎯 Goals & philosophy
+## Design contract
 
-1. 🧠 **Clarity over cleverness** — configure, start, run, stop.
-2. 🧬 **Type safety** — pipeline contracts are generic all the way through.
-3. 🚄 **Performance where it matters** — core pipeline aims to avoid per-element allocations.
-4. 🧩 **Modularity** — reliability and integrations are opt-in.
+Configure -> Start -> Submit/Run -> Stop/Restart
 
-The core operational contract is:
+Configuration is expected to be complete before Start(). Mutating a running component is not supported and may race.
 
-✅ Configure → Start → Submit/Run → Stop/Restart
+## Getting started
 
-Mutating pipeline configuration while running is not supported (race risk by design).
-
----
-
-## 🧩 Project layout
-
-Electrician follows a “public surface + private engine” layout:
-
-* `pkg/` — public packages intended to be imported by other code in this module
-* `pkg/internal/` — private implementation for `pkg/` (enforced by Go’s `internal/` rule)
-* `pkg/builder` — the public exporter/wrapper that assembles internal components via options/builders
-
-Downstream users import `pkg/builder` (or other `pkg/*` packages), not `pkg/internal/*`.
-
----
-
-## 🚄 Performance posture 
-
-Electrician does **not** claim “zero allocations everywhere.”
-
-What it does claim:
-
-* ✅ The **pipeline core** (especially `wire`) is written toC to avoid **per-element allocations** under typical configurations.
-* ✅ Fast-path processing exists when “extras” are off (no breaker/surge/insulator/encoder/telemetry and exactly one transform source).
-* ✅ Worker-local scratch patterns (transformer factories / `WithScratchBytes`) let you stay allocation-free without `sync.Pool`.
-* ✅ Allocation regressions are caught with tests where it matters (see `wire_test.go`).
-
-Your code can still allocate:
-
-* user transformers
-* encoders/serialization
-* integrations/adapters
-
-If you care about the last 20%, benchmark and keep the hot path minimal.
-
----
-
-## 📦 Dependencies 
-
-Electrician is **stdlib-first** for core pipeline mechanics (channels, `context`, `sync`, `net/http`, etc.).
-
-The repository includes third-party libraries primarily because integrations need them:
-
-* gRPC/protobuf for relay contracts
-* Kafka clients
-* AWS SDK v2
-* Parquet + compression codecs
-* structured logging
-* optional numerics/DSP and host metrics
-
-These are deliberate choices: widely used, maintained, and boring.
-
-Important detail: if you don’t import a given integration package, it won’t end up in your final binary.
-
----
-
-## 🔧 Getting started
-
-### 1️⃣ Install
+Install:
 
 ```bash
 go get github.com/joeydtaylor/electrician
 ```
 
-### 2️⃣ Build a tiny pipeline (Wire)
-
-This example:
-
-* receives strings
-* uppercases them
-* reads results from the output channel
+Minimal example:
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
-	"strings"
-	"time"
+    "context"
+    "fmt"
+    "strings"
+    "time"
 
-	"github.com/joeydtaylor/electrician/pkg/builder"
+    "github.com/joeydtaylor/electrician/pkg/builder"
 )
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
+    ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+    defer cancel()
 
-	transform := func(input string) (string, error) {
-		return strings.ToUpper(input), nil
-	}
+    transform := func(input string) (string, error) {
+        return strings.ToUpper(input), nil
+    }
 
-	w := builder.NewWire(
-		ctx,
-		builder.WireWithTransformer(transform),
-	)
+    w := builder.NewWire(
+        ctx,
+        builder.WireWithTransformer(transform),
+    )
 
-	_ = w.Start(ctx)
-	_ = w.Submit(ctx, "hello")
-	_ = w.Submit(ctx, "world")
+    _ = w.Start(ctx)
+    _ = w.Submit(ctx, "hello")
+    _ = w.Submit(ctx, "world")
 
-	// Read outputs (or use LoadAsJSONArray for debugging/testing).
-	for {
-		select {
-		case v, ok := <-w.GetOutputChannel():
-			if !ok {
-				return
-			}
-			fmt.Println(v)
-		case <-ctx.Done():
-			_ = w.Stop()
-			return
-		}
-	}
+    for {
+        select {
+        case v, ok := <-w.GetOutputChannel():
+            if !ok {
+                return
+            }
+            fmt.Println(v)
+        case <-ctx.Done():
+            _ = w.Stop()
+            return
+        }
+    }
 }
 ```
 
----
+## Performance posture
 
-## 🧱 Core concepts
+The core pipeline path (especially wire) is designed to avoid per-element allocations in typical configurations. Integrations, encoders, and user transforms can allocate; keep the hot path minimal when optimizing. Worker-local state (factory transforms or scratch buffers) is preferred over shared pools unless measured.
 
-* ⚡ **Wire**: bounded concurrent stage (ingest → transform → emit). Optional breaker/surge/insulator/telemetry.
-* 🧵 **Conduit**: composition tool for chaining stages.
-* 🧯 **Circuit breaker**: reject/divert when tripped.
-* 🧪 **Insulator**: retry/recovery policy on transform failures.
-* 🛡️ **Surge protector / resister queue**: rate limiting + deferred processing.
-* 📡 **Sensors / meters / loggers**: hooks for observability.
-* 🌐 **Relays**: protobuf + gRPC contracts for cross-service streaming.
+## Observability
 
----
+Observability is opt-in and explicit. Sensors emit events, meters aggregate counts and rates, and loggers handle structured output. This keeps the pipeline core fast and makes telemetry easy to reason about.
 
-## 📝 License
+## Integrations
 
-[Apache 2.0 License](./LICENSE).
----
+Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These live in separate packages and are not linked into your binary unless imported.
 
-## 📖 Further Reading
-- **[Per-Package README](./pkg/internal/)** – Each internal sub-package (`wire`, `circuitbreaker`, etc.) contains additional details.
-- **[Examples Directory](./example/)** – Demonstrates these internal components in real-world use cases.
+## Project layout
 
----
+- pkg/builder: public construction layer (stable API).
+- pkg/internal: private implementation (enforced by Go internal).
+- example/: runnable examples covering most components.
 
-## 📝 License
+## Documentation
 
-[Apache 2.0 License](./LICENSE).  
+- Internal architecture: pkg/internal/README.MD
+- Examples: example/
+- Per-package READMEs under pkg/internal/* and pkg/builder
 
----
+## License
 
-## ⚡ Happy wiring! 🚀
-
-If you have any questions or need clarification, feel free to **open a GitHub issue**.
+Apache 2.0. See LICENSE.

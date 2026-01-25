@@ -1,71 +1,47 @@
-# Kafka Client Adapter
+# adapter/kafkaclient
 
-The Kafka Client Adapter produces and consumes Kafka messages using injected driver handles (for example, `kafka-go`).
-It is typically wired through a `Plug` and driven by a `Generator`.
+The kafkaclient adapter integrates with Kafka using kafka-go. It provides reader and writer adapters with structured configuration and telemetry.
 
 ## Responsibilities
 
-- Encode records as NDJSON and write them to Kafka.
-- Decode Kafka messages into `T` and submit them to downstream handlers.
-- Emit telemetry callbacks for writer/reader lifecycle and message events.
-- Support batching and commit strategies for readers.
+- Configure Kafka readers and writers.
+- Serialize and deserialize payloads (JSON, NDJSON, Parquet when applicable).
+- Emit telemetry for connection, batch, and produce/consume events.
 
-## Pipeline Composition
+## Key types and functions
 
-A common arrangement is:
-
-```
-Kafka Client Adapter -> Plug -> Generator -> Wire
-```
+- KafkaClientAdapter[T]: main adapter type.
+- Serve(): consume messages and submit into the pipeline.
+- Write(): publish messages to Kafka topics.
 
 ## Configuration
 
-Writer configuration includes:
+Common options include:
 
-- Topic, format, and format options.
-- Batching thresholds.
-- Optional key and header templates.
+- Brokers, topics, group IDs
+- Start position (earliest/latest)
+- Commit policy and intervals
+- Batch size and flush behavior
+- TLS and SASL configuration
+- Sensor and logger
 
-Reader configuration includes:
+## Observability
 
-- Group and topic subscription.
-- Start offset behavior.
-- Polling limits.
-- Commit mode and policy.
+Sensors emit metrics for consume/produce success, failures, and batch flushes. Loggers capture connection and runtime events.
 
-Driver objects (such as `*kafka.Writer` or `*kafka.Reader`) are injected via options, and security (TLS/SASL) is configured
-on those driver objects.
+## Usage
 
-## Telemetry
-
-Sensors can subscribe to:
-
-- Writer start/stop
-- Batch flush
-- Produce success/error
-- Reader start/stop
-- Message decode and commit
-
-Loggers receive formatted messages from adapter operations.
-
-## Package Layout
-
-- `kafkaclient.go`: core type and constructor
-- `config.go`: dependency and configuration setters
-- `connect.go`: logger/sensor/wire wiring
-- `helpers.go`: internal helpers
-- `lifecycle.go`: stop handling
-- `metadata.go`: component metadata accessors
-- `notify.go`: logger emission
-- `reader.go`: reader serve loop
-- `reader_helpers.go`: reader construction and commit helpers
-- `writer.go`: writer serve loop
-- `writer_raw.go`: raw writer loop
-- `writer_helpers.go`: writer helpers
-- `templates.go`: key/header templating
-- `options.go`: functional options
-- `*_test.go`: tests
+```go
+reader := builder.NewKafkaClientAdapter[Item](
+    ctx,
+    builder.KafkaClientAdapterWithReaderTopics[Item]("topic"),
+    builder.KafkaClientAdapterWithReaderGroup[Item]("group"),
+    builder.KafkaClientAdapterWithSensor[Item](sensor),
+)
+```
 
 ## References
 
-- Kafka adapter examples: `example/adapter/kafka_adapter/`
+- examples: example/adapter/kafka_adapter/
+- builder: pkg/builder/kafkaclient_adapter.go
+- internal contracts: pkg/internal/types/kafka_adapter.go

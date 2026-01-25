@@ -1,68 +1,47 @@
-# HTTP Client Adapter
+# adapter/httpclient
 
-The HTTP Client Adapter executes HTTP requests and decodes responses into `T` for use in Electrician pipelines. It is typically wired through a `Plug` and driven by a `Generator`.
+The httpclient adapter provides a configurable HTTP client for fetching remote data and optionally submitting results into a pipeline. It supports TLS configuration, OAuth flows, retry policies, and structured telemetry.
 
 ## Responsibilities
 
-- Build and execute HTTP requests using `net/http`.
-- Decode response bodies into `T` based on content type.
-- Emit telemetry callbacks for request lifecycle events.
-- Provide optional polling behavior through `Serve`.
+- Build and configure HTTP clients.
+- Perform fetch operations with configurable request settings.
+- Support OAuth2 flows and TLS pinning where configured.
+- Emit telemetry for request outcomes and retries.
 
-## Pipeline Composition
+## Key types and functions
 
-A common arrangement is:
-
-```
-HTTP Client Adapter -> Plug -> Generator -> Wire
-```
-
-The adapter owns transport and decoding. Business logic should live in wire transformers.
+- HTTPClientAdapter[T]: main adapter.
+- Fetch(): perform a request and return a response payload.
+- Serve(): fetch and submit into a pipeline (when used with a plug/generator).
 
 ## Configuration
 
-Core configuration options include:
+Common options include:
 
-- Request configuration (method, endpoint, body).
-- Headers (static values including `Authorization`).
-- Polling interval and retry limits for `Serve`.
-- Request timeouts.
-- Optional OAuth2 client credentials flow.
-- Optional TLS certificate pinning.
+- Request method, URL, headers, body
+- Timeout, retry policy, and backoff
+- TLS configuration (including pinning)
+- OAuth2 client settings
+- Sensor and logger
 
-## Response Decoding
+## Observability
 
-The adapter decodes based on the response `Content-Type`:
+Sensors emit metrics for request counts, errors, retries, and success rates. Loggers capture structured request events.
 
-- `application/json` uses the JSON decoder.
-- `text/xml` and `application/xml` use the XML decoder.
-- `application/octet-stream`, `text/plain`, and `text/html` are returned as raw bytes in the wrapped response.
+## Usage
 
-## Telemetry
-
-Sensors can subscribe to:
-
-- Request start
-- Response received
-- Request complete
-- Error
-
-Loggers receive formatted messages from adapter operations.
-
-## Package Layout
-
-- `httpclient.go`: core types and constructor
-- `config.go`: configuration setters
-- `connect.go`: logger and sensor wiring
-- `fetch.go`: request execution and decoding
-- `serve.go`: polling and retry loop
-- `oauth.go`: OAuth2 helpers
-- `tls.go`: certificate pinning
-- `notify.go`: telemetry hooks
-- `options.go`: functional options
-- `*_test.go`: tests
+```go
+adapter := builder.NewHTTPClientAdapter(
+    ctx,
+    builder.HTTPClientAdapterWithRequestConfig[Item]("GET", "https://example.com", nil),
+    builder.HTTPClientAdapterWithTimeout[Item](5*time.Second),
+    builder.HTTPClientAdapterWithSensor[Item](sensor),
+)
+```
 
 ## References
 
-- Root project README: `README.md`
-- HTTP adapter examples: `example/plug_example/httpadapter/`
+- examples: example/plug_example/httpadapter/
+- builder: pkg/builder/httpclient_adapter.go
+- internal contracts: pkg/internal/types/httpclient_adapter.go

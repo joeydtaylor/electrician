@@ -1,41 +1,52 @@
-# Circuit Breaker
+# circuitbreaker
 
-The circuit breaker protects a pipeline from repeated failures by opening when errors exceed a threshold.
-While open, callers should divert or drop work until the breaker resets.
+The circuitbreaker package provides trip/reset behavior for pipelines. It tracks error counts and trips when thresholds are exceeded, allowing downstream logic to divert or drop items until the breaker resets.
 
 ## Responsibilities
 
-- Decide whether work is allowed (`Allow`).
-- Record failures (`RecordError`) and trip when the threshold is reached.
-- Notify observers through sensors, loggers, and the reset channel.
+- Track error rates or counts.
+- Trip when thresholds are exceeded.
+- Reset after a cooldown period.
+- Optionally route items to a neutral wire.
+
+## Key types and functions
+
+- CircuitBreaker[T]: main type.
+- Trip() / Reset(): manual control.
+- Start(ctx) / Stop(): lifecycle and timer management.
+
+## Configuration
+
+Circuit breakers are configured with:
+
+- Trip threshold and reset duration
+- Optional neutral wire for diversion
+- Optional sensor and logger
+
+Configuration must be finalized before Start().
 
 ## Behavior
 
-- `RecordError` increments the error count and can trip the breaker.
-- `Allow` returns false while open and auto-resets once the time window elapses.
-- `Reset` manually closes the breaker and clears the error count.
-- `SetDebouncePeriod` coalesces rapid error bursts (seconds).
+- When tripped, submissions can be diverted or blocked depending on wiring.
+- Reset timers control when the breaker returns to normal.
 
-## Integration With Wire
+## Observability
 
-Wire uses the breaker to gate submissions and optionally divert items to neutral wires when open.
-Neutral wires are best-effort alternatives, not durable queues.
+Sensors emit trip/reset events and error counts. Meters can track trip frequency and error ratios.
 
-## Configuration Notes
+## Usage
 
-Configure the breaker before using it in a running pipeline. Avoid mutating configuration while
-it is being used concurrently.
+```go
+cb := builder.NewCircuitBreaker(
+    ctx,
+    3,
+    5*time.Second,
+    builder.CircuitBreakerWithSensor(sensor),
+)
+```
 
-## Extending
+## References
 
-- Contracts: `pkg/internal/types/circuitbreaker.go`
-- Implementation: `pkg/internal/circuitbreaker`
-- Builder entry points: `pkg/builder/circuitbreaker.go`
-
-## Examples
-
-See `example/circuit_breaker_example/`.
-
-## License
-
-Apache 2.0. See `LICENSE`.
+- examples: example/circuit_breaker_example/
+- builder: pkg/builder/circuitbreaker.go
+- internal contracts: pkg/internal/types/circuitbreaker.go

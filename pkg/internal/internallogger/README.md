@@ -1,39 +1,40 @@
-# Internal Logger
+# internallogger
 
-Package `internallogger` provides Electrician's default logger implementation using zap. External consumers should use the builder APIs under `pkg/builder`.
+The internallogger package provides the structured logging backend used by internal components. It wraps a concrete logger implementation and exposes a consistent interface defined in types/logger.go.
 
-The logger exposes the internal `types.Logger` contract, supports multiple sinks, and handles level mapping between Electrician and zap.
+## Responsibilities
+
+- Provide structured logging with levels and sinks.
+- Support development and production output formats.
+- Allow components to emit consistent log events.
+
+## Key types and functions
+
+- Logger: main implementation.
+- Sink configuration (stdout, file, network).
+- LogLevel constants (debug, info, warn, error, panic, fatal).
 
 ## Configuration
 
-Construct a logger with optional settings:
+Loggers are configured through builder options:
 
-```go
-logger := internallogger.NewLogger(
-	internallogger.LoggerWithLevel("info"),
-	internallogger.LoggerWithDevelopment(true),
-)
-```
-
-Sinks can be added or removed at runtime:
-
-```go
-_ = logger.AddSink("stdout", types.SinkConfig{Type: "stdout"})
-_ = logger.AddSink("file", types.SinkConfig{Type: "file", Config: map[string]interface{}{"path": "/tmp/app.log"}})
-```
+- Level and development mode
+- Sinks and sink configuration
 
 ## Behavior
 
-- Log levels are mapped to zap levels with `ConvertLevel`.
-- `SetLevel` updates the atomic level used by all sinks.
-- `AddSink` rebuilds the logger to include the new destination.
-- `RemoveSink` rebuilds the logger to exclude the removed destination.
+Internal components call NotifyLoggers with a log level. The logger decides whether to emit based on its configured level.
 
-## Package layout
+## Usage
 
-- `logger.go`: adapter type and constructor.
-- `levels.go`: level parsing and conversions.
-- `log.go`: logging and level accessors.
-- `options.go`: functional options.
-- `sinks.go`: sink management.
-- `*_test.go`: tests.
+```go
+logger := builder.NewLogger(
+    builder.LoggerWithLevel("info"),
+    builder.LoggerWithDevelopment(true),
+)
+```
+
+## References
+
+- builder: pkg/builder/logger.go
+- internal contracts: pkg/internal/types/logger.go

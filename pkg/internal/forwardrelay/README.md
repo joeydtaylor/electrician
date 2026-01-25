@@ -1,78 +1,42 @@
-# Forward Relay
+# forwardrelay
 
-The forward relay is Electrician's gRPC client for sending relay envelopes to a receiving relay. It wraps items into `WrappedPayload` messages and streams them to configured targets.
+The forwardrelay package streams payloads to downstream services using gRPC. It handles payload wrapping (compression and encryption), authentication, and TLS configuration.
 
 ## Responsibilities
 
-- Wrap items into relay envelopes with metadata, timestamps, and sequencing.
-- Apply optional compression and payload encryption.
-- Attach optional auth metadata and custom headers per RPC.
-- Maintain a streaming connection and handle acknowledgments.
+- Connect to remote relay targets.
+- Wrap payloads with compression and encryption as configured.
+- Stream payloads over gRPC.
+- Emit telemetry for connections and submissions.
 
-## Non-goals
+## Key types and functions
 
-- Durable delivery or replay guarantees.
-- Exactly-once processing.
-- Queue semantics or persistence.
+- ForwardRelay[T]: main type.
+- Submit(ctx, item): wrap and stream an item.
+- Start(ctx) / Stop(): lifecycle management.
 
-## Pipeline fit
+## Configuration
 
-Typical flow:
+Common options include:
 
-`Wire -> ForwardRelay -> ReceivingRelay`
+- Target endpoints and connection settings
+- TLS configuration and client certificates
+- OAuth2 or token-based authentication
+- Compression and encryption options
+- Sensor and logger
 
-The forward relay is an egress adapter. It should not implement business logic.
+Configuration must be finalized before Start().
 
-## Message model
+## Error handling
 
-The relay protocol is defined in protobuf:
+Errors during wrapping or transmission are surfaced to callers and reported via sensors/loggers.
 
-- `WrappedPayload` is the core envelope.
-- `RelayEnvelope` wraps streaming messages (`StreamOpen`, payloads, `StreamClose`).
+## Observability
 
-Important fields:
-
-- `payload` contains serialized bytes (gob by default).
-- `metadata.content_type` describes the payload bytes.
-- `metadata.headers` carries optional context.
-- `trace_id` is used for correlation.
-
-## Compression, encryption, auth
-
-- Compression and encryption are opt-in via `PerformanceOptions` and `SecurityOptions`.
-- TLS/mTLS protects the transport; payload encryption is separate and explicit.
-- Auth options and metadata are hints; enforcement is handled by the receiver.
-
-## Lifecycle
-
-Forward relays follow the standard component lifecycle:
-
-1. Configure options.
-2. Call `Start(ctx)`.
-3. Submit items or connect inputs.
-4. Call `Stop()` to shut down.
-
-Configuration is immutable after `Start()`.
-
-## Package layout
-
-- `forwardrelay.go`: type definition and constructor
-- `connect.go`: inputs and loggers
-- `config.go`: configuration setters
-- `lifecycle.go`: start/stop
-- `payload.go`: wrapping, compression, encryption
-- `stream.go`: gRPC streaming and acks
-- `options.go`: functional options
-- `*_test.go`: tests
-
-## Extending
-
-- Protocol changes: update `.proto`, regenerate, then update forward/receiving relays.
-- Cross-component behavior: update `pkg/internal/types/forwardrelay.go` first.
-- User-facing knobs: expose via `pkg/builder`.
+Sensors emit metrics for submissions, payload wrapping, and errors. Loggers capture connection and runtime events.
 
 ## References
 
-- `README.md`
-- `proto/README.md`
-- `example/relay_example/`
+- examples: example/relay_example/
+- builder: pkg/builder/forwardrelay.go
+- internal contracts: pkg/internal/types/forwardrelay.go

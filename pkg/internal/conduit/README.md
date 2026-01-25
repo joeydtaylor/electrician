@@ -1,102 +1,59 @@
-# 🔌 Conduit Package
+# conduit
 
-A **Conduit** is Electrician’s **composition layer**.
+The conduit package composes multiple wires into a multi-stage pipeline. It provides a single lifecycle to start and stop the connected stages and helps coordinate backpressure between them.
 
-It links multiple components (most commonly multiple **Wires**) into a single logical pipeline so you can treat a multi-stage flow as “one thing” for lifecycle and submission.
+## Responsibilities
 
-Conduit is not a new processing engine. The work still happens inside the stages you attach (wires, relays, etc.). Conduit’s job is orchestration and routing.
+- Connect multiple wires into a processing chain.
+- Manage start/stop for the chain.
+- Provide a single output surface for downstream consumption.
 
----
+## Key types and functions
 
-## ✅ What a Conduit does
+- Conduit[T]: main composition type.
+- Start(ctx) / Stop(): lifecycle management.
+- LoadAsJSONArray(): convenience output helper for debugging and tests.
 
-| Capability                 | Meaning                                                                      |
-| -------------------------- | ---------------------------------------------------------------------------- |
-| 🔗 Stage composition       | Connect stages into a multi-step pipeline (most commonly wire → wire → …).   |
-| 🚦 Lifecycle orchestration | Start/stop/restart the composed stages as a unit.                            |
-| 📥 Unified submission      | Provide a single `Submit` surface that feeds the first stage.                |
-| 📤 Unified output          | Expose the “tail” output (typically the last stage’s output channel/buffer). |
+## Configuration
 
----
+Conduits are configured with:
 
-## ❌ What a Conduit does *not* do
+- One or more wires (ordered stages)
+- Optional concurrency controls at the conduit level
+- Optional sensor for aggregated telemetry
 
-* ❌ It does not magically add durability or delivery guarantees.
-* ❌ It is not a load balancer.
-* ❌ It does not replace circuit breakers/surge protectors/insulators — those are per-stage concerns.
+Configuration must be finalized before Start().
 
-If you want resilience behaviors, attach them to the stages (e.g., breakers or surge protectors on wires) and let the conduit orchestrate those stages.
+## Lifecycle
 
----
+1) Construct and attach wires
+2) Start(ctx)
+3) Allow the chain to process
+4) Stop() to drain and terminate
 
-## 🧠 How it fits in a pipeline
+## Concurrency
 
-A common shape:
+Each wire retains its own concurrency settings. The conduit focuses on orchestration, not per-stage execution details.
 
-**Generator → Wire (ingest/normalize) → Wire (transform/enrich) → Wire (encode/emit)**
+## Observability
 
-A conduit gives you:
+Conduits can emit telemetry through sensors and meters attached to their wires or at the conduit level.
 
-* one “thing” to start/stop
-* one “thing” to submit into
-* one “thing” to read output from
+## Usage
 
-Under the hood, it forwards stage output into the next stage’s input using the contracts defined in `types/`.
+```go
+conduit := builder.NewConduit(
+    ctx,
+    builder.ConduitWithWire(wireA),
+    builder.ConduitWithWire(wireB),
+)
 
----
+conduit.Start(ctx)
+conduit.Stop()
+```
 
-## ⚙️ Configuration contract
+## References
 
-Conduit follows Electrician’s standard model:
-
-✅ Configure → Start → Run → Stop/Restart
-
-* Build the stage chain before `Start()`.
-* Don’t mutate the stage list while running.
-
-If you need dynamic routing, model that explicitly (multiple conduits, explicit fan-out/fan-in stages, external brokers, etc.).
-
----
-
-## 📂 Package structure
-
-| File         | Purpose                       |
-| ------------ | ----------------------------- |
-| `conduit.go` | Type definition + constructor |
-| `api.go`     | Public methods / wiring       |
-| `options.go` | Functional options (`With*`)  |
-| `*_test.go`  | Tests                         |
-
----
-
-## 🔧 Extending Conduit
-
-When adding capability:
-
-* Cross-component contract change → update `types/conduit.go` first.
-* Conduit-only behavior → implement in `pkg/internal/conduit`.
-* User-facing knob → expose via `pkg/builder` (`ConduitWith…`).
-
-Tests should cover:
-
-* correct stage chaining
-* start/stop behavior across all stages
-* cancellation behavior
-* no goroutine leaks when downstream stages stop
-
-## 📖 Further Reading
-
-- **[Root README](../../../README.md)** – Electrician’s overall architecture and principles.
-- **[Internal README](../README.md)** – How `internal/` packages interact with `types/`.
-- **[Examples Directory](../../../example/conduit_example/)** – Demonstrates **Conduits in a real-world pipeline**.
-
----
-
-## 📝 License
-
-The **Conduit package** is part of Electrician and is released under the [Apache 2.0 License](../../../LICENSE).  
-You’re free to use, modify, and distribute it within these terms.
-
----
-
-**Happy wiring! ⚡🔗** If you have questions or need support, feel free to open a GitHub issue.
+- examples: example/conduit_example/
+- builder: pkg/builder/conduit.go
+- internal contracts: pkg/internal/types/conduit.go

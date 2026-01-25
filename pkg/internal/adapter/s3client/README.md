@@ -1,68 +1,46 @@
-# S3 Client Adapter
+# adapter/s3client
 
-The S3 Client Adapter writes records to S3 and can read them back into `T`. It supports NDJSON by default
-and includes optional Parquet handling for bulk payloads. The adapter is typically wired through a `Plug`
-and driven by a `Generator`.
+The s3client adapter integrates with AWS S3 (or compatible services such as LocalStack). It supports reading and writing structured data, including Parquet, and provides helpers for listing and filtering objects.
 
 ## Responsibilities
 
-- Encode records and upload S3 objects with batching.
-- Emit telemetry for write attempts and flushes.
-- Read objects back into `T` via NDJSON or Parquet.
-- Provide optional polling for reader workflows.
+- Configure AWS S3 clients and endpoints.
+- Read and write objects with structured formats.
+- Support Parquet read/write with configurable options.
+- Emit telemetry for read/write operations.
 
-## Pipeline Composition
+## Key types and functions
 
-A common arrangement is:
-
-```
-S3 Client Adapter -> Plug -> Generator -> Wire
-```
+- S3ClientAdapter[T]: main adapter type.
+- Fetch(): read objects into typed records.
+- Write(): write records to S3 with format selection.
 
 ## Configuration
 
-Writer configuration includes:
+Common options include:
 
-- Prefix and filename templates for object keys.
-- Format selection and format options (NDJSON defaults, Parquet options).
-- Batching thresholds (records, bytes, max age).
-- Optional SSE configuration.
+- Client, bucket, and prefix
+- List and pagination settings
+- Format options (JSON, NDJSON, Parquet)
+- Parquet settings (schema, memory thresholds)
+- Sensor and logger
 
-Reader configuration includes:
+## Observability
 
-- Prefix filters and page sizing.
-- Polling interval for `Serve`.
-- Decoder format and options (gzip for NDJSON, Parquet options).
+Sensors emit metrics for reads, writes, and errors. Loggers capture structured S3 events.
 
-## Telemetry
+## Usage
 
-Sensors can subscribe to:
-
-- Writer start/stop
-- Key rendering
-- Put attempts, successes, and errors
-- Parquet roll flushes
-
-Loggers receive formatted messages from adapter operations.
-
-## Package Layout
-
-- `s3client.go`: core type and constructor
-- `config.go`: dependency and configuration setters
-- `connect.go`: logger/sensor/wire wiring
-- `helpers.go`: internal helpers
-- `lifecycle.go`: stop handling
-- `metadata.go`: component metadata accessors
-- `notify.go`: logger emission
-- `reader.go`: fetch + serve loops
-- `parquet_reader.go`: Parquet decode helpers
-- `parquet_writer.go`: Parquet roll/encode helpers
-- `writer.go`: writer serve loop
-- `writer_raw.go`: raw writer loop
-- `writer_helpers.go`: retries, flush helpers, key rendering
-- `options.go`: functional options
-- `*_test.go`: tests
+```go
+adapter := builder.NewS3ClientAdapter[Item](
+    ctx,
+    builder.S3ClientAdapterWithClientAndBucket[Item](client, "bucket"),
+    builder.S3ClientAdapterWithReaderListSettings[Item]("prefix/", ".parquet", 5000, 0),
+)
+```
 
 ## References
 
-- S3 adapter examples: `example/adapter/s3_adapter/`
+- examples: example/adapter/s3_adapter/
+- builder: pkg/builder/s3client_adapter.go
+- internal contracts: pkg/internal/types/s3_adapter.go
