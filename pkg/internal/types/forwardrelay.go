@@ -28,6 +28,8 @@ type ForwardRelay[T any] interface {
 	SetPerformanceOptions(*relay.PerformanceOptions)
 	SetSecurityOptions(secOptions *relay.SecurityOptions, encryptionKey string)
 	SetTLSConfig(*TLSConfig)
+	// SetPassthrough enables forwarding pre-wrapped payloads without modification.
+	SetPassthrough(enabled bool)
 
 	Start(context.Context) error
 	Submit(ctx context.Context, item T) error

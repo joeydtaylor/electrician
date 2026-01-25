@@ -57,6 +57,16 @@ func ReceivingRelayWithTLSConfig[T any](config *types.TLSConfig) types.Option[ty
 	return rr.WithTLSConfig[T](config)
 }
 
+// ReceivingRelayWithPassthrough forwards raw WrappedPayload values without unwrap/decrypt.
+func ReceivingRelayWithPassthrough[T any](enabled bool) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithPassthrough[T](enabled)
+}
+
+// ReceivingRelayWithGRPCWebConfig configures gRPC-Web CORS and transport behavior.
+func ReceivingRelayWithGRPCWebConfig[T any](config *types.GRPCWebConfig) types.Option[types.ReceivingRelay[T]] {
+	return rr.WithGRPCWebConfig[T](config)
+}
+
 // ReceivingRelayWithDecryptionKey sets the decryption key for the ReceivingRelay.
 func ReceivingRelayWithDecryptionKey[T any](key string) types.Option[types.ReceivingRelay[T]] {
 	return rr.WithDecryptionKey[T](key)
@@ -146,4 +156,16 @@ func NewReceivingRelayAuthenticationOptionsMTLS(allowedPrincipals []string, trus
 // NewReceivingRelayAuthenticationOptionsNone composes a disabled auth options object.
 func NewReceivingRelayAuthenticationOptionsNone() *relay.AuthenticationOptions {
 	return rr.NewAuthenticationOptionsNone()
+}
+
+// NewGRPCWebConfigAllowAllOrigins returns a gRPC-Web config that accepts any origin.
+// This only affects browser CORS behavior; auth and TLS are still enforced.
+func NewGRPCWebConfigAllowAllOrigins() *types.GRPCWebConfig {
+	return &types.GRPCWebConfig{AllowAllOrigins: true}
+}
+
+// NewGRPCWebConfigAllowAll returns a gRPC-Web config that accepts any origin.
+// Deprecated: use NewGRPCWebConfigAllowAllOrigins for clarity.
+func NewGRPCWebConfigAllowAll() *types.GRPCWebConfig {
+	return NewGRPCWebConfigAllowAllOrigins()
 }

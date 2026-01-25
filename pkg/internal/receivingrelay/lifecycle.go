@@ -34,6 +34,7 @@ func (rr *ReceivingRelay[T]) Stop() {
 	rr.NotifyLoggers(types.InfoLevel, "Stop: stopping receiving relay")
 
 	rr.cancel()
+	rr.shutdownGRPCWebServer()
 	close(rr.DataCh)
 
 	for _, output := range rr.Outputs {

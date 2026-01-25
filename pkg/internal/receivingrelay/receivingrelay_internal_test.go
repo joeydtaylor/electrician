@@ -106,9 +106,9 @@ func (s *stubSubmitter[T]) Submit(_ context.Context, elem T) error {
 	return nil
 }
 func (s *stubSubmitter[T]) ConnectGenerator(...types.Generator[T]) {}
-func (s *stubSubmitter[T]) GetGenerators() []types.Generator[T]     { return nil }
-func (s *stubSubmitter[T]) ConnectLogger(...types.Logger)           {}
-func (s *stubSubmitter[T]) Restart(context.Context) error           { return nil }
+func (s *stubSubmitter[T]) GetGenerators() []types.Generator[T]    { return nil }
+func (s *stubSubmitter[T]) ConnectLogger(...types.Logger)          {}
+func (s *stubSubmitter[T]) Restart(context.Context) error          { return nil }
 func (s *stubSubmitter[T]) NotifyLoggers(types.LogLevel, string, ...interface{}) {
 }
 func (s *stubSubmitter[T]) GetComponentMetadata() types.ComponentMetadata { return s.meta }
@@ -129,12 +129,12 @@ type stubStream struct {
 	ctx context.Context
 }
 
-func (s *stubStream) Context() context.Context                        { return s.ctx }
-func (s *stubStream) SendHeader(metadata.MD) error                    { return nil }
-func (s *stubStream) SetHeader(metadata.MD) error                     { return nil }
-func (s *stubStream) SetTrailer(metadata.MD)                          {}
-func (s *stubStream) SendMsg(interface{}) error                       { return nil }
-func (s *stubStream) RecvMsg(interface{}) error                       { return nil }
+func (s *stubStream) Context() context.Context     { return s.ctx }
+func (s *stubStream) SendHeader(metadata.MD) error { return nil }
+func (s *stubStream) SetHeader(metadata.MD) error  { return nil }
+func (s *stubStream) SetTrailer(metadata.MD)       {}
+func (s *stubStream) SendMsg(interface{}) error    { return nil }
+func (s *stubStream) RecvMsg(interface{}) error    { return nil }
 
 func TestUnwrapPayloadNil(t *testing.T) {
 	var out string
@@ -304,6 +304,108 @@ func TestTLSCredentials(t *testing.T) {
 	}
 }
 
+func TestGRPCWebConfigDefaults(t *testing.T) {
+	rr := &ReceivingRelay[string]{}
+	cfg := rr.snapshotGRPCWebConfig()
+
+	if !cfg.AllowAllOrigins {
+		t.Fatalf("expected default to allow all origins")
+	}
+	if cfg.DisableWebsockets {
+		t.Fatalf("expected websockets enabled by default")
+	}
+	if len(cfg.AllowedHeaders) == 0 {
+		t.Fatalf("expected default allowed headers to be set")
+	}
+	foundAuth := false
+	for _, h := range cfg.AllowedHeaders {
+		if h == "authorization" {
+			foundAuth = true
+			break
+		}
+	}
+	if !foundAuth {
+		t.Fatalf("expected authorization header to be allowed")
+	}
+}
+
+func TestGRPCWebConfigMergeHeaders(t *testing.T) {
+	rr := &ReceivingRelay[string]{
+		grpcWebConfig: &types.GRPCWebConfig{
+			AllowedHeaders: []string{"X-Tenant", "authorization", "  x-tenant  "},
+		},
+	}
+
+	cfg := rr.snapshotGRPCWebConfig()
+	var authCount int
+	var tenantCount int
+	for _, h := range cfg.AllowedHeaders {
+		switch h {
+		case "authorization":
+			authCount++
+		case "x-tenant":
+			tenantCount++
+		}
+	}
+	if authCount != 1 {
+		t.Fatalf("expected authorization header to be deduped, got %d", authCount)
+	}
+	if tenantCount != 1 {
+		t.Fatalf("expected x-tenant header to be normalized, got %d", tenantCount)
+	}
+}
+
+func TestGRPCWebOriginAllowed(t *testing.T) {
+	cfg := types.GRPCWebConfig{
+		AllowAllOrigins: false,
+		AllowedOrigins:  []string{"https://app.local"},
+	}
+
+	if !grpcWebOriginAllowed("", cfg) {
+		t.Fatalf("expected empty origin to be allowed")
+	}
+	if !grpcWebOriginAllowed("https://app.local", cfg) {
+		t.Fatalf("expected matching origin to be allowed")
+	}
+	if grpcWebOriginAllowed("https://evil.local", cfg) {
+		t.Fatalf("expected non-matching origin to be rejected")
+	}
+}
+
+func TestPassthroughItemValue(t *testing.T) {
+	rr := &ReceivingRelay[relay.WrappedPayload]{}
+	wp := &relay.WrappedPayload{Id: "id-1"}
+
+	got, err := rr.asPassthroughItem(wp)
+	if err != nil {
+		t.Fatalf("asPassthroughItem error: %v", err)
+	}
+	if got.GetId() != "id-1" {
+		t.Fatalf("unexpected payload id: %s", got.GetId())
+	}
+}
+
+func TestPassthroughItemPointer(t *testing.T) {
+	rr := &ReceivingRelay[*relay.WrappedPayload]{}
+	wp := &relay.WrappedPayload{Id: "id-2"}
+
+	got, err := rr.asPassthroughItem(wp)
+	if err != nil {
+		t.Fatalf("asPassthroughItem error: %v", err)
+	}
+	if got != wp {
+		t.Fatalf("expected same pointer")
+	}
+}
+
+func TestPassthroughItemInvalidType(t *testing.T) {
+	rr := &ReceivingRelay[string]{}
+	_, err := rr.asPassthroughItem(&relay.WrappedPayload{})
+	if err == nil {
+		t.Fatalf("expected passthrough type error")
+	}
+}
+
 func TestMergeOAuth2Options(t *testing.T) {
 	dst := &relay.OAuth2Options{
 		Issuer:             "old",
@@ -312,18 +414,18 @@ func TestMergeOAuth2Options(t *testing.T) {
 		RequiredAudience:   []string{"old"},
 	}
 	src := &relay.OAuth2Options{
-		AcceptJwt:                true,
-		AcceptIntrospection:      true,
-		Issuer:                   "new",
-		JwksUri:                  "jwks",
-		RequiredAudience:         []string{"new"},
-		RequiredScopes:           []string{"scope"},
-		IntrospectionUrl:         "https://introspect",
-		IntrospectionAuthType:    "basic",
-		IntrospectionClientId:    "client",
+		AcceptJwt:                 true,
+		AcceptIntrospection:       true,
+		Issuer:                    "new",
+		JwksUri:                   "jwks",
+		RequiredAudience:          []string{"new"},
+		RequiredScopes:            []string{"scope"},
+		IntrospectionUrl:          "https://introspect",
+		IntrospectionAuthType:     "basic",
+		IntrospectionClientId:     "client",
 		IntrospectionClientSecret: "secret",
-		ForwardMetadataKey:       "auth",
-		JwksCacheSeconds:         30,
+		ForwardMetadataKey:        "auth",
+		JwksCacheSeconds:          30,
 	}
 
 	out := MergeOAuth2Options(dst, src)
@@ -501,10 +603,10 @@ func TestEnsureDefaultAuthValidator(t *testing.T) {
 
 func TestIntrospectionValidatorCache(t *testing.T) {
 	opts := &relay.OAuth2Options{
-		AcceptIntrospection:   true,
-		IntrospectionUrl:      "https://auth.local/introspect",
-		IntrospectionAuthType: "basic",
-		RequiredScopes:        []string{"scope-a"},
+		AcceptIntrospection:       true,
+		IntrospectionUrl:          "https://auth.local/introspect",
+		IntrospectionAuthType:     "basic",
+		RequiredScopes:            []string{"scope-a"},
 		IntrospectionCacheSeconds: 30,
 	}
 	v := newCachingIntrospectionValidator(opts)
@@ -534,10 +636,10 @@ func TestIntrospectionValidatorCache(t *testing.T) {
 
 func TestIntrospectionValidatorScopeError(t *testing.T) {
 	opts := &relay.OAuth2Options{
-		AcceptIntrospection:   true,
-		IntrospectionUrl:      "https://auth.local/introspect",
-		IntrospectionAuthType: "basic",
-		RequiredScopes:        []string{"scope-a"},
+		AcceptIntrospection:       true,
+		IntrospectionUrl:          "https://auth.local/introspect",
+		IntrospectionAuthType:     "basic",
+		RequiredScopes:            []string{"scope-a"},
 		IntrospectionCacheSeconds: 30,
 	}
 	v := newCachingIntrospectionValidator(opts)
@@ -554,9 +656,9 @@ func TestIntrospectionValidatorScopeError(t *testing.T) {
 
 func TestIntrospectionValidatorBackoff(t *testing.T) {
 	opts := &relay.OAuth2Options{
-		AcceptIntrospection:   true,
-		IntrospectionUrl:      "https://auth.local/introspect",
-		IntrospectionAuthType: "basic",
+		AcceptIntrospection:       true,
+		IntrospectionUrl:          "https://auth.local/introspect",
+		IntrospectionAuthType:     "basic",
 		IntrospectionCacheSeconds: 30,
 	}
 	v := newCachingIntrospectionValidator(opts)

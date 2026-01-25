@@ -7,13 +7,17 @@ The receivingrelay package implements the inbound side of the relay system. It a
 - Listen for gRPC relay streams.
 - Validate authentication and TLS settings.
 - Unwrap payloads with compression and encryption settings.
+- Optional passthrough mode for raw WrappedPayload forwarding.
 - Submit decoded items to downstream handlers.
 
 ## Key types and functions
 
 - ReceivingRelay[T]: main type.
-- Listen(ctx): start the gRPC listener.
-- Receive(ctx, handler): receive and submit payloads.
+- Listen(listenForever, retryInSeconds): start the gRPC listener.
+- ListenGRPCWeb(listenForever, retryInSeconds): start the gRPC-Web listener.
+- Start(ctx): start the relay with a gRPC listener.
+- StartGRPCWeb(ctx): start the relay with a gRPC-Web listener.
+- Receive(ctx, payload): receive and submit a payload.
 
 ## Configuration
 
@@ -24,7 +28,10 @@ Common options include:
 - Compression and encryption options
 - Sensor and logger
 
-Configuration must be finalized before Listen()/Receive().
+Configuration must be finalized before Start()/Listen() or StartGRPCWeb()/ListenGRPCWeb().
+
+Passthrough mode expects the relay type parameter to be `relay.WrappedPayload` (or pointer) so the
+raw payload and metadata can be forwarded without decoding.
 
 ## Error handling
 

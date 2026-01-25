@@ -60,6 +60,11 @@ func ForwardRelayWithSecurityOptions[T any](secOpts *relay.SecurityOptions, encr
 	return fr.WithSecurityOptions[T](secOpts, encryptionKey)
 }
 
+// ForwardRelayWithPassthrough forwards pre-wrapped payloads without modification.
+func ForwardRelayWithPassthrough[T any](enabled bool) types.Option[types.ForwardRelay[T]] {
+	return fr.WithPassthrough[T](enabled)
+}
+
 // ForwardRelayWithTLSConfig sets the TLS configuration for the ForwardRelay.
 func ForwardRelayWithTLSConfig[T any](config *types.TLSConfig) types.Option[types.ForwardRelay[T]] {
 	return fr.WithTLSConfig[T](config)

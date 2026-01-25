@@ -37,6 +37,11 @@ func WithSecurityOptions[T any](secOptions *relay.SecurityOptions, encryptionKey
 	return func(fr types.ForwardRelay[T]) { fr.SetSecurityOptions(secOptions, encryptionKey) }
 }
 
+// WithPassthrough enables forwarding pre-wrapped payloads without modification.
+func WithPassthrough[T any](enabled bool) types.Option[types.ForwardRelay[T]] {
+	return func(fr types.ForwardRelay[T]) { fr.SetPassthrough(enabled) }
+}
+
 // WithComponentMetadata sets name and ID metadata.
 func WithComponentMetadata[T any](name string, id string) types.Option[types.ForwardRelay[T]] {
 	return func(fr types.ForwardRelay[T]) { fr.SetComponentMetadata(name, id) }

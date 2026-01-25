@@ -6,6 +6,7 @@ The forwardrelay package streams payloads to downstream services using gRPC. It 
 
 - Connect to remote relay targets.
 - Wrap payloads with compression and encryption as configured.
+- Optional passthrough to forward pre-wrapped payloads without modification.
 - Stream payloads over gRPC.
 - Emit telemetry for connections and submissions.
 
@@ -23,9 +24,13 @@ Common options include:
 - TLS configuration and client certificates
 - OAuth2 or token-based authentication
 - Compression and encryption options
+- Passthrough mode for relay.WrappedPayload
 - Sensor and logger
 
 Configuration must be finalized before Start().
+
+Passthrough mode expects the relay type parameter to be `relay.WrappedPayload` (or pointer) so
+payload bytes and metadata are forwarded without modification.
 
 ## Error handling
 

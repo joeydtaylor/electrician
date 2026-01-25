@@ -20,7 +20,9 @@ Electrician keeps implementation details private so the public API can remain st
 | Package | Purpose |
 | --- | --- |
 | adapter/ | Integration adapters (Kafka, S3, HTTP, auth) |
+| adapter/websocketclient/ | WebSocket client adapter |
 | jack/httpserver/ | Inbound HTTP/HTTPS server |
+| jack/websocket/ | Inbound WebSocket server |
 | circuitbreaker/ | Failure detection and trip/reset behavior |
 | codec/ | Encoding and compression helpers |
 | conduit/ | Multi-stage composition |

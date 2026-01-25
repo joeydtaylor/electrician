@@ -39,6 +39,10 @@ type ReceivingRelay[T any] interface {
 	// If listenForever is true, it will retry every retryInSeconds on failure.
 	Listen(listenForever bool, retryInSeconds int) error
 
+	// ListenGRPCWeb starts the gRPC-Web server on the configured address.
+	// If listenForever is true, it will retry every retryInSeconds on failure.
+	ListenGRPCWeb(listenForever bool, retryInSeconds int) error
+
 	// NotifyLoggers sends a formatted log message to all attached loggers.
 	NotifyLoggers(level LogLevel, format string, args ...interface{})
 
@@ -57,8 +61,17 @@ type ReceivingRelay[T any] interface {
 	// SetTLSConfig configures TLS for incoming connections.
 	SetTLSConfig(*TLSConfig)
 
+	// SetGRPCWebConfig configures gRPC-Web CORS and transport behavior.
+	SetGRPCWebConfig(*GRPCWebConfig)
+
+	// SetPassthrough enables forwarding raw WrappedPayload values without unwrap/decrypt.
+	SetPassthrough(enabled bool)
+
 	// Start begins receiving operations.
 	Start(context.Context) error
+
+	// StartGRPCWeb begins receiving operations with a gRPC-Web listener.
+	StartGRPCWeb(context.Context) error
 
 	// StreamReceive handles a server stream of payloads.
 	StreamReceive(stream relay.RelayService_StreamReceiveServer) error

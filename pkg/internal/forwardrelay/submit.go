@@ -11,13 +11,24 @@ import (
 
 // Submit wraps and forwards an item to each configured target.
 func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
-	wp, err := WrapPayload(item, fr.PerformanceOptions, fr.SecurityOptions, fr.EncryptionKey)
-	if err != nil {
-		return fmt.Errorf("failed to wrap payload: %w", err)
-	}
+	var (
+		wp  *relay.WrappedPayload
+		err error
+	)
+	if fr.passthrough {
+		wp, err = fr.asPassthroughPayload(item)
+		if err != nil {
+			return fmt.Errorf("failed to passthrough payload: %w", err)
+		}
+	} else {
+		wp, err = WrapPayload(item, fr.PerformanceOptions, fr.SecurityOptions, fr.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to wrap payload: %w", err)
+		}
 
-	wp.Seq = atomic.AddUint64(&fr.seq, 1)
-	wp.Metadata = nil
+		wp.Seq = atomic.AddUint64(&fr.seq, 1)
+		wp.Metadata = nil
+	}
 
 	env := &relay.RelayEnvelope{
 		Msg: &relay.RelayEnvelope_Payload{Payload: wp},

@@ -34,9 +34,18 @@ func (rr *ReceivingRelay[T]) Receive(ctx context.Context, payload *relay.Wrapped
 
 	go func(p *relay.WrappedPayload, tid string) {
 		var data T
-		if err := UnwrapPayload(p, rr.DecryptionKey, &data); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "Receive: unwrap failed trace_id=%s err=%v", tid, err)
-			return
+		if rr.passthrough {
+			var err error
+			data, err = rr.asPassthroughItem(p)
+			if err != nil {
+				rr.NotifyLoggers(types.ErrorLevel, "Receive: passthrough failed trace_id=%s err=%v", tid, err)
+				return
+			}
+		} else {
+			if err := UnwrapPayload(p, rr.DecryptionKey, &data); err != nil {
+				rr.NotifyLoggers(types.ErrorLevel, "Receive: unwrap failed trace_id=%s err=%v", tid, err)
+				return
+			}
 		}
 
 		rr.NotifyLoggers(types.InfoLevel, "Receive: forwarding trace_id=%s", tid)

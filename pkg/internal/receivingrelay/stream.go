@@ -146,7 +146,36 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 		}
 
 		var data T
-		if err := UnwrapPayload(wp, rr.DecryptionKey, &data); err != nil {
+		if rr.passthrough {
+			var err error
+			data, err = rr.asPassthroughItem(wp)
+			if err != nil {
+				rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: passthrough failed trace_id=%s id=%s seq=%d err=%v", traceID, wp.GetId(), seq, err)
+
+				switch ackMode {
+				case relay.AckMode_ACK_PER_MESSAGE:
+					if err := sendAck(&relay.StreamAcknowledgment{
+						Success:   false,
+						Message:   "passthrough failed: " + err.Error(),
+						StreamId:  streamID,
+						Id:        wp.GetId(),
+						Seq:       seq,
+						Code:      1,
+						Retryable: false,
+					}); err != nil {
+						return fmt.Errorf("failed to send error ack: %w", err)
+					}
+				case relay.AckMode_ACK_BATCH:
+					batchErr++
+					batchSeen++
+					if ackEveryN > 0 && batchSeen%ackEveryN == 0 {
+						flushBatch("Batch ack")
+					}
+				case relay.AckMode_ACK_NONE:
+				}
+				continue
+			}
+		} else if err := UnwrapPayload(wp, rr.DecryptionKey, &data); err != nil {
 			rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: unwrap failed trace_id=%s id=%s seq=%d err=%v", traceID, wp.GetId(), seq, err)
 
 			switch ackMode {

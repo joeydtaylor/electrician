@@ -39,3 +39,17 @@ func (rr *ReceivingRelay[T]) SetTLSConfig(config *types.TLSConfig) {
 	rr.TlsConfig = config
 	rr.NotifyLoggers(types.DebugLevel, "SetTLSConfig: %v", rr.TlsConfig)
 }
+
+// SetPassthrough enables forwarding raw WrappedPayload values without unwrap/decrypt.
+func (rr *ReceivingRelay[T]) SetPassthrough(enabled bool) {
+	rr.requireNotFrozen("SetPassthrough")
+	rr.passthrough = enabled
+	rr.NotifyLoggers(types.InfoLevel, "SetPassthrough: %t", enabled)
+}
+
+// SetGRPCWebConfig configures gRPC-Web CORS and transport behavior.
+func (rr *ReceivingRelay[T]) SetGRPCWebConfig(config *types.GRPCWebConfig) {
+	rr.requireNotFrozen("SetGRPCWebConfig")
+	rr.grpcWebConfig = cloneGRPCWebConfig(config)
+	rr.NotifyLoggers(types.DebugLevel, "SetGRPCWebConfig: %v", rr.grpcWebConfig)
+}

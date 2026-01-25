@@ -23,6 +23,16 @@ func WithTLSConfig[T any](config *types.TLSConfig) types.Option[types.ReceivingR
 	return func(rr types.ReceivingRelay[T]) { rr.SetTLSConfig(config) }
 }
 
+// WithPassthrough enables forwarding raw WrappedPayload values without unwrap/decrypt.
+func WithPassthrough[T any](enabled bool) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetPassthrough(enabled) }
+}
+
+// WithGRPCWebConfig configures gRPC-Web CORS and transport behavior.
+func WithGRPCWebConfig[T any](config *types.GRPCWebConfig) types.Option[types.ReceivingRelay[T]] {
+	return func(rr types.ReceivingRelay[T]) { rr.SetGRPCWebConfig(config) }
+}
+
 // WithBufferSize adjusts the internal data channel buffer size.
 func WithBufferSize[T any](bufferSize uint32) types.Option[types.ReceivingRelay[T]] {
 	return func(rr types.ReceivingRelay[T]) { rr.SetDataChannel(bufferSize) }

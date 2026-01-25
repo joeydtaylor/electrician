@@ -2,6 +2,7 @@ package receivingrelay
 
 import (
 	"context"
+	"net/http"
 	"sync"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
@@ -41,6 +42,12 @@ type ReceivingRelay[T any] struct {
 
 	dynamicAuthValidator func(ctx context.Context, md map[string]string) error
 	authRequired         bool
+
+	passthrough bool
+
+	grpcWebConfig   *types.GRPCWebConfig
+	grpcWebServer   *http.Server
+	grpcWebServerMu sync.Mutex
 
 	outputsOnce sync.Once
 }

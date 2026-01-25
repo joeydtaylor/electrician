@@ -65,6 +65,40 @@ func tlsFixture(t *testing.T) *types.TLSConfig {
 	}
 }
 
+func TestPassthroughPayloadValue(t *testing.T) {
+	fr := &ForwardRelay[relay.WrappedPayload]{}
+	wp := relay.WrappedPayload{Id: "id-1"}
+
+	got, err := fr.asPassthroughPayload(wp)
+	if err != nil {
+		t.Fatalf("asPassthroughPayload error: %v", err)
+	}
+	if got.GetId() != "id-1" {
+		t.Fatalf("unexpected payload id: %s", got.GetId())
+	}
+}
+
+func TestPassthroughPayloadPointer(t *testing.T) {
+	fr := &ForwardRelay[*relay.WrappedPayload]{}
+	wp := &relay.WrappedPayload{Id: "id-2"}
+
+	got, err := fr.asPassthroughPayload(wp)
+	if err != nil {
+		t.Fatalf("asPassthroughPayload error: %v", err)
+	}
+	if got != wp {
+		t.Fatalf("expected same pointer")
+	}
+}
+
+func TestPassthroughPayloadInvalidType(t *testing.T) {
+	fr := &ForwardRelay[string]{}
+	_, err := fr.asPassthroughPayload("nope")
+	if err == nil {
+		t.Fatalf("expected passthrough type error")
+	}
+}
+
 func TestBuildPerRPCContextHeaders(t *testing.T) {
 	fr := &ForwardRelay[string]{authRequired: true}
 	fr.SetStaticHeaders(map[string]string{
@@ -260,20 +294,20 @@ func TestNormalizeAESKey(t *testing.T) {
 
 func TestMergeOAuth2Options(t *testing.T) {
 	dst := &relay.OAuth2Options{
-		Issuer:              "old",
-		ForwardBearerToken:  true,
-		ForwardMetadataKey:  "old",
-		RequiredAudience:    []string{"old"},
+		Issuer:                "old",
+		ForwardBearerToken:    true,
+		ForwardMetadataKey:    "old",
+		RequiredAudience:      []string{"old"},
 		IntrospectionAuthType: "basic",
 	}
 	src := &relay.OAuth2Options{
-		AcceptJwt:          true,
-		AcceptIntrospection: true,
-		Issuer:             "new",
-		JwksUri:            "jwks",
-		RequiredAudience:   []string{"new"},
-		RequiredScopes:     []string{"scope"},
-		IntrospectionUrl:   "https://introspect",
+		AcceptJwt:                 true,
+		AcceptIntrospection:       true,
+		Issuer:                    "new",
+		JwksUri:                   "jwks",
+		RequiredAudience:          []string{"new"},
+		RequiredScopes:            []string{"scope"},
+		IntrospectionUrl:          "https://introspect",
 		IntrospectionClientId:     "client",
 		IntrospectionClientSecret: "secret",
 		ForwardMetadataKey:        "auth",

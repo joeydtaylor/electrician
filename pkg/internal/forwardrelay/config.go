@@ -45,3 +45,10 @@ func (fr *ForwardRelay[T]) SetTLSConfig(config *types.TLSConfig) {
 	fr.TlsConfig = config
 	fr.NotifyLoggers(types.DebugLevel, "SetTLSConfig: %v", fr.TlsConfig)
 }
+
+// SetPassthrough enables forwarding pre-wrapped payloads without modification.
+func (fr *ForwardRelay[T]) SetPassthrough(enabled bool) {
+	fr.requireNotFrozen("SetPassthrough")
+	fr.passthrough = enabled
+	fr.NotifyLoggers(types.InfoLevel, "SetPassthrough: %t", enabled)
+}

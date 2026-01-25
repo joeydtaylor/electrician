@@ -41,6 +41,8 @@ type ForwardRelay[T any] struct {
 	streams       map[string]*streamSession
 	seq           uint64
 	streamSendBuf int
+
+	passthrough bool
 }
 
 // NewForwardRelay constructs a forward relay with optional configuration.

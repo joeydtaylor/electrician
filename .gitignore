@@ -3,3 +3,5 @@ logs/
 example/benchmark_example/compare/compare
 example/benchmark_example/processing/bench
 .gocache/
+.gomodcache/
+.vscode/

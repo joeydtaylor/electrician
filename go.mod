@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.37.0
 	github.com/golang/snappy v0.0.4
+	github.com/improbable-eng/grpc-web v0.15.0
 	github.com/klauspost/compress v1.17.9
 	github.com/mjibson/go-dsp v0.0.0-20180508042940-11479a337f12
 	github.com/parquet-go/parquet-go v0.25.1
@@ -21,7 +22,12 @@ require (
 	gonum.org/v1/gonum v0.15.0
 	google.golang.org/grpc v1.71.0
 	google.golang.org/protobuf v1.36.4
+	nhooyr.io/websocket v1.8.6
 )
+
+replace nhooyr.io/websocket => github.com/coder/websocket v1.8.6
+
+replace github.com/lyft/protoc-gen-validate => github.com/envoyproxy/protoc-gen-validate v0.0.13
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.0 // indirect
@@ -37,10 +43,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.28.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.33.0 // indirect
 	github.com/aws/smithy-go v1.22.5 // indirect
+	github.com/cenkalti/backoff/v4 v4.1.1 // indirect
+	github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f // indirect
 	github.com/frankban/quicktest v1.14.6 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
+	github.com/rs/cors v1.7.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.8.0 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
