@@ -104,7 +104,9 @@ func (z *ZapLoggerAdapter) Flush() error {
 	}
 
 	if err := logger.Sync(); err != nil {
-		if strings.Contains(err.Error(), "inappropriate ioctl for device") || strings.Contains(err.Error(), "bad file descriptor") {
+		if strings.Contains(err.Error(), "inappropriate ioctl for device") ||
+			strings.Contains(err.Error(), "bad file descriptor") ||
+			strings.Contains(err.Error(), "invalid argument") {
 			return nil
 		}
 		return err
