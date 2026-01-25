@@ -237,3 +237,147 @@ func TestMetricNamesAreCopied(t *testing.T) {
 		t.Fatal("expected GetMetricNames to return a copy")
 	}
 }
+
+func TestCheckMetricsTotalsAndThresholds(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+
+	m.SetMetricTotal("total_metric", 2)
+	m.SetMetricCount("total_metric", 2)
+	if !m.CheckMetrics() {
+		t.Fatal("expected total metric to satisfy completion")
+	}
+
+	m2 := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	m2.SetMetricTotal("threshold_metric", 100)
+	m2.SetMetricCount("threshold_metric", 50)
+	m2.SetDynamicMetricThreshold("threshold_metric", 50)
+	if !m2.CheckMetrics() {
+		t.Fatal("expected threshold metric to satisfy threshold")
+	}
+
+	m3 := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	m3.SetMetricTotal("threshold_metric", 100)
+	m3.SetMetricCount("threshold_metric", 10)
+	m3.SetDynamicMetricThreshold("threshold_metric", 50)
+	if m3.CheckMetrics() {
+		t.Fatal("expected threshold metric to remain below threshold")
+	}
+}
+
+func TestMetricTotalsReset(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	m.SetMetricTotal("custom", 10)
+	m.ResetMetrics()
+	if got := m.GetMetricTotal("custom"); got != 0 {
+		t.Fatalf("expected total reset to 0, got %d", got)
+	}
+}
+
+func TestMetricTimestampAndPercentages(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	m.SetMetricTimestamp("custom", 123)
+	info, ok := m.GetDynamicMetricInfo("custom")
+	if !ok || info == nil {
+		t.Fatal("expected metric info")
+	}
+	if info.Timestamp != 123 {
+		t.Fatalf("expected timestamp 123, got %d", info.Timestamp)
+	}
+
+	m.SetMetricPercentage("custom", 12.5)
+	if got := m.GetMetricPercentage("custom"); got != 12.5 {
+		t.Fatalf("expected percentage 12.5, got %.2f", got)
+	}
+}
+
+func TestTimersAndTotals(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+
+	if m.StopTimer("unknown") != 0 {
+		t.Fatal("expected zero duration for unknown timer")
+	}
+
+	start := time.Now().Add(-50 * time.Millisecond)
+	m.SetTimerStartTime("custom", start)
+	if got, ok := m.GetTimerStartTime("custom"); !ok || !got.Equal(start) {
+		t.Fatalf("expected start time to be set, got %v (ok=%t)", got, ok)
+	}
+
+	m.StartTimer("custom2")
+	if !m.IsTimerRunning("custom2") {
+		t.Fatal("expected timer to be running")
+	}
+	time.Sleep(5 * time.Millisecond)
+	if got := m.StopTimer("custom2"); got <= 0 {
+		t.Fatalf("expected positive duration, got %s", got)
+	}
+	if m.IsTimerRunning("custom2") {
+		t.Fatal("expected timer to stop")
+	}
+
+	m.AddTotalItems(3)
+	if got := m.totalItemsValue(); got != 3 {
+		t.Fatalf("expected total items 3, got %d", got)
+	}
+}
+
+func TestMetricDisplayNameFallback(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	if got := m.GetMetricDisplayName("unknown"); got != "unknown" {
+		t.Fatalf("expected fallback display name, got %q", got)
+	}
+}
+
+func TestAddMetricMonitorNoop(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	if info, ok := m.AddMetricMonitor(); ok || info != nil {
+		t.Fatal("expected no metric to be registered for empty input")
+	}
+	if info, ok := m.AddMetricMonitor(&types.MetricInfo{}); ok || info != nil {
+		t.Fatal("expected no metric to be registered for empty name")
+	}
+}
+
+func TestPauseResumeAndTicker(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+
+	m.PauseProcessing()
+	m.PauseProcessing()
+	if got := len(m.pauseCh); got != 1 {
+		t.Fatalf("expected pause channel length 1, got %d", got)
+	}
+
+	m.ResumeProcessing()
+	m.ResumeProcessing()
+	if got := len(m.pauseCh); got != 1 {
+		t.Fatalf("expected pause channel length 1 after resume, got %d", got)
+	}
+
+	old := m.GetTicker()
+	newTicker := time.NewTicker(5 * time.Millisecond)
+	m.SetTicker(newTicker)
+	if m.GetTicker() != newTicker {
+		t.Fatal("expected ticker to be updated")
+	}
+	if old != nil {
+		old.Stop()
+	}
+	newTicker.Stop()
+}
+
+func TestIdleTimeoutUpdate(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	m.SetIdleTimeout(123 * time.Millisecond)
+	if got := m.idleTimeoutValue(); got != 123*time.Millisecond {
+		t.Fatalf("expected idle timeout to update, got %s", got)
+	}
+}
+
+func TestDecrementCountDoesNotUnderflow(t *testing.T) {
+	m := NewMeter[struct{}](context.Background()).(*Meter[struct{}])
+	m.SetMetricCount("count", 0)
+	m.DecrementCount("count")
+	if got := m.GetMetricCount("count"); got != 0 {
+		t.Fatalf("expected count to remain 0, got %d", got)
+	}
+}
