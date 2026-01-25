@@ -71,7 +71,7 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 		mech,
 		10*time.Second,
 		true,
-		builder.KafkaGoReaderWithLatestStart(),
+		builder.KafkaGoReaderWithEarliestStart(),
 	)
 	defer func() { _ = reader.Close() }()
 
@@ -82,7 +82,7 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 		builder.KafkaClientAdapterWithWriterTopic[kafkaIntegrationMsg](topic),
 		builder.KafkaClientAdapterWithReaderTopics[kafkaIntegrationMsg](topic),
 		builder.KafkaClientAdapterWithReaderGroup[kafkaIntegrationMsg](groupID),
-		builder.KafkaClientAdapterWithReaderStartAt[kafkaIntegrationMsg]("latest", time.Time{}),
+		builder.KafkaClientAdapterWithReaderStartAt[kafkaIntegrationMsg]("earliest", time.Time{}),
 		builder.KafkaClientAdapterWithReaderPollSettings[kafkaIntegrationMsg](250*time.Millisecond, 1000, 1<<20),
 	)
 
