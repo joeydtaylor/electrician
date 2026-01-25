@@ -63,18 +63,28 @@ func (h *httpServerAdapter[T]) snapshotConfig() serverConfig {
 	h.configLock.Lock()
 	defer h.configLock.Unlock()
 
+	h.ensureDefaultAuthValidatorLocked()
+
 	headers := make(map[string]string, len(h.headers))
 	for k, v := range h.headers {
 		headers[k] = v
 	}
 
+	staticHeaders := make(map[string]string, len(h.staticHeaders))
+	for k, v := range h.staticHeaders {
+		staticHeaders[k] = v
+	}
+
 	return serverConfig{
-		address:      h.address,
-		method:       h.method,
-		endpoint:     h.endpoint,
-		headers:      headers,
-		timeout:      h.timeout,
-		tlsConfig:    h.tlsConfig,
-		tlsConfigErr: h.tlsConfigErr,
+		address:       h.address,
+		method:        h.method,
+		endpoint:      h.endpoint,
+		headers:       headers,
+		timeout:       h.timeout,
+		tlsConfig:     h.tlsConfig,
+		tlsConfigErr:  h.tlsConfigErr,
+		authRequired:  h.authRequired,
+		staticHeaders: staticHeaders,
+		authValidator: h.dynamicAuthValidator,
 	}
 }

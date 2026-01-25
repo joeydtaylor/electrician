@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 )
 
 // HTTPServerRequest wraps the incoming data for a server-side handler.
@@ -93,4 +95,16 @@ type HTTPServer[T any] interface {
 	// according to the provided TLSConfig. If UseTLS == false, the server
 	// should revert to plain HTTP (no TLS).
 	SetTLSConfig(tlsCfg TLSConfig)
+
+	// SetAuthenticationOptions configures OAuth2 authentication options.
+	SetAuthenticationOptions(opts *relay.AuthenticationOptions)
+
+	// SetStaticHeaders enforces constant header key/value pairs on incoming requests.
+	SetStaticHeaders(headers map[string]string)
+
+	// SetDynamicAuthValidator registers a per-request validation callback.
+	SetDynamicAuthValidator(fn func(ctx context.Context, headers map[string]string) error)
+
+	// SetAuthRequired toggles strict auth enforcement.
+	SetAuthRequired(required bool)
 }

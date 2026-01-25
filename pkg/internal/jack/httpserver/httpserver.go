@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
@@ -30,6 +31,11 @@ type httpServerAdapter[T any] struct {
 	loggersLock sync.Mutex
 	sensorsLock sync.Mutex
 
+	authOptions          *relay.AuthenticationOptions
+	staticHeaders        map[string]string
+	dynamicAuthValidator func(ctx context.Context, headers map[string]string) error
+	authRequired         bool
+
 	configLock   sync.Mutex
 	configFrozen int32
 
@@ -45,8 +51,10 @@ func NewHTTPServer[T any](ctx context.Context, options ...types.Option[types.HTT
 			ID:   utils.GenerateUniqueHash(),
 			Type: "HTTP_SERVER",
 		},
-		timeout: 30 * time.Second,
-		headers: make(map[string]string),
+		timeout:       30 * time.Second,
+		headers:       make(map[string]string),
+		staticHeaders: make(map[string]string),
+		authRequired:  true,
 	}
 
 	for _, opt := range options {

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +17,8 @@ type sampleRequest struct {
 
 func newTestServer[T any]() *httpServerAdapter[T] {
 	return &httpServerAdapter[T]{
-		headers: make(map[string]string),
+		headers:       make(map[string]string),
+		staticHeaders: make(map[string]string),
 	}
 }
 
@@ -106,5 +108,80 @@ func TestHandlerHTTPServerError(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "nope") {
 		t.Fatalf("expected response body to include message")
+	}
+}
+
+func TestHandlerUnauthorizedWithStaticHeaders(t *testing.T) {
+	adapter := newTestServer[sampleRequest]()
+	cfg := serverConfig{
+		method:        http.MethodPost,
+		endpoint:      "/hook",
+		headers:       map[string]string{},
+		authRequired:  true,
+		staticHeaders: map[string]string{"X-Auth": "token"},
+	}
+
+	h := adapter.buildHandler(cfg, func(ctx context.Context, req sampleRequest) (types.HTTPServerResponse, error) {
+		return types.HTTPServerResponse{}, nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/hook", strings.NewReader(`{"name":"alpha"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestHandlerAuthSoftFail(t *testing.T) {
+	adapter := newTestServer[sampleRequest]()
+	cfg := serverConfig{
+		method:        http.MethodPost,
+		endpoint:      "/hook",
+		headers:       map[string]string{},
+		authRequired:  false,
+		staticHeaders: map[string]string{"X-Auth": "token"},
+	}
+
+	h := adapter.buildHandler(cfg, func(ctx context.Context, req sampleRequest) (types.HTTPServerResponse, error) {
+		return types.HTTPServerResponse{StatusCode: http.StatusOK}, nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/hook", strings.NewReader(`{"name":"alpha"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestHandlerDynamicAuthValidator(t *testing.T) {
+	adapter := newTestServer[sampleRequest]()
+	cfg := serverConfig{
+		method:       http.MethodPost,
+		endpoint:     "/hook",
+		headers:      map[string]string{},
+		authRequired: true,
+		authValidator: func(ctx context.Context, headers map[string]string) error {
+			if headers["authorization"] != "Bearer good" {
+				return errors.New("bad token")
+			}
+			return nil
+		},
+	}
+
+	h := adapter.buildHandler(cfg, func(ctx context.Context, req sampleRequest) (types.HTTPServerResponse, error) {
+		return types.HTTPServerResponse{StatusCode: http.StatusOK}, nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/hook", strings.NewReader(`{"name":"alpha"}`))
+	req.Header.Set("Authorization", "Bearer good")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }

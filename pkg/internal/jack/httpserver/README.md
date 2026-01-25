@@ -24,6 +24,7 @@ Common options include:
 - TLS configuration
 - Read/write timeouts
 - Default headers
+- OAuth2 introspection or custom auth validators
 - Logger and sensor
 
 Configuration must be finalized before Serve(). Mutation after start panics to avoid races.
@@ -31,6 +32,10 @@ Configuration must be finalized before Serve(). Mutation after start panics to a
 ## Error handling
 
 Handler errors can be mapped to HTTP error responses. The server propagates fatal errors via Serve() and respects context cancellation.
+
+## Authentication
+
+OAuth2 introspection is supported through authentication options. You can also enforce static headers or install a custom validation callback. Auth failures return 401 responses when strict enforcement is enabled.
 
 ## Observability
 

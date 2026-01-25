@@ -14,13 +14,16 @@ import (
 )
 
 type serverConfig struct {
-	address      string
-	method       string
-	endpoint     string
-	headers      map[string]string
-	timeout      time.Duration
-	tlsConfig    *tls.Config
-	tlsConfigErr error
+	address       string
+	method        string
+	endpoint      string
+	headers       map[string]string
+	timeout       time.Duration
+	tlsConfig     *tls.Config
+	tlsConfigErr  error
+	authRequired  bool
+	staticHeaders map[string]string
+	authValidator func(ctx context.Context, headers map[string]string) error
 }
 
 // Serve starts listening for incoming HTTP requests on the configured address/endpoint.
@@ -101,6 +104,12 @@ func (h *httpServerAdapter[T]) buildHandler(cfg serverConfig, submitFunc func(ct
 	mux.HandleFunc(cfg.endpoint, func(w http.ResponseWriter, r *http.Request) {
 		if cfg.method != "" && r.Method != cfg.method {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := h.authorizeRequest(r.Context(), r, cfg); err != nil {
+			h.NotifyLoggers(types.WarnLevel, "Auth: request rejected: %v", err)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 

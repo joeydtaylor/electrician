@@ -1,8 +1,10 @@
 package httpserver
 
 import (
+	"context"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
 
@@ -52,5 +54,33 @@ func WithTimeout[T any](timeout time.Duration) types.Option[types.HTTPServer[T]]
 func WithTLS[T any](tlsCfg types.TLSConfig) types.Option[types.HTTPServer[T]] {
 	return func(srv types.HTTPServer[T]) {
 		srv.SetTLSConfig(tlsCfg)
+	}
+}
+
+// WithAuthenticationOptions configures OAuth2 authentication options.
+func WithAuthenticationOptions[T any](opts *relay.AuthenticationOptions) types.Option[types.HTTPServer[T]] {
+	return func(srv types.HTTPServer[T]) {
+		srv.SetAuthenticationOptions(opts)
+	}
+}
+
+// WithStaticHeaders enforces constant header key/value pairs on incoming requests.
+func WithStaticHeaders[T any](headers map[string]string) types.Option[types.HTTPServer[T]] {
+	return func(srv types.HTTPServer[T]) {
+		srv.SetStaticHeaders(headers)
+	}
+}
+
+// WithDynamicAuthValidator registers a per-request validation callback.
+func WithDynamicAuthValidator[T any](fn func(ctx context.Context, headers map[string]string) error) types.Option[types.HTTPServer[T]] {
+	return func(srv types.HTTPServer[T]) {
+		srv.SetDynamicAuthValidator(fn)
+	}
+}
+
+// WithAuthRequired toggles strict auth enforcement.
+func WithAuthRequired[T any](required bool) types.Option[types.HTTPServer[T]] {
+	return func(srv types.HTTPServer[T]) {
+		srv.SetAuthRequired(required)
 	}
 }
