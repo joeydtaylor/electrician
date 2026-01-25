@@ -110,6 +110,29 @@ Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These liv
 - Examples: example/
 - Per-package READMEs under pkg/internal/* and pkg/builder
 
+## Integration tests (LocalStack + Redpanda)
+
+Some adapter behaviors (S3/Kafka) are verified via integration tests gated by the `integration` build tag. The repo includes a LocalStack + Redpanda compose stack under `local-stack/`.
+
+```bash
+docker network create steeze-edge || true
+docker compose -f local-stack/docker-compose.yml up -d
+go test ./pkg/... -tags=integration -count=1
+```
+
+Common overrides:
+
+- `LOCALSTACK_ENDPOINT` (default `http://localhost:4566`)
+- `S3_BUCKET` (default `steeze-dev`)
+- `S3_ROLE_ARN` (default `arn:aws:iam::000000000000:role/exodus-dev-role`)
+- `ORG_ID` (default `4d948fa0-084e-490b-aad5-cfd01eeab79a`)
+- `KAFKA_BROKERS` (default `127.0.0.1:19092`)
+- `KAFKA_TLS_CA`, `KAFKA_TLS_CERT`, `KAFKA_TLS_KEY` (default paths under `local-stack/tls/`)
+- `KAFKA_TLS_SERVER_NAME` (default `localhost`)
+- `KAFKA_SASL_USER`, `KAFKA_SASL_PASS`, `KAFKA_SASL_MECH` (defaults `app`/`app-secret`/`SCRAM-SHA-256`)
+
+To skip these tests: `SKIP_LOCALSTACK=1` or `SKIP_KAFKA=1`.
+
 ## License
 
 Apache 2.0. See LICENSE.

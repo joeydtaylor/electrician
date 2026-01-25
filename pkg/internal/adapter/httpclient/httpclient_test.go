@@ -3,10 +3,12 @@ package httpclient
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -18,13 +20,15 @@ type testPayload struct {
 }
 
 func TestHTTPClientAdapter_FetchJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(testPayload{Message: "ok"})
-	}))
-	defer server.Close()
-
-	adapter := NewHTTPClientAdapter[testPayload](context.Background(), WithRequestConfig[testPayload]("GET", server.URL, nil)).(*HTTPClientAdapter[testPayload])
+	adapter := NewHTTPClientAdapter[testPayload](context.Background(), WithRequestConfig[testPayload]("GET", "https://example.test/api", nil)).(*HTTPClientAdapter[testPayload])
+	adapter.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Method != http.MethodGet {
+				return nil, fmt.Errorf("unexpected method %s", r.Method)
+			}
+			return jsonResponse(http.StatusOK, `{"message":"ok"}`), nil
+		}),
+	}
 
 	resp, err := adapter.Fetch()
 	if err != nil {
@@ -39,12 +43,12 @@ func TestHTTPClientAdapter_FetchJSON(t *testing.T) {
 }
 
 func TestHTTPClientAdapter_FetchNonSuccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	adapter := NewHTTPClientAdapter[testPayload](context.Background(), WithRequestConfig[testPayload]("GET", server.URL, nil)).(*HTTPClientAdapter[testPayload])
+	adapter := NewHTTPClientAdapter[testPayload](context.Background(), WithRequestConfig[testPayload]("GET", "https://example.test/fail", nil)).(*HTTPClientAdapter[testPayload])
+	adapter.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusInternalServerError, `{"error":"fail"}`), nil
+		}),
+	}
 
 	_, err := adapter.Fetch()
 	if err == nil {
@@ -64,15 +68,14 @@ func TestHTTPClientAdapter_AddHeaderAndBasicAuth(t *testing.T) {
 	var gotAuth string
 	var gotCustom string
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		gotCustom = r.Header.Get("X-Test")
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(testPayload{Message: "ok"})
-	}))
-	defer server.Close()
-
-	adapter := NewHTTPClientAdapter[testPayload](context.Background(), WithRequestConfig[testPayload]("GET", server.URL, nil)).(*HTTPClientAdapter[testPayload])
+	adapter := NewHTTPClientAdapter[testPayload](context.Background(), WithRequestConfig[testPayload]("GET", "https://example.test/headers", nil)).(*HTTPClientAdapter[testPayload])
+	adapter.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotAuth = r.Header.Get("Authorization")
+			gotCustom = r.Header.Get("X-Test")
+			return jsonResponse(http.StatusOK, `{"message":"ok"}`), nil
+		}),
+	}
 	adapter.AddHeader("X-Test", "value")
 	adapter.SetBasicAuth("user", "pass")
 
@@ -105,22 +108,23 @@ func TestHTTPClientAdapter_AddHeaderRejectsInvalidValue(t *testing.T) {
 func TestHTTPClientAdapter_OAuthTokenCaching(t *testing.T) {
 	var hits int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "token",
-			"expires_in":   3600,
-		})
-	}))
-	defer server.Close()
-
 	adapter := NewHTTPClientAdapter[testPayload](context.Background()).(*HTTPClientAdapter[testPayload])
+	adapter.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			atomic.AddInt32(&hits, 1)
+			body, _ := io.ReadAll(r.Body)
+			values, _ := url.ParseQuery(string(body))
+			if values.Get("grant_type") != "client_credentials" {
+				return nil, fmt.Errorf("unexpected grant_type %s", values.Get("grant_type"))
+			}
+			return jsonResponse(http.StatusOK, `{"access_token":"token","expires_in":3600}`), nil
+		}),
+	}
 
-	if err := adapter.EnsureValidToken("id", "secret", server.URL, "audience"); err != nil {
+	if err := adapter.EnsureValidToken("id", "secret", "https://auth.test/token", "audience"); err != nil {
 		t.Fatalf("EnsureValidToken() error: %v", err)
 	}
-	if err := adapter.EnsureValidToken("id", "secret", server.URL, "audience"); err != nil {
+	if err := adapter.EnsureValidToken("id", "secret", "https://auth.test/token", "audience"); err != nil {
 		t.Fatalf("EnsureValidToken() error: %v", err)
 	}
 
@@ -130,17 +134,30 @@ func TestHTTPClientAdapter_OAuthTokenCaching(t *testing.T) {
 }
 
 func TestHTTPClientAdapter_AttemptFetchAndSubmit(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	adapter := NewHTTPClientAdapter[int](context.Background(), WithRequestConfig[int]("GET", server.URL, nil)).(*HTTPClientAdapter[int])
+	adapter := NewHTTPClientAdapter[int](context.Background(), WithRequestConfig[int]("GET", "https://example.test/fail", nil)).(*HTTPClientAdapter[int])
+	adapter.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusInternalServerError, `{"error":"fail"}`), nil
+		}),
+	}
 
 	err := adapter.attemptFetchAndSubmit(context.Background(), func(context.Context, int) error {
 		return nil
 	}, 0)
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }

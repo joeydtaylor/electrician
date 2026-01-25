@@ -19,10 +19,74 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.21.6'
+        go-version: '1.24.3'
 
     - name: Build
       run: go build -v ./...
 
     - name: Test
       run: go test -v -race ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24.3'
+
+    - name: Create docker network
+      run: docker network create steeze-edge || true
+
+    - name: Start LocalStack + Redpanda
+      run: docker compose -f local-stack/docker-compose.yml up -d
+
+    - name: Wait for LocalStack
+      run: |
+        for i in {1..120}; do
+          if curl -fsS http://localhost:4566/health >/dev/null 2>&1 || curl -fsS http://localhost:4566/_localstack/health >/dev/null 2>&1; then
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "LocalStack not healthy" >&2
+        docker compose -f local-stack/docker-compose.yml ps
+        docker logs localstack || true
+        exit 1
+
+    - name: Wait for Redpanda
+      run: |
+        for i in {1..120}; do
+          if docker exec redpanda rpk cluster health --api-urls http://localhost:9644 >/dev/null 2>&1; then
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Redpanda not healthy" >&2
+        docker compose -f local-stack/docker-compose.yml ps
+        docker logs redpanda || true
+        exit 1
+
+    - name: Integration tests
+      env:
+        GOCACHE: /tmp/electrician-gocache
+        LOCALSTACK_ENDPOINT: http://localhost:4566
+        S3_BUCKET: steeze-dev
+        S3_ROLE_ARN: arn:aws:iam::000000000000:role/exodus-dev-role
+        ORG_ID: 4d948fa0-084e-490b-aad5-cfd01eeab79a
+        KAFKA_BROKERS: 127.0.0.1:19092
+        KAFKA_TLS_CA: local-stack/tls/ca.crt
+        KAFKA_TLS_CERT: local-stack/tls/client.crt
+        KAFKA_TLS_KEY: local-stack/tls/client.key
+        KAFKA_TLS_SERVER_NAME: localhost
+        KAFKA_SASL_USER: app
+        KAFKA_SASL_PASS: app-secret
+        KAFKA_SASL_MECH: SCRAM-SHA-256
+      run: go test -v ./pkg/... -tags=integration -count=1
+
+    - name: Teardown
+      if: always()
+      run: docker compose -f local-stack/docker-compose.yml down -v
