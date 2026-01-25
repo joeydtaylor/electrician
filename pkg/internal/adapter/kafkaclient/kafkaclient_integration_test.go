@@ -72,6 +72,8 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 		10*time.Second,
 		true,
 		builder.KafkaGoReaderWithEarliestStart(),
+		builder.KafkaGoReaderWithMinBytes(1),
+		builder.KafkaGoReaderWithMaxWait(250*time.Millisecond),
 	)
 	defer func() { _ = reader.Close() }()
 
@@ -111,6 +113,8 @@ func TestKafkaClientLocalstackRoundTrip(t *testing.T) {
 			return nil
 		})
 	}()
+
+	time.Sleep(250 * time.Millisecond)
 
 	in := make(chan kafkaIntegrationMsg, len(want))
 	writeErr := make(chan error, 1)
