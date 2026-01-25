@@ -5,44 +5,42 @@ import (
 	"crypto/tls"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/utils"
 )
 
-// httpServerAdapter implements types.HTTPServer[T].
+// httpServerAdapter implements types.HTTPServer.
 type httpServerAdapter[T any] struct {
 	componentMetadata types.ComponentMetadata
 
-	// Basic config
-	address  string // e.g., ":8080"
-	method   string // e.g., "POST"
-	endpoint string // e.g., "/webhook"
+	address  string
+	method   string
+	endpoint string
 	headers  map[string]string
+	timeout  time.Duration
 
-	timeout   time.Duration
-	tlsConfig *tls.Config // If set, we serve TLS using this config.
+	tlsConfig    *tls.Config
+	tlsConfigErr error
 
-	// Logging & Sensors
 	loggers     []types.Logger
 	sensors     []types.Sensor[T]
 	loggersLock sync.Mutex
 	sensorsLock sync.Mutex
 
-	// Underlying http.Server
+	configLock   sync.Mutex
+	configFrozen int32
+
 	server   *http.Server
 	serverMu sync.Mutex
 }
 
-// NewHTTPServer constructs a new HTTP server adapter with sensible defaults.
-func NewHTTPServer[T any](
-	ctx context.Context,
-	options ...types.Option[types.HTTPServer[T]],
-) types.HTTPServer[T] {
-
-	// Create an instance with default values
-	h := &httpServerAdapter[T]{
+// NewHTTPServer constructs a new HTTP server adapter with defaults.
+func NewHTTPServer[T any](ctx context.Context, options ...types.Option[types.HTTPServer[T]]) types.HTTPServer[T] {
+	_ = ctx
+	adapter := &httpServerAdapter[T]{
 		componentMetadata: types.ComponentMetadata{
 			ID:   utils.GenerateUniqueHash(),
 			Type: "HTTP_SERVER",
@@ -51,9 +49,13 @@ func NewHTTPServer[T any](
 		headers: make(map[string]string),
 	}
 
-	// Apply functional options
 	for _, opt := range options {
-		opt(h)
+		opt(adapter)
 	}
-	return h
+
+	return adapter
+}
+
+func (h *httpServerAdapter[T]) isFrozen() bool {
+	return atomic.LoadInt32(&h.configFrozen) == 1
 }
