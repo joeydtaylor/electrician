@@ -95,6 +95,9 @@ func TestResister_RequeueUpdatesAndNotifies(t *testing.T) {
 	if popped.QueuePriority != 7 {
 		t.Fatalf("expected priority to be updated, got %d", popped.QueuePriority)
 	}
+	if popped.Data != 20 {
+		t.Fatalf("expected data to be updated, got %d", popped.Data)
+	}
 
 	if atomic.LoadInt32(&queued) != 1 {
 		t.Fatalf("expected 1 queued notification, got %d", queued)
@@ -107,6 +110,79 @@ func TestResister_RequeueUpdatesAndNotifies(t *testing.T) {
 	}
 	if atomic.LoadInt32(&empty) != 1 {
 		t.Fatalf("expected 1 empty notification, got %d", empty)
+	}
+}
+
+func TestResister_RequeueSamePointer(t *testing.T) {
+	ctx := context.Background()
+	r := resister.NewResister[int](ctx)
+
+	var queued int32
+	var requeued int32
+
+	s := sensor.NewSensor[int](
+		sensor.WithResisterQueuedFunc[int](func(types.ComponentMetadata, int) {
+			atomic.AddInt32(&queued, 1)
+		}),
+		sensor.WithResisterRequeuedFunc[int](func(types.ComponentMetadata, int) {
+			atomic.AddInt32(&requeued, 1)
+		}),
+	)
+	r.ConnectSensor(s)
+
+	element := types.NewElementFast(1)
+	if err := r.Push(element); err != nil {
+		t.Fatalf("push element: %v", err)
+	}
+	if err := r.Push(element); err != nil {
+		t.Fatalf("push same element: %v", err)
+	}
+
+	if got := r.Len(); got != 1 {
+		t.Fatalf("expected queue length 1, got %d", got)
+	}
+	if atomic.LoadInt32(&queued) != 1 {
+		t.Fatalf("expected 1 queued notification, got %d", queued)
+	}
+	if atomic.LoadInt32(&requeued) != 1 {
+		t.Fatalf("expected 1 requeued notification, got %d", requeued)
+	}
+}
+
+func TestResister_PushAfterPopTreatsAsNew(t *testing.T) {
+	ctx := context.Background()
+	r := resister.NewResister[int](ctx)
+
+	var queued int32
+	var requeued int32
+
+	s := sensor.NewSensor[int](
+		sensor.WithResisterQueuedFunc[int](func(types.ComponentMetadata, int) {
+			atomic.AddInt32(&queued, 1)
+		}),
+		sensor.WithResisterRequeuedFunc[int](func(types.ComponentMetadata, int) {
+			atomic.AddInt32(&requeued, 1)
+		}),
+	)
+	r.ConnectSensor(s)
+
+	first := types.NewElementFast(5)
+	if err := r.Push(first); err != nil {
+		t.Fatalf("push first: %v", err)
+	}
+	_ = r.Pop()
+
+	second := types.NewElementFast(9)
+	second.ID = first.ID
+	if err := r.Push(second); err != nil {
+		t.Fatalf("push second: %v", err)
+	}
+
+	if atomic.LoadInt32(&queued) != 2 {
+		t.Fatalf("expected 2 queued notifications, got %d", queued)
+	}
+	if atomic.LoadInt32(&requeued) != 0 {
+		t.Fatalf("expected 0 requeued notifications, got %d", requeued)
 	}
 }
 
@@ -147,6 +223,27 @@ func TestResister_NotifyLoggers(t *testing.T) {
 	}
 }
 
+func TestResister_NotifyLoggers_LevelChecker(t *testing.T) {
+	ctx := context.Background()
+	r := resister.NewResister[int](ctx)
+
+	logger := &levelCheckLogger{
+		countingLogger: countingLogger{level: types.DebugLevel},
+		enabled:        map[types.LogLevel]bool{types.WarnLevel: true},
+	}
+	r.ConnectLogger(logger)
+
+	r.NotifyLoggers(types.InfoLevel, "info")
+	r.NotifyLoggers(types.WarnLevel, "warn")
+
+	if got := atomic.LoadInt32(&logger.info); got != 0 {
+		t.Fatalf("expected info logs to be skipped, got %d", got)
+	}
+	if got := atomic.LoadInt32(&logger.warn); got != 1 {
+		t.Fatalf("expected warn logs to be called once, got %d", got)
+	}
+}
+
 func TestResister_SetComponentMetadata(t *testing.T) {
 	ctx := context.Background()
 	r := resister.NewResister[int](ctx)
@@ -167,6 +264,26 @@ func TestResister_PushNilReturnsError(t *testing.T) {
 
 	if err := r.Push(nil); err == nil {
 		t.Fatalf("expected error when pushing nil element")
+	}
+}
+
+func TestResister_WithSensorOption(t *testing.T) {
+	ctx := context.Background()
+
+	var queued int32
+	s := sensor.NewSensor[int](
+		sensor.WithResisterQueuedFunc[int](func(types.ComponentMetadata, int) {
+			atomic.AddInt32(&queued, 1)
+		}),
+	)
+
+	r := resister.NewResister[int](ctx, resister.WithSensor[int](s))
+	if err := r.Push(types.NewElementFast(1)); err != nil {
+		t.Fatalf("push element: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&queued); got != 1 {
+		t.Fatalf("expected queued callback, got %d", got)
 	}
 }
 
@@ -200,6 +317,15 @@ func (c *countingLogger) AddSink(string, types.SinkConfig) error { return nil }
 func (c *countingLogger) RemoveSink(string) error { return nil }
 
 func (c *countingLogger) ListSinks() ([]string, error) { return nil, nil }
+
+type levelCheckLogger struct {
+	countingLogger
+	enabled map[types.LogLevel]bool
+}
+
+func (l *levelCheckLogger) IsLevelEnabled(level types.LogLevel) bool {
+	return l.enabled[level]
+}
 
 func TestResister_GetResisterQueueLen(t *testing.T) {
 	ctx := context.Background()

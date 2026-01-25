@@ -15,6 +15,7 @@ import (
 	"github.com/joeydtaylor/electrician/pkg/builder"
 	"github.com/joeydtaylor/electrician/pkg/internal/codec"
 	"github.com/joeydtaylor/electrician/pkg/internal/conduit"
+	"github.com/joeydtaylor/electrician/pkg/internal/types"
 	"github.com/joeydtaylor/electrician/pkg/internal/wire"
 )
 
@@ -340,3 +341,246 @@ func TestChainedConduit(t *testing.T) {
 		t.Errorf("Unexpected results: got %v, want %v", got, want)
 	}
 }
+
+func TestConduit_SubmitWithoutWires(t *testing.T) {
+	ctx := context.Background()
+	con := conduit.NewConduit[int](ctx)
+	if err := con.Submit(ctx, 1); err == nil {
+		t.Fatalf("expected error submitting with no wires")
+	}
+}
+
+func TestConduit_InputChannelForwarding(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	w := wire.NewWire[int](ctx,
+		wire.WithTransformer[int](func(v int) (int, error) { return v + 1, nil }),
+		wire.WithConcurrencyControl[int](8, 1),
+	)
+
+	con := conduit.NewConduit[int](ctx, conduit.WithWire[int](w))
+	if err := con.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer con.Stop()
+
+	select {
+	case con.GetInputChannel() <- 1:
+	case <-ctx.Done():
+		t.Fatalf("timeout submitting to input channel")
+	}
+
+	select {
+	case got := <-con.GetOutputChannel():
+		if got != 2 {
+			t.Fatalf("expected 2, got %d", got)
+		}
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for output")
+	}
+}
+
+func TestConduit_NextConduitForwarding(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	firstWire := wire.NewWire[int](ctx,
+		wire.WithTransformer[int](func(v int) (int, error) { return v + 1, nil }),
+		wire.WithConcurrencyControl[int](8, 1),
+	)
+	secondWire := wire.NewWire[int](ctx,
+		wire.WithTransformer[int](func(v int) (int, error) { return v * 2, nil }),
+		wire.WithConcurrencyControl[int](8, 1),
+	)
+
+	first := conduit.NewConduit[int](ctx, conduit.WithWire[int](firstWire))
+	second := conduit.NewConduit[int](ctx, conduit.WithWire[int](secondWire))
+	first.ConnectConduit(second)
+
+	if err := first.Start(ctx); err != nil {
+		t.Fatalf("first Start() error: %v", err)
+	}
+	if err := second.Start(ctx); err != nil {
+		t.Fatalf("second Start() error: %v", err)
+	}
+	defer first.Stop()
+	defer second.Stop()
+
+	if err := first.Submit(ctx, 2); err != nil {
+		t.Fatalf("Submit() error: %v", err)
+	}
+
+	select {
+	case got := <-second.GetOutputChannel():
+		if got != 6 {
+			t.Fatalf("expected 6, got %d", got)
+		}
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for chained output")
+	}
+}
+
+func TestConduit_CircuitBreakerNeutralWire(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	mainWire := wire.NewWire[int](ctx, wire.WithConcurrencyControl[int](8, 1))
+	neutralWire := wire.NewWire[int](ctx, wire.WithConcurrencyControl[int](1, 1))
+	cb := &stubCircuitBreaker[int]{
+		allow:   false,
+		neutral: []types.Wire[int]{neutralWire},
+		meta:    types.ComponentMetadata{Name: "cb", ID: "cb-1", Type: "CIRCUIT_BREAKER"},
+	}
+
+	con := conduit.NewConduit[int](ctx, conduit.WithWire[int](mainWire))
+	con.ConnectCircuitBreaker(cb)
+
+	if err := con.Submit(ctx, 9); err != nil {
+		t.Fatalf("Submit() error: %v", err)
+	}
+
+	select {
+	case got := <-neutralWire.GetInputChannel():
+		if got != 9 {
+			t.Fatalf("expected 9, got %d", got)
+		}
+	case <-ctx.Done():
+		t.Fatalf("timeout waiting for neutral wire submission")
+	}
+}
+
+func TestConduit_ConnectWireSetsOutput(t *testing.T) {
+	ctx := context.Background()
+	con := conduit.NewConduit[int](ctx)
+	w := wire.NewWire[int](ctx)
+	con.ConnectWire(w)
+
+	if con.GetOutputChannel() != w.GetOutputChannel() {
+		t.Fatalf("expected conduit output channel to match last wire output channel")
+	}
+}
+
+func TestConduit_GetGenerators(t *testing.T) {
+	ctx := context.Background()
+	con := conduit.NewConduit[int](ctx)
+	gen := &stubGenerator[int]{meta: types.ComponentMetadata{Type: "GENERATOR"}}
+	con.ConnectGenerator(gen)
+
+	generators := con.GetGenerators()
+	if len(generators) != 1 || generators[0] != gen {
+		t.Fatalf("expected generator to be registered")
+	}
+}
+
+func TestConduit_ComponentMetadata(t *testing.T) {
+	ctx := context.Background()
+	con := conduit.NewConduit[int](ctx)
+	con.SetComponentMetadata("name", "id")
+
+	meta := con.GetComponentMetadata()
+	if meta.Name != "name" || meta.ID != "id" || meta.Type != "CONDUIT" {
+		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+}
+
+func TestConduit_ConfigurationPanicsAfterStart(t *testing.T) {
+	ctx := context.Background()
+	con := conduit.NewConduit[int](ctx).(*conduit.Conduit[int])
+
+	if err := con.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	defer con.Stop()
+
+	assertPanics(t, "ConnectCircuitBreaker", func() {
+		con.ConnectCircuitBreaker(types.CircuitBreaker[int](nil))
+	})
+	assertPanics(t, "ConnectConduit", func() {
+		con.ConnectConduit(types.Conduit[int](nil))
+	})
+	assertPanics(t, "ConnectGenerator", func() {
+		con.ConnectGenerator(types.Generator[int](nil))
+	})
+	assertPanics(t, "ConnectLogger", func() {
+		con.ConnectLogger(types.Logger(nil))
+	})
+	assertPanics(t, "ConnectSensor", func() {
+		con.ConnectSensor(types.Sensor[int](nil))
+	})
+	assertPanics(t, "ConnectSurgeProtector", func() {
+		con.ConnectSurgeProtector(types.SurgeProtector[int](nil))
+	})
+	assertPanics(t, "ConnectWire", func() {
+		con.ConnectWire(types.Wire[int](nil))
+	})
+	assertPanics(t, "SetComponentMetadata", func() {
+		con.SetComponentMetadata("name", "id")
+	})
+	assertPanics(t, "SetConcurrencyControl", func() {
+		con.SetConcurrencyControl(1, 1)
+	})
+	assertPanics(t, "SetInputChannel", func() {
+		con.SetInputChannel(make(chan int))
+	})
+}
+
+func assertPanics(t *testing.T, name string, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("expected panic: %s", name)
+		}
+	}()
+	fn()
+}
+
+type stubCircuitBreaker[T any] struct {
+	allow   bool
+	neutral []types.Wire[T]
+	meta    types.ComponentMetadata
+}
+
+func (s *stubCircuitBreaker[T]) ConnectSensor(...types.Sensor[T]) {}
+func (s *stubCircuitBreaker[T]) Allow() bool                      { return s.allow }
+func (s *stubCircuitBreaker[T]) SetDebouncePeriod(int)            {}
+func (s *stubCircuitBreaker[T]) ConnectNeutralWire(wires ...types.Wire[T]) {
+	s.neutral = append(s.neutral, wires...)
+}
+func (s *stubCircuitBreaker[T]) ConnectLogger(types.Logger) {}
+func (s *stubCircuitBreaker[T]) GetComponentMetadata() types.ComponentMetadata {
+	return s.meta
+}
+func (s *stubCircuitBreaker[T]) GetNeutralWires() []types.Wire[T] { return s.neutral }
+func (s *stubCircuitBreaker[T]) NotifyLoggers(types.LogLevel, string, ...interface{}) {
+}
+func (s *stubCircuitBreaker[T]) NotifyOnReset() <-chan struct{} { return make(chan struct{}) }
+func (s *stubCircuitBreaker[T]) RecordError()                   {}
+func (s *stubCircuitBreaker[T]) Reset()                         {}
+func (s *stubCircuitBreaker[T]) SetComponentMetadata(name string, id string) {
+	s.meta.Name = name
+	s.meta.ID = id
+}
+func (s *stubCircuitBreaker[T]) Trip() { s.allow = false }
+
+type stubGenerator[T any] struct {
+	meta types.ComponentMetadata
+}
+
+func (s *stubGenerator[T]) ConnectCircuitBreaker(types.CircuitBreaker[T]) {}
+func (s *stubGenerator[T]) Start(context.Context) error                   { return nil }
+func (s *stubGenerator[T]) Stop() error                                   { return nil }
+func (s *stubGenerator[T]) IsStarted() bool                               { return false }
+func (s *stubGenerator[T]) Restart(context.Context) error                 { return nil }
+func (s *stubGenerator[T]) ConnectPlug(...types.Plug[T])                  {}
+func (s *stubGenerator[T]) NotifyLoggers(types.LogLevel, string, ...interface{}) {
+}
+func (s *stubGenerator[T]) ConnectLogger(...types.Logger) {}
+func (s *stubGenerator[T]) ConnectToComponent(...types.Submitter[T]) {
+}
+func (s *stubGenerator[T]) GetComponentMetadata() types.ComponentMetadata { return s.meta }
+func (s *stubGenerator[T]) SetComponentMetadata(name string, id string) {
+	s.meta.Name = name
+	s.meta.ID = id
+}
+func (s *stubGenerator[T]) ConnectSensor(...types.Sensor[T]) {}
