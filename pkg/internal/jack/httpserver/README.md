@@ -58,6 +58,6 @@ err := server.Serve(ctx, func(ctx context.Context, req Request) (builder.HTTPSer
 
 ## References
 
-- examples: example/httpserverJack/
+- examples: example/httpserverJack/ (including `oauth_introspection/`)
 - builder: pkg/builder/jack.go
 - internal contracts: pkg/internal/types/httpserver_adapter.go

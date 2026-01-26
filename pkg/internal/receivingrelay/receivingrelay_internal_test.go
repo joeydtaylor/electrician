@@ -136,6 +136,66 @@ func (s *stubStream) SetTrailer(metadata.MD)       {}
 func (s *stubStream) SendMsg(interface{}) error    { return nil }
 func (s *stubStream) RecvMsg(interface{}) error    { return nil }
 
+type bidiStream struct {
+	ctx    context.Context
+	recvCh chan *relay.RelayEnvelope
+	sendCh chan *relay.StreamAcknowledgment
+}
+
+func newBidiStream(ctx context.Context, envs ...*relay.RelayEnvelope) *bidiStream {
+	recvCh := make(chan *relay.RelayEnvelope, len(envs))
+	for _, env := range envs {
+		recvCh <- env
+	}
+	close(recvCh)
+
+	return &bidiStream{
+		ctx:    ctx,
+		recvCh: recvCh,
+		sendCh: make(chan *relay.StreamAcknowledgment, len(envs)+1),
+	}
+}
+
+func (s *bidiStream) Context() context.Context     { return s.ctx }
+func (s *bidiStream) SendHeader(metadata.MD) error { return nil }
+func (s *bidiStream) SetHeader(metadata.MD) error  { return nil }
+func (s *bidiStream) SetTrailer(metadata.MD)       {}
+func (s *bidiStream) SendMsg(m any) error {
+	if ack, ok := m.(*relay.StreamAcknowledgment); ok {
+		return s.Send(ack)
+	}
+	return nil
+}
+func (s *bidiStream) RecvMsg(m any) error {
+	env, err := s.Recv()
+	if err != nil {
+		return err
+	}
+	if dst, ok := m.(*relay.RelayEnvelope); ok {
+		*dst = *env
+	}
+	return nil
+}
+func (s *bidiStream) Recv() (*relay.RelayEnvelope, error) {
+	env, ok := <-s.recvCh
+	if !ok {
+		return nil, io.EOF
+	}
+	return env, nil
+}
+func (s *bidiStream) Send(ack *relay.StreamAcknowledgment) error {
+	s.sendCh <- ack
+	return nil
+}
+
+func drainStreamAcks(ch <-chan *relay.StreamAcknowledgment) []*relay.StreamAcknowledgment {
+	var acks []*relay.StreamAcknowledgment
+	for len(ch) > 0 {
+		acks = append(acks, <-ch)
+	}
+	return acks
+}
+
 func TestUnwrapPayloadNil(t *testing.T) {
 	var out string
 	if err := UnwrapPayload(nil, "", &out); err == nil {
@@ -403,6 +463,438 @@ func TestPassthroughItemInvalidType(t *testing.T) {
 	_, err := rr.asPassthroughItem(&relay.WrappedPayload{})
 	if err == nil {
 		t.Fatalf("expected passthrough type error")
+	}
+}
+
+func TestReceivePassthroughValue(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[relay.WrappedPayload](ctx).(*ReceivingRelay[relay.WrappedPayload])
+	rr.SetPassthrough(true)
+
+	payload := &relay.WrappedPayload{Id: "id-1", Seq: 7, Payload: []byte("hello")}
+	ack, err := rr.Receive(ctx, payload)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if !ack.GetSuccess() {
+		t.Fatalf("expected ack success")
+	}
+
+	select {
+	case got := <-rr.DataCh:
+		if got.GetId() != payload.GetId() || got.GetSeq() != payload.GetSeq() {
+			t.Fatalf("unexpected payload: %+v", got)
+		}
+		if !bytes.Equal(got.GetPayload(), payload.GetPayload()) {
+			t.Fatalf("unexpected payload bytes: %q", got.GetPayload())
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected payload to be forwarded")
+	}
+}
+
+func TestReceivePassthroughPointer(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[*relay.WrappedPayload](ctx).(*ReceivingRelay[*relay.WrappedPayload])
+	rr.SetPassthrough(true)
+
+	payload := &relay.WrappedPayload{Id: "id-2", Seq: 9}
+	_, err := rr.Receive(ctx, payload)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+
+	select {
+	case got := <-rr.DataCh:
+		if got != payload {
+			t.Fatalf("expected payload pointer to be forwarded")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected payload to be forwarded")
+	}
+}
+
+func TestReceivePassthroughInvalidType(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[string](ctx).(*ReceivingRelay[string])
+	rr.SetPassthrough(true)
+
+	_, err := rr.Receive(ctx, &relay.WrappedPayload{Id: "id-3"})
+	if err != nil {
+		t.Fatalf("unexpected Receive error: %v", err)
+	}
+
+	select {
+	case <-rr.DataCh:
+		t.Fatalf("expected no payload for invalid passthrough type")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestStreamReceivePassthroughValue(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[relay.WrappedPayload](ctx).(*ReceivingRelay[relay.WrappedPayload])
+	rr.SetPassthrough(true)
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId: "s1",
+			AckMode:  relay.AckMode_ACK_PER_MESSAGE,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:      "p1",
+			Seq:     1,
+			Payload: []byte("hello"),
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Close{Close: &relay.StreamClose{Reason: "done"}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	select {
+	case got := <-rr.DataCh:
+		if got.GetId() != "p1" || got.GetSeq() != 1 {
+			t.Fatalf("unexpected payload: %+v", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected payload to be forwarded")
+	}
+
+	var ackCount int
+	for {
+		select {
+		case ack := <-stream.sendCh:
+			ackCount++
+			if ackCount == 2 && !ack.GetSuccess() {
+				t.Fatalf("expected payload ack success")
+			}
+		default:
+			if ackCount < 2 {
+				t.Fatalf("expected at least 2 acks, got %d", ackCount)
+			}
+			return
+		}
+	}
+}
+
+func TestStreamReceivePassthroughInvalidType(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[string](ctx).(*ReceivingRelay[string])
+	rr.SetPassthrough(true)
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId: "s1",
+			AckMode:  relay.AckMode_ACK_PER_MESSAGE,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:  "p1",
+			Seq: 1,
+		}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	select {
+	case <-rr.DataCh:
+		t.Fatalf("expected no payload for invalid passthrough type")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	var sawPayloadAck bool
+	var sawFailure bool
+	for {
+		select {
+		case ack := <-stream.sendCh:
+			if ack.GetId() == "p1" {
+				sawPayloadAck = true
+				if ack.GetSuccess() {
+					t.Fatalf("expected payload ack failure")
+				}
+				sawFailure = true
+			}
+		default:
+			if !sawPayloadAck || !sawFailure {
+				t.Fatalf("expected failure ack for payload")
+			}
+			return
+		}
+	}
+}
+
+func TestStreamReceiveAckBatch(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[relay.WrappedPayload](ctx).(*ReceivingRelay[relay.WrappedPayload])
+	rr.SetPassthrough(true)
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId:  "s1",
+			AckMode:   relay.AckMode_ACK_BATCH,
+			AckEveryN: 2,
+			Defaults:  &relay.MessageMetadata{TraceId: "trace"},
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:      "p1",
+			Seq:     1,
+			Payload: []byte("one"),
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:      "p2",
+			Seq:     2,
+			Payload: []byte("two"),
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:      "p3",
+			Seq:     3,
+			Payload: []byte("three"),
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Close{Close: &relay.StreamClose{Reason: "done"}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		select {
+		case <-rr.DataCh:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("expected payload %d", i+1)
+		}
+	}
+
+	acks := drainStreamAcks(stream.sendCh)
+	if len(acks) != 3 {
+		t.Fatalf("expected 3 acks, got %d", len(acks))
+	}
+
+	var sawOpen, sawBatch, sawClose bool
+	for _, ack := range acks {
+		switch ack.GetMessage() {
+		case "Stream open accepted":
+			sawOpen = true
+		case "Batch ack":
+			if ack.GetOkCount() != 2 || ack.GetErrCount() != 0 || ack.GetLastSeq() != 2 {
+				t.Fatalf("unexpected batch ack: %+v", ack)
+			}
+			sawBatch = true
+		case "Stream closed":
+			if ack.GetOkCount() != 1 || ack.GetErrCount() != 0 || ack.GetLastSeq() != 3 {
+				t.Fatalf("unexpected close ack: %+v", ack)
+			}
+			sawClose = true
+		}
+	}
+	if !sawOpen || !sawBatch || !sawClose {
+		t.Fatalf("missing expected acks: open=%t batch=%t close=%t", sawOpen, sawBatch, sawClose)
+	}
+}
+
+func TestStreamReceiveAckNone(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[relay.WrappedPayload](ctx).(*ReceivingRelay[relay.WrappedPayload])
+	rr.SetPassthrough(true)
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId: "s1",
+			AckMode:  relay.AckMode_ACK_NONE,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:  "p1",
+			Seq: 1,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Close{Close: &relay.StreamClose{Reason: "done"}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	select {
+	case <-rr.DataCh:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected payload to be forwarded")
+	}
+
+	if len(stream.sendCh) != 0 {
+		t.Fatalf("expected no acks, got %d", len(stream.sendCh))
+	}
+}
+
+func TestStreamReceiveAckPerMessage(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[relay.WrappedPayload](ctx).(*ReceivingRelay[relay.WrappedPayload])
+	rr.SetPassthrough(true)
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId: "s1",
+			AckMode:  relay.AckMode_ACK_PER_MESSAGE,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:      "p1",
+			Seq:     1,
+			Payload: []byte("one"),
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:      "p2",
+			Seq:     2,
+			Payload: []byte("two"),
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Close{Close: &relay.StreamClose{Reason: "done"}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-rr.DataCh:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("expected payload %d", i+1)
+		}
+	}
+
+	acks := drainStreamAcks(stream.sendCh)
+	if len(acks) != 3 {
+		t.Fatalf("expected 3 acks, got %d", len(acks))
+	}
+
+	seenOpen := false
+	seen := map[string]uint64{}
+	for _, ack := range acks {
+		if ack.GetMessage() == "Stream open accepted" {
+			if ack.GetStreamId() != "s1" || !ack.GetSuccess() {
+				t.Fatalf("unexpected open ack: %+v", ack)
+			}
+			seenOpen = true
+			continue
+		}
+		if !ack.GetSuccess() || ack.GetMessage() != "OK" {
+			t.Fatalf("unexpected payload ack: %+v", ack)
+		}
+		seen[ack.GetId()] = ack.GetSeq()
+	}
+	if !seenOpen {
+		t.Fatalf("expected open ack")
+	}
+	if seen["p1"] != 1 || seen["p2"] != 2 {
+		t.Fatalf("missing payload acks: %+v", seen)
+	}
+}
+
+func TestStreamReceiveAckPerMessageUnwrapFailure(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[string](ctx).(*ReceivingRelay[string])
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId: "s1",
+			AckMode:  relay.AckMode_ACK_PER_MESSAGE,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:              "bad",
+			Seq:             1,
+			Payload:         []byte("nope"),
+			PayloadEncoding: relay.PayloadEncoding(99),
+		}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	select {
+	case <-rr.DataCh:
+		t.Fatalf("expected no payload")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	acks := drainStreamAcks(stream.sendCh)
+	if len(acks) != 2 {
+		t.Fatalf("expected 2 acks, got %d", len(acks))
+	}
+
+	var sawFailure bool
+	for _, ack := range acks {
+		if ack.GetId() == "bad" {
+			sawFailure = true
+			if ack.GetSuccess() {
+				t.Fatalf("expected failure ack, got %+v", ack)
+			}
+		}
+	}
+	if !sawFailure {
+		t.Fatalf("expected failure ack for bad payload")
+	}
+}
+
+func TestStreamReceiveAckBatchErrors(t *testing.T) {
+	ctx := context.Background()
+	rr := NewReceivingRelay[string](ctx).(*ReceivingRelay[string])
+	rr.SetPassthrough(true)
+
+	stream := newBidiStream(
+		ctx,
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Open{Open: &relay.StreamOpen{
+			StreamId:  "s1",
+			AckMode:   relay.AckMode_ACK_BATCH,
+			AckEveryN: 1,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:  "p1",
+			Seq: 1,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Payload{Payload: &relay.WrappedPayload{
+			Id:  "p2",
+			Seq: 2,
+		}}},
+		&relay.RelayEnvelope{Msg: &relay.RelayEnvelope_Close{Close: &relay.StreamClose{Reason: "done"}}},
+	)
+
+	if err := rr.StreamReceive(stream); err != nil {
+		t.Fatalf("StreamReceive error: %v", err)
+	}
+
+	select {
+	case <-rr.DataCh:
+		t.Fatalf("expected no payloads")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	acks := drainStreamAcks(stream.sendCh)
+	if len(acks) != 3 {
+		t.Fatalf("expected 3 acks, got %d", len(acks))
+	}
+
+	var sawOpen bool
+	var sawBatch int
+	for _, ack := range acks {
+		switch ack.GetMessage() {
+		case "Stream open accepted":
+			sawOpen = true
+		case "Batch ack":
+			sawBatch++
+			if ack.GetSuccess() || ack.GetOkCount() != 0 || ack.GetErrCount() != 1 {
+				t.Fatalf("unexpected batch ack: %+v", ack)
+			}
+		}
+	}
+	if !sawOpen || sawBatch != 2 {
+		t.Fatalf("unexpected ack summary: open=%t batch=%d", sawOpen, sawBatch)
 	}
 }
 

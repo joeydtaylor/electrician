@@ -99,6 +99,18 @@ if err := logger.AddSink("relay", relaySink); err != nil {
 }
 ```
 
+Typed helper (optional):
+
+```go
+relaySink := builder.RelaySinkConfig{
+    Targets:       []string{"localhost:50090"},
+    QueueSize:     2048,
+    SubmitTimeout: 2 * time.Second,
+    DropOnFull:    builder.BoolPtr(true),
+    TLS:           builder.NewTlsServerConfig(true, "client.crt", "client.key", "ca.crt", "localhost", 0, 0),
+}.ToSinkConfig()
+```
+
 Relay sink config keys:
 
 - `targets` (string or []string, required)

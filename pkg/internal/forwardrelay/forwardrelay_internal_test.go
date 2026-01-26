@@ -1,6 +1,7 @@
 package forwardrelay
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -96,6 +97,92 @@ func TestPassthroughPayloadInvalidType(t *testing.T) {
 	_, err := fr.asPassthroughPayload("nope")
 	if err == nil {
 		t.Fatalf("expected passthrough type error")
+	}
+}
+
+func TestSubmitPassthroughValueUsesPayload(t *testing.T) {
+	ctx := context.Background()
+	fr := &ForwardRelay[relay.WrappedPayload]{
+		ctx:         ctx,
+		passthrough: true,
+		Targets:     []string{"local"},
+		streams:     make(map[string]*streamSession),
+	}
+	session := &streamSession{
+		target: "local",
+		sendCh: make(chan *relay.RelayEnvelope, 1),
+		doneCh: make(chan struct{}),
+	}
+	fr.streams["local"] = session
+
+	wp := relay.WrappedPayload{
+		Id:      "id-1",
+		Seq:     11,
+		Payload: []byte("hello"),
+		Metadata: &relay.MessageMetadata{
+			ContentType: "application/json",
+		},
+	}
+
+	if err := fr.Submit(ctx, wp); err != nil {
+		t.Fatalf("Submit error: %v", err)
+	}
+
+	select {
+	case env := <-session.sendCh:
+		got := env.GetPayload()
+		if got == nil {
+			t.Fatalf("expected payload to be sent")
+		}
+		if got.GetId() != wp.GetId() || got.GetSeq() != wp.GetSeq() {
+			t.Fatalf("unexpected payload fields: %+v", got)
+		}
+		if !bytes.Equal(got.GetPayload(), wp.GetPayload()) {
+			t.Fatalf("unexpected payload bytes: %q", got.GetPayload())
+		}
+		if got.GetMetadata().GetContentType() != "application/json" {
+			t.Fatalf("unexpected content type: %q", got.GetMetadata().GetContentType())
+		}
+	default:
+		t.Fatalf("expected payload to be queued")
+	}
+}
+
+func TestSubmitPassthroughPointerUsesPayload(t *testing.T) {
+	ctx := context.Background()
+	fr := &ForwardRelay[*relay.WrappedPayload]{
+		ctx:         ctx,
+		passthrough: true,
+		Targets:     []string{"local"},
+		streams:     make(map[string]*streamSession),
+	}
+	session := &streamSession{
+		target: "local",
+		sendCh: make(chan *relay.RelayEnvelope, 1),
+		doneCh: make(chan struct{}),
+	}
+	fr.streams["local"] = session
+
+	wp := &relay.WrappedPayload{Id: "id-2", Seq: 22}
+	if err := fr.Submit(ctx, wp); err != nil {
+		t.Fatalf("Submit error: %v", err)
+	}
+
+	select {
+	case env := <-session.sendCh:
+		got := env.GetPayload()
+		if got != wp {
+			t.Fatalf("expected payload pointer to be preserved")
+		}
+	default:
+		t.Fatalf("expected payload to be queued")
+	}
+}
+
+func TestSubmitPassthroughInvalidType(t *testing.T) {
+	fr := &ForwardRelay[string]{ctx: context.Background(), passthrough: true}
+	if err := fr.Submit(context.Background(), "bad"); err == nil {
+		t.Fatalf("expected passthrough submit error")
 	}
 }
 
