@@ -22,7 +22,11 @@ type Feedback struct {
 	Tags       []string `json:"tags,omitempty"`
 }
 
-const AES256KeyHex = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
+const (
+	AES256KeyHex     = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
+	relayBufferSize  = 16384
+	jwksCacheSeconds = 300
+)
 
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -36,21 +40,13 @@ func mustAES() string {
 	if err != nil || len(raw) != 32 {
 		log.Fatalf("bad AES key: %v", err)
 	}
+	// NOTE: key is raw bytes stored in a Go string (ok for your decrypt/encrypt funcs).
 	return string(raw)
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-	go func() {
-		<-sigs
-		fmt.Println("Shutting down...")
-		cancel()
-	}()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
 	workers := runtime.GOMAXPROCS(0)
@@ -58,9 +54,11 @@ func main() {
 	wire := builder.NewWire[Feedback](
 		ctx,
 		builder.WireWithLogger[Feedback](logger),
-		builder.WireWithConcurrencyControl[Feedback](16384, workers),
+		builder.WireWithConcurrencyControl[Feedback](relayBufferSize, workers),
 	)
-	_ = wire.Start(ctx)
+	if err := wire.Start(ctx); err != nil {
+		log.Fatalf("wire start: %v", err)
+	}
 
 	tlsCfg := builder.NewTlsServerConfig(
 		true,
@@ -81,7 +79,7 @@ func main() {
 		jwksURL,
 		[]string{"your-api"},
 		[]string{"write:data"},
-		300,
+		jwksCacheSeconds,
 	)
 
 	oauth := builder.NewReceivingRelayMergeOAuth2Options(jwtOpts, nil)
@@ -94,7 +92,7 @@ func main() {
 	recv := builder.NewReceivingRelay[Feedback](
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_ADDR", "localhost:50051")),
-		builder.ReceivingRelayWithBufferSize[Feedback](16384),
+		builder.ReceivingRelayWithBufferSize[Feedback](relayBufferSize),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
 		builder.ReceivingRelayWithOutput[Feedback](wire),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
@@ -111,6 +109,7 @@ func main() {
 
 	fmt.Println("Receiver up (gRPC-Web + JWKS). Ctrl+C to stop.")
 	<-ctx.Done()
+	fmt.Println("Shutting down...")
 
 	recv.Stop()
 
