@@ -10,16 +10,28 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+type sinkEntry struct {
+	core zapcore.Core
+	stop func()
+}
+
 // AddSink adds a sink based on its identifier and config.
 func (z *ZapLoggerAdapter) AddSink(identifier string, config types.SinkConfig) error {
 	z.mu.Lock()
 	defer z.mu.Unlock()
 
-	var ws zapcore.WriteSyncer
+	var (
+		ws   zapcore.WriteSyncer
+		stop func()
+	)
+	cfg := config.Config
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
 
 	switch config.Type {
 	case "file":
-		path, ok := config.Config["path"].(string)
+		path, ok := cfg["path"].(string)
 		if !ok || path == "" {
 			return fmt.Errorf("file path configuration is missing or invalid")
 		}
@@ -33,19 +45,32 @@ func (z *ZapLoggerAdapter) AddSink(identifier string, config types.SinkConfig) e
 		if err != nil {
 			return fmt.Errorf("failed to open file %s: %v", path, err)
 		}
+		stop = func() {
+			_ = file.Close()
+		}
 		ws = zapcore.AddSync(file)
 	case "stdout":
 		ws = zapcore.Lock(os.Stdout)
 	case "network":
-		return fmt.Errorf("unsupported sink type: %s", config.Type)
+		relaySink, err := newRelayWriteSyncer(config)
+		if err != nil {
+			return err
+		}
+		ws = relaySink
+		stop = relaySink.Close
+	case "relay":
+		relaySink, err := newRelayWriteSyncer(config)
+		if err != nil {
+			return err
+		}
+		ws = relaySink
+		stop = relaySink.Close
 	default:
 		return fmt.Errorf("unsupported sink type: %s", config.Type)
 	}
 
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	core := zapcore.NewCore(zapcore.NewJSONEncoder(encoderConfig), ws, z.atomicLevel)
-	z.sinks[identifier] = core
+	core := zapcore.NewCore(zapcore.NewJSONEncoder(z.encConfig), ws, z.atomicLevel)
+	z.sinks[identifier] = sinkEntry{core: core, stop: stop}
 
 	z.rebuildLoggerLocked()
 	return nil
@@ -56,10 +81,14 @@ func (z *ZapLoggerAdapter) RemoveSink(identifier string) error {
 	z.mu.Lock()
 	defer z.mu.Unlock()
 
-	if _, ok := z.sinks[identifier]; !ok {
+	entry, ok := z.sinks[identifier]
+	if !ok {
 		return fmt.Errorf("sink not found: %s", identifier)
 	}
 	delete(z.sinks, identifier)
+	if entry.stop != nil {
+		entry.stop()
+	}
 
 	z.rebuildLoggerLocked()
 	return nil
@@ -80,9 +109,17 @@ func (z *ZapLoggerAdapter) ListSinks() ([]string, error) {
 func (z *ZapLoggerAdapter) rebuildLoggerLocked() {
 	cores := make([]zapcore.Core, 0, 1+len(z.sinks))
 	cores = append(cores, z.baseCore)
-	for _, core := range z.sinks {
-		cores = append(cores, core)
+	for _, entry := range z.sinks {
+		cores = append(cores, entry.core)
 	}
 	combined := zapcore.NewTee(cores...)
-	z.logger = zap.New(combined, zap.AddCaller(), zap.AddCallerSkip(z.callerDepth))
+	opts := []zap.Option{zap.AddCallerSkip(z.callerDepth)}
+	if z.callerOn {
+		opts = append(opts, zap.AddCaller())
+	}
+	logger := zap.New(combined, opts...)
+	if len(z.baseFields) > 0 {
+		logger = logger.With(z.baseFields...)
+	}
+	z.logger = logger
 }

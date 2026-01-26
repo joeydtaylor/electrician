@@ -1,6 +1,7 @@
 package internallogger
 
 import (
+	"github.com/joeydtaylor/electrician/pkg/logschema"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -20,6 +21,31 @@ func LoggerWithLevel(levelStr string) LoggerOption {
 func LoggerWithDevelopment(dev bool) LoggerOption {
 	return func(cfg *zap.Config, lvl *zapcore.Level, callerDepth *int) {
 		cfg.Development = dev // Set the development mode based on the dev parameter
+	}
+}
+
+// LoggerWithFields attaches fields to every log line.
+func LoggerWithFields(fields map[string]interface{}) LoggerOption {
+	return func(cfg *zap.Config, lvl *zapcore.Level, callerDepth *int) {
+		if cfg.InitialFields == nil {
+			cfg.InitialFields = map[string]interface{}{}
+		}
+		for key, value := range fields {
+			if key == "" {
+				continue
+			}
+			cfg.InitialFields[key] = value
+		}
+	}
+}
+
+// LoggerWithSchema overrides the log schema identifier field.
+func LoggerWithSchema(schema string) LoggerOption {
+	return func(cfg *zap.Config, lvl *zapcore.Level, callerDepth *int) {
+		if cfg.InitialFields == nil {
+			cfg.InitialFields = map[string]interface{}{}
+		}
+		cfg.InitialFields[logschema.FieldSchema] = schema
 	}
 }
 

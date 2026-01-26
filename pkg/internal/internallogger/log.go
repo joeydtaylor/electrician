@@ -36,12 +36,7 @@ func (z *ZapLoggerAdapter) Log(level types.LogLevel, msg string, keysAndValues .
 			continue
 		}
 		value := keysAndValues[i+1]
-		switch v := value.(type) {
-		case string, int, int32, int64, float64, bool:
-			fields = append(fields, zap.Any(key, v))
-		default:
-			fields = append(fields, zap.String(key, fmt.Sprintf("%v", v)))
-		}
+		fields = append(fields, zap.Any(key, value))
 	}
 
 	logger.Check(zapLevel, msg).Write(fields...)

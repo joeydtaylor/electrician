@@ -3,6 +3,7 @@ package builder
 import (
 	internalLogger "github.com/joeydtaylor/electrician/pkg/internal/internallogger"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
+	"github.com/joeydtaylor/electrician/pkg/logschema"
 )
 
 type LoggerOption = internalLogger.LoggerOption
@@ -17,6 +18,7 @@ const (
 	FileSink    SinkType = "file"
 	StdoutSink  SinkType = "stdout"
 	NetworkSink SinkType = "network"
+	RelaySink   SinkType = "relay"
 )
 
 func NewLogger(options ...internalLogger.LoggerOption) types.Logger {
@@ -32,6 +34,22 @@ func LoggerWithLevel(levelStr string) LoggerOption {
 func LoggerWithDevelopment(dev bool) LoggerOption {
 	return internalLogger.LoggerWithDevelopment(dev)
 }
+
+// LoggerWithFields attaches fields to every log line.
+func LoggerWithFields(fields map[string]interface{}) LoggerOption {
+	return internalLogger.LoggerWithFields(fields)
+}
+
+// LoggerWithSchema overrides the log schema identifier field.
+func LoggerWithSchema(schema string) LoggerOption {
+	return internalLogger.LoggerWithSchema(schema)
+}
+
+// Log schema constants for the standard Electrician log format.
+const (
+	LogSchemaID    = logschema.SchemaID
+	LogSchemaField = logschema.FieldSchema
+)
 
 // LogLevel is exported from the internal types package.
 type LogLevel = types.LogLevel

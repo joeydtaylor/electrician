@@ -75,8 +75,8 @@ func TestLogger_AddSinkInvalidConfig(t *testing.T) {
 	if err := logger.AddSink("file", types.SinkConfig{Type: "file", Config: map[string]interface{}{}}); err == nil {
 		t.Fatalf("expected error for missing file path")
 	}
-	if err := logger.AddSink("network", types.SinkConfig{Type: "network"}); err == nil {
-		t.Fatalf("expected error for unsupported sink type")
+	if err := logger.AddSink("network", types.SinkConfig{Type: "network", Config: map[string]interface{}{}}); err == nil {
+		t.Fatalf("expected error for missing relay config")
 	}
 }
 

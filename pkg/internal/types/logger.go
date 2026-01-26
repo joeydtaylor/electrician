@@ -12,6 +12,7 @@ const (
 	FileSink    SinkType = "file"
 	StdoutSink  SinkType = "stdout"
 	NetworkSink SinkType = "network"
+	RelaySink   SinkType = "relay"
 )
 
 const (
