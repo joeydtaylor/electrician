@@ -3,6 +3,9 @@
 This guide is for the frontend team. It targets the most secure relay example in this repo:
 `example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb`.
 
+If you want a single doc that covers gRPC-web + QUIC side-by-side, use:
+`example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`.
+
 It assumes the browser uses Connect (gRPC-web compatible) to call
 `electrician.RelayService/Receive` from `proto/electrician_relay.proto`.
 

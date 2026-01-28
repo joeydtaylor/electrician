@@ -261,6 +261,57 @@ func TestQuicRelayRoundTripJSONPassthrough(t *testing.T) {
 	}
 }
 
+func TestQuicRelayPreservesTraceIDDefaults(t *testing.T) {
+	tlsFiles := newTestTLS(t)
+	defer tlsFiles.cleanup()
+
+	addr := freeUDPAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	recv := NewReceivingRelay[*relay.WrappedPayload](
+		ctx,
+		ReceivingRelayWithAddress[*relay.WrappedPayload](addr),
+		ReceivingRelayWithTLSConfig[*relay.WrappedPayload](tlsFiles.server),
+		ReceivingRelayWithPassthrough[*relay.WrappedPayload](true),
+	)
+	if err := recv.Start(ctx); err != nil {
+		t.Fatalf("receiver start: %v", err)
+	}
+	defer recv.Stop()
+
+	const traceID = "trace-quic-default"
+	fr := NewForwardRelay[*relay.WrappedPayload](
+		ctx,
+		ForwardRelayWithTarget[*relay.WrappedPayload](addr),
+		ForwardRelayWithTLSConfig[*relay.WrappedPayload](tlsFiles.client),
+		ForwardRelayWithPassthrough[*relay.WrappedPayload](true),
+		ForwardRelayWithStaticHeaders[*relay.WrappedPayload](map[string]string{"trace-id": traceID}),
+	)
+
+	clientTLS, err := fr.buildClientTLSConfig()
+	if err != nil {
+		t.Fatalf("client tls: %v", err)
+	}
+	waitForReady(t, addr, clientTLS)
+
+	wp := &relay.WrappedPayload{
+		Id:      "trace-1",
+		Payload: []byte("trace"),
+	}
+	if err := fr.Submit(ctx, wp); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	out := waitForMessage(t, recv.DataCh)
+	if out.GetMetadata() == nil {
+		t.Fatalf("expected metadata from defaults")
+	}
+	if got := out.GetMetadata().GetHeaders()["trace-id"]; got != traceID {
+		t.Fatalf("expected trace-id %q, got %q", traceID, got)
+	}
+}
+
 func TestQuicRelayEncryptionAESGCM(t *testing.T) {
 	tlsFiles := newTestTLS(t)
 	defer tlsFiles.cleanup()

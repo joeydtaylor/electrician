@@ -8,8 +8,15 @@ import (
 
 var defaultGRPCWebAllowedHeaders = []string{
 	"authorization",
+	"content-type",
+	"connect-protocol-version",
+	"grpc-accept-encoding",
+	"grpc-encoding",
+	"grpc-timeout",
 	"x-tenant",
+	"x-grpc-web",
 	"x-trace-id",
+	"x-user-agent",
 }
 
 func cloneGRPCWebConfig(cfg *types.GRPCWebConfig) *types.GRPCWebConfig {

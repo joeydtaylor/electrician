@@ -5,10 +5,11 @@ reliable, multiplexed, and uses TLS 1.3 by default.
 
 ## Files
 
-- `quic_basic_receiver/` – minimal QUIC receiver
-- `quic_basic_sender/` – minimal QUIC sender
-- `quic_secure_oauth_aes_receiver/` – secure receiver (OAuth2 JWKS + AES-GCM + static headers)
-- `quic_secure_oauth_aes_sender/` – secure sender (OAuth2 client_credentials + AES-GCM + static headers)
+- `quic_basic_receiver/` - minimal QUIC receiver
+- `quic_basic_sender/` - minimal QUIC sender
+- `quic_secure_oauth_aes_receiver/` - secure receiver (OAuth2 JWKS + AES-GCM + static headers)
+- `quic_secure_oauth_aes_sender/` - secure sender (OAuth2 client_credentials + AES-GCM + static headers)
+- `README_RUST.md` - Rust integration guide (QUIC framing, auth, AES-GCM)
 
 ## Shared TLS assets
 
@@ -60,3 +61,10 @@ Notes:
 
 Set the `logLevel` constant in the sender/receiver `main.go` files to `debug` to see
 verbose, structured logs (including auth headers and tokens).
+
+## Mock OAuth server (dev only)
+
+If you do not want to rely on a real auth server during development, use the mock OAuth
+server at:
+
+- `example/relay_example/mock_oauth_server/README.md`

@@ -106,9 +106,19 @@ Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These liv
 
 ## Documentation
 
-- Internal architecture: pkg/internal/README.MD
-- Examples: example/
-- Per-package READMEs under pkg/internal/* and pkg/builder
+- Internal architecture: `pkg/internal/README.MD`
+- Relay examples index: `example/relay_example/README.md`
+- Frontend integration (gRPC-Web + QUIC): `example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`
+- QUIC relay docs (including Rust guide): `example/relay_example/quic/README.md`
+- Mock OAuth server (dev only): `example/relay_example/mock_oauth_server/README.md`
+- Onboarding: `docs/ONBOARDING.md`
+- Relay gRPC-Web / Connect: `docs/relay-grpc-connect.md`
+- Relay CORS: `docs/relay-grpcweb-cors.md`
+- JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
+- Steeze UI system (if UI is added here): `docs/steeze-ui-system.md`
+- Legal: `docs/LEGAL.md`
+- Trademarks: `docs/TRADEMARKS.md`
+- Per-package READMEs under `pkg/internal/*` and `pkg/builder`
 
 ## Integration tests (LocalStack + Redpanda)
 
@@ -119,20 +129,3 @@ docker network create steeze-edge || true
 docker compose -f local-stack/docker-compose.yml up -d
 go test ./pkg/... -tags=integration -count=1
 ```
-
-Common overrides:
-
-- `LOCALSTACK_ENDPOINT` (default `http://localhost:4566`)
-- `S3_BUCKET` (default `steeze-dev`)
-- `S3_ROLE_ARN` (default `arn:aws:iam::000000000000:role/exodus-dev-role`)
-- `ORG_ID` (default `4d948fa0-084e-490b-aad5-cfd01eeab79a`)
-- `KAFKA_BROKERS` (default `127.0.0.1:19092`)
-- `KAFKA_TLS_CA`, `KAFKA_TLS_CERT`, `KAFKA_TLS_KEY` (default paths under `local-stack/tls/`)
-- `KAFKA_TLS_SERVER_NAME` (default `localhost`)
-- `KAFKA_SASL_USER`, `KAFKA_SASL_PASS`, `KAFKA_SASL_MECH` (defaults `app`/`app-secret`/`SCRAM-SHA-256`)
-
-To skip these tests: `SKIP_LOCALSTACK=1` or `SKIP_KAFKA=1`.
-
-## License
-
-Apache 2.0. See LICENSE.
