@@ -99,7 +99,15 @@ func (a *KafkaClient[T]) commitLatest(
 			}
 			sensor.InvokeOnKafkaCommitError(a.componentMetadata, groupID, err)
 		}
-		a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Commit, err: %v", a.componentMetadata, err)
+		a.NotifyLoggers(
+			types.ErrorLevel,
+			"Kafka commit failed",
+			"component", a.componentMetadata,
+			"event", "Commit",
+			"result", "FAILURE",
+			"group", groupID,
+			"error", err,
+		)
 		return
 	}
 	for _, sensor := range a.snapshotSensors() {

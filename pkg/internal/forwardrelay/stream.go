@@ -154,7 +154,17 @@ func (fr *ForwardRelay[T]) openStreamSession(ctx context.Context, address string
 	go fr.streamSendLoop(s)
 	go fr.streamAckLoop(s)
 
-	fr.NotifyLoggers(types.InfoLevel, "stream: opened StreamReceive to %s stream_id=%s trace_id=%s", address, open.StreamId, traceID)
+	fr.logKV(types.InfoLevel, "Stream opened",
+		"event", "StreamOpen",
+		"result", "SUCCESS",
+		"target", address,
+		"stream_id", open.StreamId,
+		"trace_id", traceID,
+		"ack_mode", open.AckMode,
+		"ack_every_n", open.AckEveryN,
+		"max_in_flight", open.MaxInFlight,
+		"omit_payload_metadata", open.OmitPayloadMetadata,
+	)
 	return s, nil
 }
 
@@ -165,9 +175,21 @@ func (fr *ForwardRelay[T]) streamSendLoop(s *streamSession) {
 		if err := s.stream.Send(env); err != nil {
 			code := status.Code(err)
 			if err == io.EOF || code == codes.Canceled || code == codes.Unavailable {
-				fr.NotifyLoggers(types.DebugLevel, "stream: send ended target=%s code=%v err=%v", s.target, code, err)
+				fr.logKV(types.DebugLevel, "Stream send ended",
+					"event", "StreamSend",
+					"result", "END",
+					"target", s.target,
+					"code", code,
+					"error", err,
+				)
 			} else {
-				fr.NotifyLoggers(types.ErrorLevel, "stream: send failed target=%s code=%v err=%v", s.target, code, err)
+				fr.logKV(types.ErrorLevel, "Stream send failed",
+					"event", "StreamSend",
+					"result", "FAILURE",
+					"target", s.target,
+					"code", code,
+					"error", err,
+				)
 			}
 
 			_ = s.stream.CloseSend()
@@ -187,11 +209,25 @@ func (fr *ForwardRelay[T]) streamAckLoop(s *streamSession) {
 			return
 		}
 		if err != nil {
-			fr.NotifyLoggers(types.DebugLevel, "stream: ack recv ended target=%s err=%v", s.target, err)
+			fr.logKV(types.DebugLevel, "Ack receive ended",
+				"event", "StreamAck",
+				"result", "END",
+				"target", s.target,
+				"error", err,
+			)
 			return
 		}
-		fr.NotifyLoggers(types.DebugLevel, "stream: ack target=%s stream_id=%s last_seq=%d ok=%d err=%d msg=%s",
-			s.target, ack.GetStreamId(), ack.GetLastSeq(), ack.GetOkCount(), ack.GetErrCount(), ack.GetMessage())
+		fr.logKV(types.DebugLevel, "Ack received",
+			"event", "StreamAck",
+			"result", "SUCCESS",
+			"target", s.target,
+			"stream_id", ack.GetStreamId(),
+			"last_seq", ack.GetLastSeq(),
+			"ok_count", ack.GetOkCount(),
+			"err_count", ack.GetErrCount(),
+			"message", ack.GetMessage(),
+			"code", ack.GetCode(),
+		)
 	}
 }
 

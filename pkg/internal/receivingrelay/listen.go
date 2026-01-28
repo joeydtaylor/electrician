@@ -18,23 +18,54 @@ func (rr *ReceivingRelay[T]) Listen(listenForever bool, retryInSeconds int) erro
 
 	var opts []grpc.ServerOption
 	if rr.TlsConfig != nil && rr.TlsConfig.UseTLS {
-		rr.NotifyLoggers(types.DebugLevel, "Listen: TLS enabled, loading credentials")
+		rr.logKV(
+			types.DebugLevel,
+			"TLS enabled",
+			"event", "ListenTLS",
+			"result", "SUCCESS",
+			"tls", rr.TlsConfig,
+		)
 		creds, err := rr.loadTLSCredentials(rr.TlsConfig)
 		if err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "Listen: load TLS credentials failed: %v", err)
+			rr.logKV(
+				types.ErrorLevel,
+				"TLS credentials failed",
+				"event", "ListenTLS",
+				"result", "FAILURE",
+				"error", err,
+			)
 			return fmt.Errorf("failed to load TLS credentials: %v", err)
 		}
 		opts = append(opts, grpc.Creds(creds))
 	}
 
-	rr.NotifyLoggers(types.InfoLevel, "Listen: binding %s", rr.Address)
+	rr.logKV(
+		types.InfoLevel,
+		"Binding listener",
+		"event", "Listen",
+		"result", "START",
+		"address", rr.Address,
+	)
 	lis, err := net.Listen("tcp", rr.Address)
 	if err != nil {
-		rr.NotifyLoggers(types.ErrorLevel, "Listen: bind failed %s: %v", rr.Address, err)
+		rr.logKV(
+			types.ErrorLevel,
+			"Bind failed",
+			"event", "Listen",
+			"result", "FAILURE",
+			"address", rr.Address,
+			"error", err,
+		)
 		if !listenForever {
 			return err
 		}
-		rr.NotifyLoggers(types.WarnLevel, "Listen: retrying in %d seconds", retryInSeconds)
+		rr.logKV(
+			types.WarnLevel,
+			"Bind retrying",
+			"event", "ListenRetry",
+			"result", "RETRY",
+			"retry_in_seconds", retryInSeconds,
+		)
 		time.Sleep(time.Duration(retryInSeconds) * time.Second)
 		return rr.Listen(listenForever, retryInSeconds)
 	}
@@ -44,17 +75,35 @@ func (rr *ReceivingRelay[T]) Listen(listenForever bool, retryInSeconds int) erro
 	s := grpc.NewServer(opts...)
 	relay.RegisterRelayServiceServer(s, rr)
 
-	rr.NotifyLoggers(types.InfoLevel, "Listen: gRPC server started")
+	rr.logKV(
+		types.InfoLevel,
+		"gRPC server started",
+		"event", "ListenStarted",
+		"result", "SUCCESS",
+		"address", rr.Address,
+	)
 	if !listenForever {
 		if err := s.Serve(lis); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "Listen: server stopped: %v", err)
+			rr.logKV(
+				types.ErrorLevel,
+				"gRPC server stopped",
+				"event", "ListenStopped",
+				"result", "FAILURE",
+				"error", err,
+			)
 		}
 		return nil
 	}
 
 	go func() {
 		if err := s.Serve(lis); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "Listen: server failed: %v", err)
+			rr.logKV(
+				types.ErrorLevel,
+				"gRPC server failed",
+				"event", "ListenFailed",
+				"result", "FAILURE",
+				"error", err,
+			)
 		}
 	}()
 

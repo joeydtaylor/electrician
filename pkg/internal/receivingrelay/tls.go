@@ -12,24 +12,50 @@ import (
 
 func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credentials.TransportCredentials, error) {
 	if !config.UseTLS {
-		rr.NotifyLoggers(types.WarnLevel, "loadTLSCredentials: TLS disabled")
+		rr.logKV(
+			types.WarnLevel,
+			"TLS disabled",
+			"event", "TLSCredentials",
+			"result", "SKIPPED",
+		)
 		return nil, fmt.Errorf("TLS is disabled")
 	}
 
 	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 	if err != nil {
-		rr.NotifyLoggers(types.ErrorLevel, "loadTLSCredentials: load keypair failed: %v", err)
+		rr.logKV(
+			types.ErrorLevel,
+			"TLS load keypair failed",
+			"event", "TLSCredentials",
+			"result", "FAILURE",
+			"cert_file", config.CertFile,
+			"key_file", config.KeyFile,
+			"error", err,
+		)
 		return nil, err
 	}
 
 	certPool := x509.NewCertPool()
 	ca, err := os.ReadFile(config.CAFile)
 	if err != nil {
-		rr.NotifyLoggers(types.ErrorLevel, "loadTLSCredentials: read CA failed: %v", err)
+		rr.logKV(
+			types.ErrorLevel,
+			"TLS read CA failed",
+			"event", "TLSCredentials",
+			"result", "FAILURE",
+			"ca_file", config.CAFile,
+			"error", err,
+		)
 		return nil, err
 	}
 	if ok := certPool.AppendCertsFromPEM(ca); !ok {
-		rr.NotifyLoggers(types.ErrorLevel, "loadTLSCredentials: append CA failed")
+		rr.logKV(
+			types.ErrorLevel,
+			"TLS append CA failed",
+			"event", "TLSCredentials",
+			"result", "FAILURE",
+			"ca_file", config.CAFile,
+		)
 		return nil, fmt.Errorf("failed to append CA certificate")
 	}
 
@@ -41,6 +67,16 @@ func (rr *ReceivingRelay[T]) loadTLSCredentials(config *types.TLSConfig) (creden
 	if maxTLSVersion == 0 {
 		maxTLSVersion = tls.VersionTLS13
 	}
+
+	rr.logKV(
+		types.DebugLevel,
+		"TLS credentials loaded",
+		"event", "TLSCredentials",
+		"result", "SUCCESS",
+		"server_name", config.SubjectAlternativeName,
+		"min_tls_version", minTLSVersion,
+		"max_tls_version", maxTLSVersion,
+	)
 
 	return credentials.NewTLS(&tls.Config{
 		ServerName:   config.SubjectAlternativeName,

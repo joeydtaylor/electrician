@@ -36,7 +36,13 @@ func (h *httpServerAdapter[T]) applyAuthPolicy(err error, required bool) error {
 	if required {
 		return err
 	}
-	h.NotifyLoggers(types.WarnLevel, "Auth: soft-failing policy error: %v", err)
+	h.NotifyLoggers(
+		types.WarnLevel,
+		"Auth: soft-failing policy error",
+		"component", h.componentMetadata,
+		"event", "AuthPolicy",
+		"error", err,
+	)
 	return nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/auth"
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
@@ -188,18 +189,41 @@ func (s *serverAdapter[T]) ensureDefaultAuthValidatorLocked() {
 		return
 	}
 	o := s.authOptions.GetOauth2()
-	if o == nil || !o.GetAcceptIntrospection() || o.GetIntrospectionUrl() == "" {
+	if o == nil {
 		return
 	}
-	validator := newCachingIntrospectionValidator(o)
+
+	var jwtValidator *auth.JWTValidator
+	if o.GetAcceptJwt() && o.GetJwksUri() != "" {
+		jwtValidator = auth.NewJWTValidator(o)
+		if jwtValidator != nil {
+			s.NotifyLoggers(types.InfoLevel, "Auth: installed OAuth2 JWT validator")
+		}
+	}
+
+	var introspectionValidator *cachingIntrospectionValidator
+	if o.GetAcceptIntrospection() && o.GetIntrospectionUrl() != "" {
+		introspectionValidator = newCachingIntrospectionValidator(o)
+		s.NotifyLoggers(types.InfoLevel, "Auth: installed OAuth2 introspection validator")
+	}
+
+	if jwtValidator == nil && introspectionValidator == nil {
+		return
+	}
+
 	s.dynamicAuthValidator = func(ctx context.Context, headers map[string]string) error {
 		token := extractBearerToken(headers)
 		if token == "" {
 			return errors.New("missing bearer token")
 		}
-		return validator.validate(ctx, token)
+		if jwtValidator != nil && (auth.LooksLikeJWT(token) || introspectionValidator == nil) {
+			return jwtValidator.Validate(ctx, token)
+		}
+		if introspectionValidator != nil {
+			return introspectionValidator.validate(ctx, token)
+		}
+		return errors.New("missing bearer token")
 	}
-	s.NotifyLoggers(types.InfoLevel, "Auth: installed OAuth2 introspection validator")
 }
 
 func extractBearerToken(headers map[string]string) string {

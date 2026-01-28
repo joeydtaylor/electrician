@@ -58,7 +58,7 @@ type HTTPClientAdapter[T any] interface {
 
 	// SetComponentMetadata sets the metadata for the Forward Relay, such as its name and ID.
 	SetComponentMetadata(name string, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	GetTokenFromOAuthServer(clientID, clientSecret, tokenURL string, audience string, scopes ...string) (string, error)
 	SetTimeout(timeout time.Duration)
 	SetOAuth2Config(clientID, clientSecret, tokenURL string, audience string, scopes ...string)

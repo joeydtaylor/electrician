@@ -1,21 +1,12 @@
 package conduit
 
-import (
-	"fmt"
-
-	"github.com/joeydtaylor/electrician/pkg/internal/types"
-)
+import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
 // NotifyLoggers emits a log entry to configured loggers.
-func (c *Conduit[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
+func (c *Conduit[T]) NotifyLoggers(level types.LogLevel, msg string, keysAndValues ...interface{}) {
 	loggers := c.snapshotLoggers()
 	if len(loggers) == 0 {
 		return
-	}
-
-	msg := format
-	if len(args) != 0 {
-		msg = fmt.Sprintf(format, args...)
 	}
 
 	type levelChecker interface {
@@ -36,19 +27,19 @@ func (c *Conduit[T]) NotifyLoggers(level types.LogLevel, format string, args ...
 
 		switch level {
 		case types.DebugLevel:
-			logger.Debug(msg)
+			logger.Debug(msg, keysAndValues...)
 		case types.InfoLevel:
-			logger.Info(msg)
+			logger.Info(msg, keysAndValues...)
 		case types.WarnLevel:
-			logger.Warn(msg)
+			logger.Warn(msg, keysAndValues...)
 		case types.ErrorLevel:
-			logger.Error(msg)
+			logger.Error(msg, keysAndValues...)
 		case types.DPanicLevel:
-			logger.DPanic(msg)
+			logger.DPanic(msg, keysAndValues...)
 		case types.PanicLevel:
-			logger.Panic(msg)
+			logger.Panic(msg, keysAndValues...)
 		case types.FatalLevel:
-			logger.Fatal(msg)
+			logger.Fatal(msg, keysAndValues...)
 		}
 	}
 }

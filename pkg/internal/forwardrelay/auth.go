@@ -11,7 +11,11 @@ import (
 func (fr *ForwardRelay[T]) SetAuthenticationOptions(opts *relay.AuthenticationOptions) {
 	fr.requireNotFrozen("SetAuthenticationOptions")
 	fr.authOptions = opts
-	fr.NotifyLoggers(types.DebugLevel, "SetAuthenticationOptions: %+v", opts)
+	fr.logKV(types.DebugLevel, "Authentication options updated",
+		"event", "SetAuthenticationOptions",
+		"result", "SUCCESS",
+		"auth_options", opts,
+	)
 }
 
 // SetOAuth2 configures a per-RPC token source.
@@ -19,10 +23,16 @@ func (fr *ForwardRelay[T]) SetOAuth2(ts types.OAuth2TokenSource) {
 	fr.requireNotFrozen("SetOAuth2")
 	fr.tokenSource = ts
 	if ts == nil {
-		fr.NotifyLoggers(types.DebugLevel, "SetOAuth2: disabled")
+		fr.logKV(types.DebugLevel, "OAuth2 disabled",
+			"event", "SetOAuth2",
+			"result", "DISABLED",
+		)
 		return
 	}
-	fr.NotifyLoggers(types.DebugLevel, "SetOAuth2: enabled")
+	fr.logKV(types.DebugLevel, "OAuth2 enabled",
+		"event", "SetOAuth2",
+		"result", "ENABLED",
+	)
 }
 
 // SetStaticHeaders sets constant gRPC metadata headers.
@@ -32,19 +42,31 @@ func (fr *ForwardRelay[T]) SetStaticHeaders(headers map[string]string) {
 	for k, v := range headers {
 		fr.staticHeaders[k] = v
 	}
-	fr.NotifyLoggers(types.DebugLevel, "SetStaticHeaders: keys=%d", len(fr.staticHeaders))
+	fr.logKV(types.DebugLevel, "Static headers updated",
+		"event", "SetStaticHeaders",
+		"result", "SUCCESS",
+		"header_keys", len(fr.staticHeaders),
+	)
 }
 
 // SetDynamicHeaders registers a per-request header callback.
 func (fr *ForwardRelay[T]) SetDynamicHeaders(fn func(ctx context.Context) map[string]string) {
 	fr.requireNotFrozen("SetDynamicHeaders")
 	fr.dynamicHeaders = fn
-	fr.NotifyLoggers(types.DebugLevel, "SetDynamicHeaders: installed=%t", fn != nil)
+	fr.logKV(types.DebugLevel, "Dynamic headers updated",
+		"event", "SetDynamicHeaders",
+		"result", "SUCCESS",
+		"installed", fn != nil,
+	)
 }
 
 // SetAuthRequired enforces that OAuth2 tokens are present before RPCs.
 func (fr *ForwardRelay[T]) SetAuthRequired(required bool) {
 	fr.requireNotFrozen("SetAuthRequired")
 	fr.authRequired = required
-	fr.NotifyLoggers(types.DebugLevel, "SetAuthRequired: %t", required)
+	fr.logKV(types.DebugLevel, "Auth requirement updated",
+		"event", "SetAuthRequired",
+		"result", "SUCCESS",
+		"required", required,
+	)
 }

@@ -37,12 +37,27 @@ func (fr *ForwardRelay[T]) Submit(ctx context.Context, item T) error {
 	for _, address := range fr.Targets {
 		sess, err := fr.getOrCreateStreamSession(ctx, address)
 		if err != nil {
-			fr.NotifyLoggers(types.ErrorLevel, "Submit: stream setup failed addr=%s err=%v", address, err)
+			fr.logKV(types.ErrorLevel, "Submit: stream setup failed",
+				"event", "Submit",
+				"result", "FAILURE",
+				"target", address,
+				"error", err,
+			)
 			continue
 		}
 
 		select {
 		case sess.sendCh <- env:
+			fr.logKV(types.DebugLevel, "Submit: enqueued",
+				"event", "Submit",
+				"result", "ENQUEUED",
+				"target", address,
+				"id", wp.GetId(),
+				"seq", wp.GetSeq(),
+				"payload_type", wp.GetPayloadType(),
+				"payload_encoding", wp.GetPayloadEncoding(),
+				"payload_bytes", len(wp.GetPayload()),
+			)
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-fr.ctx.Done():

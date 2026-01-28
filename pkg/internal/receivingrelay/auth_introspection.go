@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joeydtaylor/electrician/pkg/internal/auth"
 	"github.com/joeydtaylor/electrician/pkg/internal/relay"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
 )
@@ -188,10 +189,45 @@ func (rr *ReceivingRelay[T]) ensureDefaultAuthValidator() {
 		return
 	}
 	o := rr.authOptions.GetOauth2()
-	if o == nil || !o.GetAcceptIntrospection() || o.GetIntrospectionUrl() == "" {
+	if o == nil {
 		return
 	}
-	validator := newCachingIntrospectionValidator(o)
+
+	var jwtValidator *auth.JWTValidator
+	if o.GetAcceptJwt() && o.GetJwksUri() != "" {
+		jwtValidator = auth.NewJWTValidator(o)
+		if jwtValidator != nil {
+			rr.logKV(
+				types.InfoLevel,
+				"Auth JWT validator installed",
+				"event", "AuthJWT",
+				"result", "SUCCESS",
+				"issuer", o.GetIssuer(),
+				"jwks_url", o.GetJwksUri(),
+				"required_audience", o.GetRequiredAudience(),
+				"required_scopes", o.GetRequiredScopes(),
+			)
+		}
+	}
+
+	var introspectionValidator *cachingIntrospectionValidator
+	if o.GetAcceptIntrospection() && o.GetIntrospectionUrl() != "" {
+		introspectionValidator = newCachingIntrospectionValidator(o)
+		rr.logKV(
+			types.InfoLevel,
+			"Auth introspection validator installed",
+			"event", "AuthIntrospection",
+			"result", "SUCCESS",
+			"introspection_url", o.GetIntrospectionUrl(),
+			"auth_type", o.GetIntrospectionAuthType(),
+			"required_scopes", o.GetRequiredScopes(),
+		)
+	}
+
+	if jwtValidator == nil && introspectionValidator == nil {
+		return
+	}
+
 	rr.dynamicAuthValidator = func(ctx context.Context, md map[string]string) error {
 		var token string
 		if v, ok := md["authorization"]; ok && strings.HasPrefix(strings.ToLower(v), "bearer ") {
@@ -200,7 +236,12 @@ func (rr *ReceivingRelay[T]) ensureDefaultAuthValidator() {
 		if token == "" {
 			return errors.New("missing bearer token")
 		}
-		return validator.validate(ctx, token)
+		if jwtValidator != nil && (auth.LooksLikeJWT(token) || introspectionValidator == nil) {
+			return jwtValidator.Validate(ctx, token)
+		}
+		if introspectionValidator != nil {
+			return introspectionValidator.validate(ctx, token)
+		}
+		return errors.New("missing bearer token")
 	}
-	rr.NotifyLoggers(types.InfoLevel, "Auth: installed OAuth2 introspection validator")
 }

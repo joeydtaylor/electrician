@@ -85,7 +85,7 @@ type HTTPServer[T any] interface {
 
 	// NotifyLoggers is a helper function to send formatted log messages
 	// to all connected loggers. Observers can filter by LogLevel.
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 
 	// SetTimeout sets a read/write timeout for inbound requests, to avoid
 	// hanging connections or slowloris attacks.

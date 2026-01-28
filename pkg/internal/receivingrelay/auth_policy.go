@@ -18,7 +18,13 @@ func (rr *ReceivingRelay[T]) maybePolicyError(err error) error {
 	if rr.authRequired {
 		return err
 	}
-	rr.NotifyLoggers(types.WarnLevel, "Auth: soft-failing policy error: %v", err)
+	rr.logKV(
+		types.WarnLevel,
+		"Auth policy soft-failed",
+		"event", "AuthPolicy",
+		"result", "SOFT_FAIL",
+		"error", err,
+	)
 	return nil
 }
 

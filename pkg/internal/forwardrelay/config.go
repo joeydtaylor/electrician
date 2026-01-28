@@ -12,7 +12,11 @@ func (fr *ForwardRelay[T]) SetTargets(targets ...string) {
 		return
 	}
 	fr.Targets = append(fr.Targets, targets...)
-	fr.NotifyLoggers(types.DebugLevel, "SetTargets: %v", fr.Targets)
+	fr.logKV(types.DebugLevel, "Targets updated",
+		"event", "SetTargets",
+		"result", "SUCCESS",
+		"targets", fr.Targets,
+	)
 }
 
 // SetComponentMetadata updates the relay metadata.
@@ -21,14 +25,23 @@ func (fr *ForwardRelay[T]) SetComponentMetadata(name string, id string) {
 	old := fr.componentMetadata
 	fr.componentMetadata.Name = name
 	fr.componentMetadata.ID = id
-	fr.NotifyLoggers(types.DebugLevel, "SetComponentMetadata: %v -> %v", old, fr.componentMetadata)
+	fr.logKV(types.DebugLevel, "Component metadata updated",
+		"event", "SetComponentMetadata",
+		"result", "SUCCESS",
+		"before", old,
+		"after", fr.componentMetadata,
+	)
 }
 
 // SetPerformanceOptions sets compression-related options.
 func (fr *ForwardRelay[T]) SetPerformanceOptions(perfOptions *relay.PerformanceOptions) {
 	fr.requireNotFrozen("SetPerformanceOptions")
 	fr.PerformanceOptions = perfOptions
-	fr.NotifyLoggers(types.DebugLevel, "SetPerformanceOptions: %v", fr.PerformanceOptions)
+	fr.logKV(types.DebugLevel, "Performance options updated",
+		"event", "SetPerformanceOptions",
+		"result", "SUCCESS",
+		"performance", fr.PerformanceOptions,
+	)
 }
 
 // SetSecurityOptions configures payload encryption settings and key.
@@ -36,19 +49,31 @@ func (fr *ForwardRelay[T]) SetSecurityOptions(secOptions *relay.SecurityOptions,
 	fr.requireNotFrozen("SetSecurityOptions")
 	fr.SecurityOptions = secOptions
 	fr.EncryptionKey = encryptionKey
-	fr.NotifyLoggers(types.DebugLevel, "SetSecurityOptions: %v", fr.SecurityOptions)
+	fr.logKV(types.DebugLevel, "Security options updated",
+		"event", "SetSecurityOptions",
+		"result", "SUCCESS",
+		"security", fr.SecurityOptions,
+	)
 }
 
 // SetTLSConfig sets the TLS configuration for outbound connections.
 func (fr *ForwardRelay[T]) SetTLSConfig(config *types.TLSConfig) {
 	fr.requireNotFrozen("SetTLSConfig")
 	fr.TlsConfig = config
-	fr.NotifyLoggers(types.DebugLevel, "SetTLSConfig: %v", fr.TlsConfig)
+	fr.logKV(types.DebugLevel, "TLS config updated",
+		"event", "SetTLSConfig",
+		"result", "SUCCESS",
+		"tls", fr.TlsConfig,
+	)
 }
 
 // SetPassthrough enables forwarding pre-wrapped payloads without modification.
 func (fr *ForwardRelay[T]) SetPassthrough(enabled bool) {
 	fr.requireNotFrozen("SetPassthrough")
 	fr.passthrough = enabled
-	fr.NotifyLoggers(types.InfoLevel, "SetPassthrough: %t", enabled)
+	fr.logKV(types.InfoLevel, "Passthrough updated",
+		"event", "SetPassthrough",
+		"result", "SUCCESS",
+		"enabled", enabled,
+	)
 }

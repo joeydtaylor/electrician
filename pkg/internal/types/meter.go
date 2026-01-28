@@ -179,7 +179,7 @@ type Meter[T any] interface {
 	StopTimer(metricName string) time.Duration
 	GetComponentMetadata() ComponentMetadata
 	ConnectLogger(...Logger)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	SetComponentMetadata(name string, id string)
 	ResetMetrics()
 }

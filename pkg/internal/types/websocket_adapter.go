@@ -51,7 +51,7 @@ type WebSocketServer[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name string, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 }
 
 // WebSocketClientAdapter connects to a WebSocket endpoint and streams messages in/out.
@@ -80,5 +80,5 @@ type WebSocketClientAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name string, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 }

@@ -2,6 +2,7 @@ package quicrelay
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,12 +22,20 @@ type tokenCacheEntry struct {
 
 type cachingIntrospectionValidator struct {
 	introspectionURL string
-	requiredScopes   []string
+	authType         string
+	clientID         string
+	clientSecret     string
 	bearerToken      string
-	ttl              time.Duration
+	requiredScopes   []string
 
-	mu sync.Mutex
-	m  map[string]tokenCacheEntry
+	hc  *http.Client
+	mu  sync.Mutex
+	m   map[string]tokenCacheEntry
+	ttl time.Duration
+
+	backoffUntil time.Time
+	backoffStep  time.Duration
+	maxBackoff   time.Duration
 }
 
 type introspectResp struct {
@@ -36,15 +45,28 @@ type introspectResp struct {
 
 func newCachingIntrospectionValidator(o *relay.OAuth2Options) *cachingIntrospectionValidator {
 	ttl := time.Duration(o.GetIntrospectionCacheSeconds()) * time.Second
-	if ttl == 0 {
+	if ttl <= 0 {
 		ttl = 30 * time.Second
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			MaxVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true,
+		},
 	}
 	return &cachingIntrospectionValidator{
 		introspectionURL: strings.TrimRight(o.GetIntrospectionUrl(), "/"),
-		requiredScopes:   o.GetRequiredScopes(),
+		authType:         strings.ToLower(o.GetIntrospectionAuthType()),
+		clientID:         o.GetIntrospectionClientId(),
+		clientSecret:     o.GetIntrospectionClientSecret(),
 		bearerToken:      o.GetIntrospectionBearerToken(),
+		requiredScopes:   append([]string(nil), o.GetRequiredScopes()...),
+		hc:               &http.Client{Timeout: 8 * time.Second, Transport: tr},
 		ttl:              ttl,
 		m:                make(map[string]tokenCacheEntry),
+		backoffStep:      250 * time.Millisecond,
+		maxBackoff:       5 * time.Second,
 	}
 }
 
@@ -65,8 +87,14 @@ func (v *cachingIntrospectionValidator) hasAllScopes(granted string) bool {
 }
 
 func (v *cachingIntrospectionValidator) validate(ctx context.Context, token string) error {
+	now := time.Now()
+
+	if until := v.backoffUntil; until.After(now) {
+		return errors.New("auth server backoff in effect")
+	}
+
 	v.mu.Lock()
-	if e, ok := v.m[token]; ok && e.exp.After(time.Now()) {
+	if e, ok := v.m[token]; ok && e.exp.After(now) {
 		v.mu.Unlock()
 		if !e.active {
 			return errors.New("token inactive")
@@ -86,21 +114,46 @@ func (v *cachingIntrospectionValidator) validate(ctx context.Context, token stri
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if v.bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+v.bearerToken)
+
+	switch v.authType {
+	case "basic":
+		req.SetBasicAuth(v.clientID, v.clientSecret)
+	case "bearer":
+		if v.bearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+v.bearerToken)
+		}
+	case "none":
+	default:
+		if v.clientID != "" || v.clientSecret != "" {
+			req.SetBasicAuth(v.clientID, v.clientSecret)
+		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := v.hc.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
+		v.mu.Lock()
+		if v.backoffStep < v.maxBackoff {
+			v.backoffStep *= 2
+			if v.backoffStep > v.maxBackoff {
+				v.backoffStep = v.maxBackoff
+			}
+		}
+		v.backoffUntil = now.Add(v.backoffStep)
+		v.mu.Unlock()
 		return errors.New("introspection 429")
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errors.New("introspection failed")
+	v.mu.Lock()
+	v.backoffStep = 250 * time.Millisecond
+	v.backoffUntil = time.Time{}
+	v.mu.Unlock()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return errors.New(resp.Status)
 	}
 
 	var ir introspectResp
@@ -109,7 +162,7 @@ func (v *cachingIntrospectionValidator) validate(ctx context.Context, token stri
 	}
 
 	v.mu.Lock()
-	v.m[token] = tokenCacheEntry{active: ir.Active, scope: ir.Scope, exp: time.Now().Add(v.ttl)}
+	v.m[token] = tokenCacheEntry{active: ir.Active, scope: ir.Scope, exp: now.Add(v.ttl)}
 	v.mu.Unlock()
 
 	if !ir.Active {

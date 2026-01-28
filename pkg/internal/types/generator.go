@@ -11,7 +11,7 @@ type Generator[T any] interface {
 	IsStarted() bool
 	Restart(ctx context.Context) error
 	ConnectPlug(...Plug[T])
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	ConnectLogger(...Logger)
 	ConnectToComponent(submitters ...Submitter[T])
 	// GetComponentMetadata retrieves the metadata associated with the Conduit, such as its unique identifier,

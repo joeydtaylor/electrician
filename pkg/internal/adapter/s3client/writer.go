@@ -24,8 +24,14 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 	defer tick.Stop()
 
 	a.lastFlush = time.Now()
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeWriter, bucket: %s, prefixTpl: %s",
-		a.componentMetadata, a.bucket, a.prefixTemplate)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"ServeWriter",
+		"component", a.componentMetadata,
+		"event", "ServeWriter",
+		"bucket", a.bucket,
+		"prefix_template", a.prefixTemplate,
+	)
 
 	for {
 		select {
@@ -42,7 +48,13 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 				return nil
 			}
 			if err := a.writeOne(v); err != nil {
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: writeOne, err: %v", a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"writeOne failed",
+					"component", a.componentMetadata,
+					"event", "writeOne",
+					"error", err,
+				)
 				return err
 			}
 			if a.count >= a.batchMaxRecords || a.buf.Len() >= a.batchMaxBytes {
@@ -84,8 +96,16 @@ func (a *S3Client[T]) StartWriter(ctx context.Context) error {
 		go a.fanIn(ctx, a.mergedIn, out)
 	}
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: StartWriter, format: %s, wires: %d, bucket: %s, prefixTpl: %s",
-		a.componentMetadata, a.formatName, len(a.inputWires), a.bucket, a.prefixTemplate)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"StartWriter",
+		"component", a.componentMetadata,
+		"event", "StartWriter",
+		"format", a.formatName,
+		"wires", len(a.inputWires),
+		"bucket", a.bucket,
+		"prefix_template", a.prefixTemplate,
+	)
 
 	for _, sensor := range a.snapshotSensors() {
 		if sensor == nil {
@@ -98,16 +118,26 @@ func (a *S3Client[T]) StartWriter(ctx context.Context) error {
 	case "", "ndjson":
 		go func() {
 			if err := a.ServeWriter(ctx, a.mergedIn); err != nil {
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: ServeWriter, err: %v",
-					a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"ServeWriter failed",
+					"component", a.componentMetadata,
+					"event", "ServeWriter",
+					"error", err,
+				)
 			}
 		}()
 		return nil
 	case "parquet":
 		go func() {
 			if err := a.startParquetStream(ctx, a.mergedIn); err != nil {
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: startParquetStream, err: %v",
-					a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"startParquetStream failed",
+					"component", a.componentMetadata,
+					"event", "startParquetStream",
+					"error", err,
+				)
 			}
 		}()
 		return nil

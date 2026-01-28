@@ -40,8 +40,16 @@ func (a *KafkaClient[T]) StartWriter(ctx context.Context) error {
 	go func() {
 		_ = a.ServeWriter(ctx, a.mergedIn)
 	}()
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: StartWriter, topic: %s, format: %s, wires: %d",
-		a.componentMetadata, a.wTopic, a.wFormat, len(a.inputWires))
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"Kafka writer starting",
+		"component", a.componentMetadata,
+		"event", "StartWriter",
+		"result", "SUCCESS",
+		"topic", a.wTopic,
+		"format", a.wFormat,
+		"wires", len(a.inputWires),
+	)
 
 	return nil
 }
@@ -72,8 +80,15 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 		}
 		sensor.InvokeOnKafkaWriterStart(a.componentMetadata, effTopic, format)
 	}
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStart, topic: %s, format: %s",
-		a.componentMetadata, effTopic, format)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"Kafka writer started",
+		"component", a.componentMetadata,
+		"event", "WriterStart",
+		"result", "SUCCESS",
+		"topic", effTopic,
+		"format", format,
+	)
 	defer func() {
 		for _, sensor := range a.snapshotSensors() {
 			if sensor == nil {
@@ -81,7 +96,13 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 			}
 			sensor.InvokeOnKafkaWriterStop(a.componentMetadata)
 		}
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStop", a.componentMetadata)
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Kafka writer stopped",
+			"component", a.componentMetadata,
+			"event", "WriterStop",
+			"result", "SUCCESS",
+		)
 	}()
 
 	maxRecs := a.wBatchMaxRecords
@@ -118,8 +139,17 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 			}
 			sensor.InvokeOnKafkaBatchFlush(a.componentMetadata, effTopic, len(pending), byteTally, a.wCompression)
 		}
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: BatchFlush, topic: %s, records: %d, bytes: %d, compression: %s",
-			a.componentMetadata, effTopic, len(pending), byteTally, a.wCompression)
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Kafka batch flush",
+			"component", a.componentMetadata,
+			"event", "BatchFlush",
+			"result", "SUCCESS",
+			"topic", effTopic,
+			"records", len(pending),
+			"bytes", byteTally,
+			"compression", a.wCompression,
+		)
 
 		partForHook := -1
 		if a.wManualPartition != nil {
@@ -127,8 +157,16 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 		}
 
 		for _, m := range pending {
-			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: ProduceAttempt, topic: %s, partition: %d, key_bytes: %d, val_bytes: %d",
-				a.componentMetadata, effTopic, partForHook, len(m.key), len(m.val))
+			a.NotifyLoggers(
+				types.DebugLevel,
+				"Kafka produce attempt",
+				"component", a.componentMetadata,
+				"event", "ProduceAttempt",
+				"topic", effTopic,
+				"partition", partForHook,
+				"key_bytes", len(m.key),
+				"val_bytes", len(m.val),
+			)
 
 			topicForMessage := ""
 			if _, has := a.producer.(*kafka.Writer); !has {
@@ -143,8 +181,15 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 					}
 					sensor.InvokeOnKafkaProduceError(a.componentMetadata, effTopic, partForHook, err)
 				}
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Produce, topic: %s, err: %v",
-					a.componentMetadata, effTopic, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"Kafka produce failed",
+					"component", a.componentMetadata,
+					"event", "Produce",
+					"result", "FAILURE",
+					"topic", effTopic,
+					"error", err,
+				)
 				return err
 			}
 
@@ -158,8 +203,16 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 			if offset >= 0 {
 				offsetStr = fmt.Sprintf("%d", offset)
 			}
-			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ProduceSuccess, topic: %s, partition: %d, offset: %s",
-				a.componentMetadata, effTopic, partition, offsetStr)
+			a.NotifyLoggers(
+				types.InfoLevel,
+				"Kafka produce success",
+				"component", a.componentMetadata,
+				"event", "ProduceSuccess",
+				"result", "SUCCESS",
+				"topic", effTopic,
+				"partition", partition,
+				"offset", offsetStr,
+			)
 		}
 
 		pending = pending[:0]
@@ -189,10 +242,22 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 			}
 		}
 		if key != nil {
-			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: KeyRendered, bytes: %d", a.componentMetadata, len(key))
+			a.NotifyLoggers(
+				types.DebugLevel,
+				"Kafka key rendered",
+				"component", a.componentMetadata,
+				"event", "KeyRendered",
+				"bytes", len(key),
+			)
 		}
 		if hdrs != nil {
-			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: HeadersRendered, count: %d", a.componentMetadata, len(hdrs))
+			a.NotifyLoggers(
+				types.DebugLevel,
+				"Kafka headers rendered",
+				"component", a.componentMetadata,
+				"event", "HeadersRendered",
+				"count", len(hdrs),
+			)
 		}
 		return key, val, hdrs, nil
 	}
@@ -210,7 +275,14 @@ func (a *KafkaClient[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 			}
 			k, v, h, err := encode(m)
 			if err != nil {
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Encode, err: %v", a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"Kafka encode failed",
+					"component", a.componentMetadata,
+					"event", "Encode",
+					"result", "FAILURE",
+					"error", err,
+				)
 				continue
 			}
 			pending = append(pending, msg{key: k, val: v, headers: h})

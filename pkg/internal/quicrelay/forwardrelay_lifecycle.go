@@ -31,13 +31,19 @@ func (fr *ForwardRelay[T]) Start(ctx context.Context) error {
 	}
 
 	atomic.StoreInt32(&fr.isRunning, 1)
-	fr.NotifyLoggers(types.InfoLevel, "Start: QUIC forward relay running")
+	fr.logKV(types.InfoLevel, "QUIC forward relay started",
+		"event", "Start",
+		"result", "SUCCESS",
+	)
 	return nil
 }
 
 // Stop halts the relay and closes active streams.
 func (fr *ForwardRelay[T]) Stop() {
-	fr.NotifyLoggers(types.InfoLevel, "Stop: stopping QUIC forward relay")
+	fr.logKV(types.InfoLevel, "QUIC forward relay stopping",
+		"event", "Stop",
+		"result", "SUCCESS",
+	)
 	fr.cancel()
 	fr.closeAllStreams("relay stop")
 	atomic.StoreInt32(&fr.isRunning, 0)

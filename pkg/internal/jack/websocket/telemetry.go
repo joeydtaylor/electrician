@@ -11,7 +11,13 @@ func (s *serverAdapter[T]) notifyLifecycleStart() {
 		sensor.InvokeOnStart(s.componentMetadata)
 	}
 	if len(sensors) > 0 {
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: Start", s.componentMetadata)
+		s.NotifyLoggers(
+			types.DebugLevel,
+			"WebSocket server started",
+			"component", s.componentMetadata,
+			"event", "Start",
+			"result", "SUCCESS",
+		)
 	}
 }
 
@@ -24,6 +30,12 @@ func (s *serverAdapter[T]) notifyLifecycleStop() {
 		sensor.InvokeOnStop(s.componentMetadata)
 	}
 	if len(sensors) > 0 {
-		s.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: Stop", s.componentMetadata)
+		s.NotifyLoggers(
+			types.DebugLevel,
+			"WebSocket server stopped",
+			"component", s.componentMetadata,
+			"event", "Stop",
+			"result", "SUCCESS",
+		)
 	}
 }

@@ -177,7 +177,7 @@ func TestNotifyLoggers(t *testing.T) {
 	log := &stubLogger{level: types.InfoLevel}
 	m.ConnectLogger(log)
 
-	m.NotifyLoggers(types.InfoLevel, "hello %s", "world")
+	m.NotifyLoggers(types.InfoLevel, "hello world")
 	if atomic.LoadInt32(&log.infoCount) != 1 {
 		t.Fatalf("expected info log")
 	}

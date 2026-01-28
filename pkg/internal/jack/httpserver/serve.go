@@ -69,10 +69,26 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 	go func() {
 		var err error
 		if cfg.tlsConfig != nil {
-			h.NotifyLoggers(types.InfoLevel, "Serve: starting HTTPS server on %s %s", cfg.address, cfg.endpoint)
+			h.NotifyLoggers(
+				types.InfoLevel,
+				"Serve: starting HTTPS server",
+				"component", h.componentMetadata,
+				"event", "ServeStart",
+				"tls", true,
+				"address", cfg.address,
+				"endpoint", cfg.endpoint,
+			)
 			err = h.server.ListenAndServeTLS("", "")
 		} else {
-			h.NotifyLoggers(types.InfoLevel, "Serve: starting HTTP server on %s %s", cfg.address, cfg.endpoint)
+			h.NotifyLoggers(
+				types.InfoLevel,
+				"Serve: starting HTTP server",
+				"component", h.componentMetadata,
+				"event", "ServeStart",
+				"tls", false,
+				"address", cfg.address,
+				"endpoint", cfg.endpoint,
+			)
 			err = h.server.ListenAndServe()
 		}
 		errCh <- err
@@ -80,7 +96,13 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 
 	select {
 	case <-ctx.Done():
-		h.NotifyLoggers(types.WarnLevel, "Serve: context canceled, shutting down")
+		h.NotifyLoggers(
+			types.WarnLevel,
+			"Serve: context canceled, shutting down",
+			"component", h.componentMetadata,
+			"event", "ServeStop",
+			"result", "CANCELLED",
+		)
 		shutdownTimeout := cfg.timeout
 		if shutdownTimeout <= 0 {
 			shutdownTimeout = 5 * time.Second
@@ -91,7 +113,13 @@ func (h *httpServerAdapter[T]) Serve(ctx context.Context, submitFunc func(ctx co
 		return ctx.Err()
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
-			h.NotifyLoggers(types.ErrorLevel, "Serve: server error: %v", err)
+			h.NotifyLoggers(
+				types.ErrorLevel,
+				"Serve: server error",
+				"component", h.componentMetadata,
+				"event", "ServeError",
+				"error", err,
+			)
 			return err
 		}
 		return nil
@@ -108,7 +136,13 @@ func (h *httpServerAdapter[T]) buildHandler(cfg serverConfig, submitFunc func(ct
 		}
 
 		if err := h.authorizeRequest(r.Context(), r, cfg); err != nil {
-			h.NotifyLoggers(types.WarnLevel, "Auth: request rejected: %v", err)
+			h.NotifyLoggers(
+				types.WarnLevel,
+				"Auth: request rejected",
+				"component", h.componentMetadata,
+				"event", "AuthReject",
+				"error", err,
+			)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}

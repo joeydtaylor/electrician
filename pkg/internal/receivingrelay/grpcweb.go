@@ -28,14 +28,33 @@ func (rr *ReceivingRelay[T]) ListenGRPCWeb(listenForever bool, retryInSeconds in
 	grpcServer := rr.newGRPCWebServer()
 	handler := rr.buildGRPCWebHandler(grpcServer, cfg)
 
-	rr.NotifyLoggers(types.InfoLevel, "ListenGRPCWeb: binding %s", rr.Address)
+	rr.logKV(
+		types.InfoLevel,
+		"gRPC-Web binding",
+		"event", "ListenGRPCWeb",
+		"result", "START",
+		"address", rr.Address,
+	)
 	lis, err := net.Listen("tcp", rr.Address)
 	if err != nil {
-		rr.NotifyLoggers(types.ErrorLevel, "ListenGRPCWeb: bind failed %s: %v", rr.Address, err)
+		rr.logKV(
+			types.ErrorLevel,
+			"gRPC-Web bind failed",
+			"event", "ListenGRPCWeb",
+			"result", "FAILURE",
+			"address", rr.Address,
+			"error", err,
+		)
 		if !listenForever {
 			return err
 		}
-		rr.NotifyLoggers(types.WarnLevel, "ListenGRPCWeb: retrying in %d seconds", retryInSeconds)
+		rr.logKV(
+			types.WarnLevel,
+			"gRPC-Web retrying",
+			"event", "ListenGRPCWebRetry",
+			"result", "RETRY",
+			"retry_in_seconds", retryInSeconds,
+		)
 		time.Sleep(time.Duration(retryInSeconds) * time.Second)
 		return rr.ListenGRPCWeb(listenForever, retryInSeconds)
 	}
@@ -48,7 +67,13 @@ func (rr *ReceivingRelay[T]) ListenGRPCWeb(listenForever bool, retryInSeconds in
 
 	serve := func(l net.Listener) error {
 		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-			rr.NotifyLoggers(types.ErrorLevel, "ListenGRPCWeb: server stopped: %v", err)
+			rr.logKV(
+				types.ErrorLevel,
+				"gRPC-Web server stopped",
+				"event", "ListenGRPCWebStopped",
+				"result", "FAILURE",
+				"error", err,
+			)
 			return err
 		}
 		return nil
@@ -57,12 +82,23 @@ func (rr *ReceivingRelay[T]) ListenGRPCWeb(listenForever bool, retryInSeconds in
 	if rr.TlsConfig != nil && rr.TlsConfig.UseTLS {
 		tlsCfg, err := buildGRPCWebTLSConfig(rr.TlsConfig)
 		if err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "ListenGRPCWeb: TLS config error: %v", err)
+			rr.logKV(
+				types.ErrorLevel,
+				"gRPC-Web TLS config error",
+				"event", "ListenGRPCWebTLS",
+				"result", "FAILURE",
+				"error", err,
+			)
 			return err
 		}
 		srv.TLSConfig = tlsCfg
 		lis = tls.NewListener(lis, tlsCfg)
-		rr.NotifyLoggers(types.InfoLevel, "ListenGRPCWeb: TLS enabled")
+		rr.logKV(
+			types.InfoLevel,
+			"gRPC-Web TLS enabled",
+			"event", "ListenGRPCWebTLS",
+			"result", "SUCCESS",
+		)
 	}
 
 	if !listenForever {
@@ -81,7 +117,13 @@ func (rr *ReceivingRelay[T]) StartGRPCWeb(ctx context.Context) error {
 	atomic.StoreInt32(&rr.configFrozen, 1)
 	rr.startOutputFanout()
 
-	rr.NotifyLoggers(types.InfoLevel, "StartGRPCWeb: starting receiving relay")
+	rr.logKV(
+		types.InfoLevel,
+		"gRPC-Web receiving relay starting",
+		"event", "StartGRPCWeb",
+		"result", "SUCCESS",
+		"outputs", len(rr.Outputs),
+	)
 	for _, output := range rr.Outputs {
 		if !output.IsStarted() {
 			output.Start(ctx)
@@ -227,6 +269,12 @@ func (rr *ReceivingRelay[T]) shutdownGRPCWebServer() {
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-		rr.NotifyLoggers(types.WarnLevel, "Stop: grpc-web shutdown error: %v", err)
+		rr.logKV(
+			types.WarnLevel,
+			"gRPC-Web shutdown error",
+			"event", "StopGRPCWeb",
+			"result", "FAILURE",
+			"error", err,
+		)
 	}
 }

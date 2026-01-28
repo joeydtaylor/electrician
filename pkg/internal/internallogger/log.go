@@ -36,10 +36,33 @@ func (z *ZapLoggerAdapter) Log(level types.LogLevel, msg string, keysAndValues .
 			continue
 		}
 		value := keysAndValues[i+1]
+		switch v := value.(type) {
+		case types.ComponentMetadata:
+			fields = append(fields, zap.Any(key, componentToLogMap(v)))
+			continue
+		case *types.ComponentMetadata:
+			if v == nil {
+				fields = append(fields, zap.Any(key, nil))
+				continue
+			}
+			fields = append(fields, zap.Any(key, componentToLogMap(*v)))
+			continue
+		case error:
+			fields = append(fields, zap.NamedError(key, v))
+			continue
+		}
 		fields = append(fields, zap.Any(key, value))
 	}
 
 	logger.Check(zapLevel, msg).Write(fields...)
+}
+
+func componentToLogMap(meta types.ComponentMetadata) map[string]string {
+	return map[string]string{
+		"id":   meta.ID,
+		"type": meta.Type,
+		"name": meta.Name,
+	}
 }
 
 // Debug logs a debug message.

@@ -48,7 +48,16 @@ func WithOAuth2ClientCredentials[T any](clientID, clientSecret, tokenURL string,
 		hp.SetOAuth2Config(clientID, clientSecret, tokenURL, audience, scopes...)
 		token, err := hp.GetTokenFromOAuthServer(clientID, clientSecret, tokenURL, audience, scopes...)
 		if err != nil {
-			hp.NotifyLoggers(types.ErrorLevel, "failed to set OAuth2 credentials: %v", err)
+			hp.NotifyLoggers(
+				types.ErrorLevel,
+				"OAuth2 credentials failed",
+				"component", hp.GetComponentMetadata(),
+				"event", "OAuth2Config",
+				"error", err,
+				"token_url", tokenURL,
+				"audience", audience,
+				"scopes", scopes,
+			)
 			return
 		}
 		hp.AddHeader("Authorization", "Bearer "+token)

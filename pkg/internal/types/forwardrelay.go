@@ -21,7 +21,7 @@ type ForwardRelay[T any] interface {
 	GetComponentMetadata() ComponentMetadata
 	GetInput() []Receiver[T]
 	IsRunning() bool
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 
 	SetTargets(...string)
 	SetComponentMetadata(name string, id string)

@@ -20,7 +20,18 @@ func (rr *ReceivingRelay[T]) Receive(ctx context.Context, payload *relay.Wrapped
 		traceID = utils.GenerateUniqueHash()
 	}
 
-	rr.NotifyLoggers(types.InfoLevel, "Receive: unary payload trace_id=%s", traceID)
+	rr.logKV(
+		types.InfoLevel,
+		"Unary payload received",
+		"event", "Receive",
+		"result", "SUCCESS",
+		"trace_id", traceID,
+		"id", payload.GetId(),
+		"seq", payload.GetSeq(),
+		"payload_type", payload.GetPayloadType(),
+		"payload_encoding", payload.GetPayloadEncoding(),
+		"payload_bytes", len(payload.GetPayload()),
+	)
 
 	ack := &relay.StreamAcknowledgment{
 		Success:   true,
@@ -38,17 +49,43 @@ func (rr *ReceivingRelay[T]) Receive(ctx context.Context, payload *relay.Wrapped
 			var err error
 			data, err = rr.asPassthroughItem(p)
 			if err != nil {
-				rr.NotifyLoggers(types.ErrorLevel, "Receive: passthrough failed trace_id=%s err=%v", tid, err)
+				rr.logKV(
+					types.ErrorLevel,
+					"Passthrough failed",
+					"event", "Receive",
+					"result", "FAILURE",
+					"trace_id", tid,
+					"id", p.GetId(),
+					"seq", p.GetSeq(),
+					"error", err,
+				)
 				return
 			}
 		} else {
 			if err := UnwrapPayload(p, rr.DecryptionKey, &data); err != nil {
-				rr.NotifyLoggers(types.ErrorLevel, "Receive: unwrap failed trace_id=%s err=%v", tid, err)
+				rr.logKV(
+					types.ErrorLevel,
+					"Unwrap failed",
+					"event", "Receive",
+					"result", "FAILURE",
+					"trace_id", tid,
+					"id", p.GetId(),
+					"seq", p.GetSeq(),
+					"error", err,
+				)
 				return
 			}
 		}
 
-		rr.NotifyLoggers(types.InfoLevel, "Receive: forwarding trace_id=%s", tid)
+		rr.logKV(
+			types.InfoLevel,
+			"Forwarding to outputs",
+			"event", "ReceiveForward",
+			"result", "SUCCESS",
+			"trace_id", tid,
+			"id", p.GetId(),
+			"seq", p.GetSeq(),
+		)
 		select {
 		case rr.DataCh <- data:
 		case <-rr.ctx.Done():

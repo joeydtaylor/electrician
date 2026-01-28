@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 package electrician;
 
@@ -22,6 +23,23 @@ message WrappedPayload {
 
   PayloadEncoding payload_encoding = 7;
   string payload_type = 8; // e.g. "electrician.Feedback" or type URL
+
+  // existing additions you’re adopting (20..26):
+  DeliveryMode delivery = 20;
+  string channel = 21;
+  string ordering_key = 22;
+  google.protobuf.Timestamp expires_at = 23;
+  DropPolicy drop_policy = 24;
+  string dedupe_key = 25;
+  TransportHints transport_hints = 26;
+
+  // ----------------------------
+  // ADDITIONS (ergonomics)
+  // ----------------------------
+  SemanticProfile profile = 27;
+
+  // Helps adapters handle MTU/datagrams safely.
+  FragmentInfo fragment = 28;
 }
 
 message ErrorInfo {
@@ -40,6 +58,16 @@ message MessageMetadata {
   SecurityOptions security = 7;
   AuthenticationOptions authentication = 8;
   AuthContext auth_context = 9;
+
+  // ----------------------------
+  // ADDITIONS (backwards-compatible)
+  // ----------------------------
+  RoutingOptions routing = 20;
+  QoSOptions qos = 21;
+  FlowControlOptions flow_control = 22;
+  RateLimitOptions rate_limit = 23;
+  RecordOptions record = 24;
+  ReplayOptions replay = 25;
 }
 
 message SecurityOptions {
@@ -134,6 +162,384 @@ enum AckMode {
   ACK_NONE = 3;
 }
 
+// ----------------------------
+// DELIVERY / DROP POLICIES
+// ----------------------------
+enum DeliveryMode {
+  DELIVERY_MODE_UNSPECIFIED = 0;
+  DELIVERY_RELIABLE_ORDERED = 1;
+  DELIVERY_RELIABLE_UNORDERED = 2;
+  DELIVERY_UNRELIABLE = 3;
+}
+
+enum DropPolicy {
+  DROP_POLICY_UNSPECIFIED = 0;
+  DROP_NONE = 1;
+  DROP_OLD_OR_EXPIRED = 2;
+  DROP_OLD = 3;
+  DROP_NEW = 4;
+}
+
+// ----------------------------
+// TRANSPORT HINTS / CAPABILITIES
+// ----------------------------
+message TransportHints {
+  // Preferred protocol hint: "quic", "udp", "grpc", "wss", etc.
+  string preferred_protocol = 1;
+  bool allow_datagram = 2;
+  bool allow_stream = 3;
+  uint32 max_datagram_bytes = 4;
+  uint32 mtu_bytes = 5;
+  map<string, string> params = 6;
+}
+
+message TransportCapabilities {
+  bool supports_datagram = 1;
+  bool supports_streams = 2;
+  uint32 max_datagram_bytes = 3;
+  uint32 max_streams = 4;
+  bool supports_ack_batch = 5;
+  repeated string protocols = 6;
+  map<string, string> params = 7;
+}
+
+// ----------------------------
+// PROFILES (ergonomics defaults)
+// ----------------------------
+enum SemanticProfile {
+  PROFILE_UNSPECIFIED = 0;
+
+  // Latest-wins / realtime state (movement, camera, proximity telemetry).
+  PROFILE_REALTIME_SNAPSHOT = 1;
+
+  // Low-latency commands that must arrive (inputs, ability casts, interaction).
+  PROFILE_REALTIME_COMMAND = 2;
+
+  // Strong correctness / durable transitions (inventory, currency, purchases).
+  PROFILE_TRANSACTION = 3;
+
+  // High-volume events where order is not required but delivery matters (telemetry).
+  PROFILE_TELEMETRY = 4;
+
+  // Large payloads / chunking / bulk IO (assets, big state sync, downloads).
+  PROFILE_BULK_TRANSFER = 5;
+
+  // Control plane (ping/time sync/caps/subscription mgmt).
+  PROFILE_CONTROL = 6;
+}
+
+// ----------------------------
+// ROUTING / FANOUT
+// ----------------------------
+enum FanoutMode {
+  FANOUT_UNSPECIFIED = 0;
+  FANOUT_UNICAST = 1;
+  FANOUT_MULTICAST = 2;
+  FANOUT_BROADCAST = 3;
+  FANOUT_PUBSUB = 4;
+}
+
+message Vec3d {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message AABBd {
+  Vec3d min = 1;
+  Vec3d max = 2;
+}
+
+message Sphered {
+  Vec3d center = 1;
+  double radius = 2;
+}
+
+// General “space/world/floorplan/map” hint. Used for interest and routing.
+message SpatialHint {
+  string space_id = 1;
+
+  oneof area {
+    Sphered sphere = 2;
+    AABBd box = 3;
+    string cell_id = 4; // if you already partitioned into canonical cells
+  }
+}
+
+message RoutingOptions {
+  FanoutMode fanout = 1;
+
+  // Direct targets
+  repeated string session_ids = 2;   // your session identity (not necessarily auth principal)
+  repeated string principals = 3;    // authenticated principal(s)
+
+  // Group/topic targets (lobby/party/guild/zone/topic)
+  repeated string group_ids = 4;
+  string topic = 5;
+
+  // Placement hints (generalized, works for games and non-games)
+  string namespace = 6;   // e.g. "prod", "demo", "tenantA"
+  string region = 7;      // e.g. "us-east-1"
+  string shard_id = 8;
+  string instance_id = 9;
+  string cell_id = 10;
+  string affinity_key = 11; // consistent routing key (player_id, device_id, etc.)
+
+  bool echo_to_sender = 12;
+
+  SpatialHint spatial = 13;
+}
+
+// ----------------------------
+// QoS / RETRY / FLOW CONTROL / RATE LIMIT
+// ----------------------------
+message RetryPolicy {
+  // 0 = no retry
+  uint32 max_attempts = 1;
+
+  google.protobuf.Duration initial_backoff = 2;
+  google.protobuf.Duration max_backoff = 3;
+
+  double backoff_multiplier = 4; // e.g. 2.0
+  bool jitter = 5;
+}
+
+message QoSOptions {
+  // Soft deadline relative to send time. Adapters/receivers may drop after deadline.
+  google.protobuf.Duration deadline = 1;
+
+  // Indicates the receiver can safely dedupe and the sender can retry.
+  bool idempotent = 2;
+
+  RetryPolicy retry = 3;
+
+  // If queued longer than this, receiver may drop.
+  google.protobuf.Duration max_queue_time = 4;
+}
+
+enum BackpressureAction {
+  BACKPRESSURE_UNSPECIFIED = 0;
+
+  // Apply backpressure to sender (block/slow).
+  BACKPRESSURE_BLOCK = 1;
+
+  // Drop messages when overloaded.
+  BACKPRESSURE_DROP = 2;
+
+  // Prefer dropping old (latest-wins) if overloaded.
+  BACKPRESSURE_DROP_OLD = 3;
+
+  // Prefer dropping new if overloaded (keep backlog).
+  BACKPRESSURE_DROP_NEW = 4;
+
+  // Don’t block; signal sender via directive/acks to slow down.
+  BACKPRESSURE_SIGNAL = 5;
+}
+
+message FlowControlOptions {
+  // Optional overrides (StreamOpen already has max_in_flight; this can be per-message/channel).
+  uint32 max_in_flight = 1;
+
+  // Adapter batching hints
+  uint32 max_batch_messages = 2;
+  uint32 max_batch_bytes = 3;
+
+  BackpressureAction action = 4;
+}
+
+message FlowControlState {
+  uint32 in_flight = 1;
+  uint32 max_in_flight = 2;
+
+  uint64 queue_messages = 3;
+  uint64 queue_bytes = 4;
+}
+
+message RateLimitOptions {
+  // Token bucket semantics
+  uint32 tokens_per_second = 1;
+  uint32 burst = 2;
+
+  // "session", "principal", "ip", or custom keying implemented by your stack
+  string key = 3;
+}
+
+// ----------------------------
+// RECORD / REPLAY (S3 parquet)
+// ----------------------------
+enum RecordMode {
+  RECORD_MODE_UNSPECIFIED = 0;
+  RECORD_NONE = 1;
+  RECORD_SAMPLED = 2;
+  RECORD_ALL = 3;
+}
+
+enum DataSensitivity {
+  SENSITIVITY_UNSPECIFIED = 0;
+  SENSITIVITY_PUBLIC = 1;
+  SENSITIVITY_INTERNAL = 2;
+  SENSITIVITY_CONFIDENTIAL = 3;
+  SENSITIVITY_RESTRICTED = 4;
+}
+
+message RecordOptions {
+  RecordMode mode = 1;
+
+  // 0..1 used when RECORD_SAMPLED
+  double sample_rate = 2;
+
+  // Dataset/stream name for parquet partitioning.
+  string log_stream = 3;
+
+  DataSensitivity sensitivity = 4;
+}
+
+enum ReplayMode {
+  REPLAY_MODE_UNSPECIFIED = 0;
+  REPLAY_FROM_CURSOR = 1;
+  REPLAY_TIME_RANGE = 2;
+  REPLAY_TAIL = 3;
+}
+
+message LogCursor {
+  string log_stream = 1;
+  string cursor = 2; // opaque (parquet manifest pointer / offset / etc.)
+}
+
+message ReplayOptions {
+  ReplayMode mode = 1;
+
+  LogCursor cursor = 2;
+
+  google.protobuf.Timestamp from = 3;
+  google.protobuf.Timestamp to = 4;
+
+  uint32 max_messages = 5;
+
+  // After replay, continue streaming live messages.
+  bool include_live = 6;
+}
+
+// ----------------------------
+// FRAGMENTATION / BATCHING (datagrams + perf)
+// ----------------------------
+message FragmentInfo {
+  string group_id = 1;
+  uint32 index = 2;       // 0-based
+  uint32 count = 3;
+  uint32 total_bytes = 4; // optional
+}
+
+// Batch wrapper (optional; you can also batch at adapter layer)
+message PayloadBatch {
+  repeated WrappedPayload items = 1;
+}
+
+// ----------------------------
+// SUBSCRIPTIONS (topic + spatial)
+// ----------------------------
+message SubscriptionSpec {
+  string subscription_id = 1;
+
+  // Match modes:
+  string channel = 2;        // exact match
+  string channel_prefix = 3; // prefix match
+  string topic = 4;          // pubsub topic/group
+
+  SpatialHint spatial = 5;   // spatial interest
+
+  // Defaults for traffic delivered under this subscription
+  DeliveryMode delivery = 6;
+  DropPolicy drop_policy = 7;
+
+  // Delivery shaping
+  uint32 max_updates_per_second = 8;
+  uint32 max_entities = 9;
+}
+
+message SubscriptionResult {
+  string subscription_id = 1;
+  bool success = 2;
+  ErrorInfo error = 3;
+}
+
+message SubscribeRequest {
+  repeated SubscriptionSpec subscriptions = 1;
+}
+
+message SubscribeResponse {
+  repeated SubscriptionResult results = 1;
+}
+
+message UnsubscribeRequest {
+  repeated string subscription_ids = 1;
+}
+
+message UnsubscribeResponse {
+  repeated SubscriptionResult results = 1;
+}
+
+// ----------------------------
+// CONTROL DIRECTIVES (handoff/throttle/challenge)
+// ----------------------------
+message Endpoint {
+  // "quic", "udp", "grpc", "wss", etc.
+  string protocol = 1;
+  string host = 2;
+  uint32 port = 3;
+  map<string, string> params = 4;
+}
+
+message Redirect {
+  string reason = 1;
+  repeated Endpoint endpoints = 2;
+
+  // Token used to resume session/state on new endpoint.
+  bytes resume_token = 3;
+
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message Throttle {
+  // Server telling client to slow down.
+  uint32 retry_after_ms = 1;
+  uint32 max_in_flight = 2;
+  uint32 tokens_per_second = 3;
+}
+
+message Challenge {
+  // Optional “prove you’re not a bot / mitigate abuse” hook.
+  string type = 1; // "pow", "token", etc.
+  bytes nonce = 2;
+  uint32 difficulty = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message ControlDirective {
+  oneof directive {
+    Redirect redirect = 1;
+    Throttle throttle = 2;
+    Challenge challenge = 3;
+    TransportCapabilities capabilities = 4;
+  }
+}
+
+// ----------------------------
+// TIME SYNC (tick alignment, interpolation)
+// ----------------------------
+message ClockSyncRequest {
+  uint64 nonce = 1;
+  uint64 t1_unix_ns = 2; // client send time
+}
+
+message ClockSyncResponse {
+  uint64 nonce = 1;
+
+  uint64 t1_unix_ns = 2; // echoed client send time
+  uint64 t2_unix_ns = 3; // server receive time
+  uint64 t3_unix_ns = 4; // server send time
+}
+
 message StreamOpen {
   string stream_id = 1;
   MessageMetadata defaults = 2;
@@ -141,6 +547,22 @@ message StreamOpen {
   uint32 ack_every_n = 4;     
   uint32 max_in_flight = 5;
   bool omit_payload_metadata = 6;
+
+  // existing additions (20..25):
+  DeliveryMode default_delivery = 20;
+  string default_channel = 21;
+  string default_ordering_key = 22;
+  DropPolicy default_drop_policy = 23;
+  TransportCapabilities capabilities = 24;
+  TransportHints transport_hints = 25;
+
+  // ----------------------------
+  // ADDITIONS (ergonomics)
+  // ----------------------------
+  SemanticProfile default_profile = 26;
+
+  // “Just make it work”: user can open a connection and subscribe immediately.
+  repeated SubscriptionSpec initial_subscriptions = 30;
 }
 
 message StreamClose {
@@ -172,4 +594,36 @@ message StreamAcknowledgment {
   uint64 last_seq = 9;
   uint32 ok_count = 10;
   uint32 err_count = 11;
+
+  // ----------------------------
+  // ADDITIONS (server control surface)
+  // ----------------------------
+  ControlDirective directive = 20;
+  FlowControlState flow_state = 21;
+}
+
+// ----------------------------
+// FULL-DUPLEX INTERACTIVE CLIENT STREAM
+// ----------------------------
+message MeshFrame {
+  oneof msg {
+    StreamOpen open = 1;
+    WrappedPayload payload = 2;
+    StreamAcknowledgment ack = 3;
+    StreamClose close = 4;
+
+    // Control messages can be sent as normal WrappedPayload too,
+    // but keeping them explicit makes client SDK ergonomics simpler.
+    SubscribeRequest subscribe = 5;
+    SubscribeResponse subscribe_ok = 6;
+    UnsubscribeRequest unsubscribe = 7;
+    UnsubscribeResponse unsubscribe_ok = 8;
+
+    ClockSyncRequest clock_sync = 9;
+    ClockSyncResponse clock_sync_ok = 10;
+  }
+}
+
+service MeshService {
+  rpc Connect(stream MeshFrame) returns (stream MeshFrame);
 }

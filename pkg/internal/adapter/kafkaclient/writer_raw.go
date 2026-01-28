@@ -28,8 +28,15 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 		}
 		sensor.InvokeOnKafkaWriterStart(a.componentMetadata, effTopic, "raw")
 	}
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStart, topic: %s, format: raw",
-		a.componentMetadata, effTopic)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"Kafka writer started",
+		"component", a.componentMetadata,
+		"event", "WriterStart",
+		"result", "SUCCESS",
+		"topic", effTopic,
+		"format", "raw",
+	)
 	defer func() {
 		for _, sensor := range a.snapshotSensors() {
 			if sensor == nil {
@@ -37,7 +44,13 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 			}
 			sensor.InvokeOnKafkaWriterStop(a.componentMetadata)
 		}
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: WriterStop", a.componentMetadata)
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Kafka writer stopped",
+			"component", a.componentMetadata,
+			"event", "WriterStop",
+			"result", "SUCCESS",
+		)
 	}()
 
 	maxRecs := a.wBatchMaxRecords
@@ -70,8 +83,17 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 			}
 			sensor.InvokeOnKafkaBatchFlush(a.componentMetadata, effTopic, len(pending), byteTally, a.wCompression)
 		}
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: BatchFlush, topic: %s, records: %d, bytes: %d, compression: %s",
-			a.componentMetadata, effTopic, len(pending), byteTally, a.wCompression)
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Kafka batch flush",
+			"component", a.componentMetadata,
+			"event", "BatchFlush",
+			"result", "SUCCESS",
+			"topic", effTopic,
+			"records", len(pending),
+			"bytes", byteTally,
+			"compression", a.wCompression,
+		)
 
 		partForHook := -1
 		if a.wManualPartition != nil {
@@ -79,8 +101,16 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 		}
 
 		for _, m := range pending {
-			a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: ProduceAttempt, topic: %s, partition: %d, key_bytes: %d, val_bytes: %d",
-				a.componentMetadata, effTopic, partForHook, 0, len(m.val))
+			a.NotifyLoggers(
+				types.DebugLevel,
+				"Kafka produce attempt",
+				"component", a.componentMetadata,
+				"event", "ProduceAttempt",
+				"topic", effTopic,
+				"partition", partForHook,
+				"key_bytes", 0,
+				"val_bytes", len(m.val),
+			)
 
 			topicForMessage := ""
 			if _, has := a.producer.(*kafka.Writer); !has {
@@ -95,8 +125,15 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 					}
 					sensor.InvokeOnKafkaProduceError(a.componentMetadata, effTopic, partForHook, err)
 				}
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Produce, topic: %s, err: %v",
-					a.componentMetadata, effTopic, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"Kafka produce failed",
+					"component", a.componentMetadata,
+					"event", "Produce",
+					"result", "FAILURE",
+					"topic", effTopic,
+					"error", err,
+				)
 				return err
 			}
 
@@ -110,8 +147,16 @@ func (a *KafkaClient[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) e
 			if offset >= 0 {
 				offsetStr = fmt.Sprintf("%d", offset)
 			}
-			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ProduceSuccess, topic: %s, partition: %d, offset: %s",
-				a.componentMetadata, effTopic, partition, offsetStr)
+			a.NotifyLoggers(
+				types.InfoLevel,
+				"Kafka produce success",
+				"component", a.componentMetadata,
+				"event", "ProduceSuccess",
+				"result", "SUCCESS",
+				"topic", effTopic,
+				"partition", partition,
+				"offset", offsetStr,
+			)
 		}
 
 		pending = pending[:0]

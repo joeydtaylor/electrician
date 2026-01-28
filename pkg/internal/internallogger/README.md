@@ -63,6 +63,12 @@ Additional fields are emitted at the top level. Recommended keys:
 - `error`: error message
 - `trace_id`, `span_id`: tracing IDs
 
+Notes:
+
+- `component` is normalized to `{"id","type","name"}` (lowercase keys) even when a `types.ComponentMetadata` struct is logged.
+- If you pass an `error` value, it is emitted under the provided key (e.g., `"error"`).
+- Debug logs may include sensitive fields (tokens, headers, payload samples). Keep debug off in production.
+
 Example:
 
 ```json

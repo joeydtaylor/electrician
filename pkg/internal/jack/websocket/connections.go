@@ -138,7 +138,13 @@ func (s *serverAdapter[T]) startOutputFanout(ctx context.Context) {
 						return
 					}
 					if err := s.Broadcast(ctx, msg); err != nil {
-						s.NotifyLoggers(types.WarnLevel, "Broadcast: output wire error: %v", err)
+						s.NotifyLoggers(
+							types.WarnLevel,
+							"Broadcast: output wire error",
+							"component", s.componentMetadata,
+							"event", "Broadcast",
+							"error", err,
+						)
 					}
 				}
 			}

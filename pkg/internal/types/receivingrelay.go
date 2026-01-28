@@ -44,7 +44,7 @@ type ReceivingRelay[T any] interface {
 	ListenGRPCWeb(listenForever bool, retryInSeconds int) error
 
 	// NotifyLoggers sends a formatted log message to all attached loggers.
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 
 	// Receive handles a single wrapped payload via a unary RPC.
 	Receive(ctx context.Context, payload *relay.WrappedPayload) (*relay.StreamAcknowledgment, error)

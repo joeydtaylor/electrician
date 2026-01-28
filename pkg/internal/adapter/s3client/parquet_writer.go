@@ -47,8 +47,15 @@ func (a *S3Client[T]) parquetRoller(
 		}
 
 		out <- append([]byte(nil), buf.Bytes()...)
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ParquetFlush, records: %d, bytes: %d",
-			a.componentMetadata, count, buf.Len())
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Parquet flush",
+			"component", a.componentMetadata,
+			"event", "ParquetFlush",
+			"records", count,
+			"bytes", buf.Len(),
+			"compression", compName,
+		)
 		buf.Reset()
 		count = 0
 		pw = newWriter()
@@ -148,8 +155,13 @@ func (a *S3Client[T]) startParquetStream(ctx context.Context, in <-chan T) error
 
 	go func() {
 		if err := a.parquetRoller(ctx, in, raw, window, max, comp, compName); err != nil {
-			a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: parquetRoller, err: %v",
-				a.componentMetadata, err)
+			a.NotifyLoggers(
+				types.ErrorLevel,
+				"parquetRoller failed",
+				"component", a.componentMetadata,
+				"event", "parquetRoller",
+				"error", err,
+			)
 		}
 	}()
 

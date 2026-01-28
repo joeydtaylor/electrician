@@ -7,5 +7,11 @@ func (h *httpServerAdapter[T]) notifyHTTPServerError(err error) {
 		sensor.InvokeOnHTTPClientError(h.componentMetadata, err)
 	}
 
-	h.NotifyLoggers(types.ErrorLevel, "notifyHTTPServerError: %v", err)
+	h.NotifyLoggers(
+		types.ErrorLevel,
+		"HTTP server error",
+		"component", h.componentMetadata,
+		"event", "HTTPServerError",
+		"error", err,
+	)
 }

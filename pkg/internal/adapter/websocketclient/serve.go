@@ -26,8 +26,19 @@ func (c *WebSocketClientAdapter[T]) Serve(ctx context.Context, submit func(conte
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "client shutdown")
 
-	c.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Dial, url: %s", c.componentMetadata, cfg.url)
-	defer c.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Disconnect", c.componentMetadata)
+	c.NotifyLoggers(
+		types.InfoLevel,
+		"WebSocket dial",
+		"component", c.componentMetadata,
+		"event", "Dial",
+		"url", cfg.url,
+	)
+	defer c.NotifyLoggers(
+		types.InfoLevel,
+		"WebSocket disconnect",
+		"component", c.componentMetadata,
+		"event", "Disconnect",
+	)
 
 	return c.readLoop(ctx, cfg, conn, submit)
 }
@@ -48,8 +59,19 @@ func (c *WebSocketClientAdapter[T]) ServeWriter(ctx context.Context, in <-chan T
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "client shutdown")
 
-	c.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Dial, url: %s", c.componentMetadata, cfg.url)
-	defer c.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Disconnect", c.componentMetadata)
+	c.NotifyLoggers(
+		types.InfoLevel,
+		"WebSocket dial",
+		"component", c.componentMetadata,
+		"event", "Dial",
+		"url", cfg.url,
+	)
+	defer c.NotifyLoggers(
+		types.InfoLevel,
+		"WebSocket disconnect",
+		"component", c.componentMetadata,
+		"event", "Disconnect",
+	)
 
 	return c.writeLoop(ctx, cfg, conn, in)
 }
@@ -70,8 +92,19 @@ func (c *WebSocketClientAdapter[T]) ServeDuplex(ctx context.Context, in <-chan T
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "client shutdown")
 
-	c.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Dial, url: %s", c.componentMetadata, cfg.url)
-	defer c.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Disconnect", c.componentMetadata)
+	c.NotifyLoggers(
+		types.InfoLevel,
+		"WebSocket dial",
+		"component", c.componentMetadata,
+		"event", "Dial",
+		"url", cfg.url,
+	)
+	defer c.NotifyLoggers(
+		types.InfoLevel,
+		"WebSocket disconnect",
+		"component", c.componentMetadata,
+		"event", "Disconnect",
+	)
 
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -123,12 +156,24 @@ func (c *WebSocketClientAdapter[T]) readLoop(ctx context.Context, cfg clientConf
 
 		msg, err := decodeMessage[T](cfg.format, payload)
 		if err != nil {
-			c.NotifyLoggers(types.WarnLevel, "ReadLoop: decode error: %v", err)
+			c.NotifyLoggers(
+				types.WarnLevel,
+				"ReadLoop: decode error",
+				"component", c.componentMetadata,
+				"event", "Decode",
+				"error", err,
+			)
 			continue
 		}
 
 		if err := submit(ctx, msg); err != nil {
-			c.NotifyLoggers(types.WarnLevel, "ReadLoop: submit error: %v", err)
+			c.NotifyLoggers(
+				types.WarnLevel,
+				"ReadLoop: submit error",
+				"component", c.componentMetadata,
+				"event", "Submit",
+				"error", err,
+			)
 		}
 	}
 }

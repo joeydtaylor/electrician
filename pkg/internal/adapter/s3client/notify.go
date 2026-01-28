@@ -1,38 +1,33 @@
 package s3client
 
-import (
-	"fmt"
-
-	"github.com/joeydtaylor/electrician/pkg/internal/types"
-)
+import "github.com/joeydtaylor/electrician/pkg/internal/types"
 
 // NotifyLoggers sends a formatted message to all attached loggers.
-func (a *S3Client[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
+func (a *S3Client[T]) NotifyLoggers(level types.LogLevel, msg string, keysAndValues ...interface{}) {
 	loggers := a.snapshotLoggers()
 	if len(loggers) == 0 {
 		return
 	}
 
-	msg := fmt.Sprintf(format, args...)
 	for _, logger := range loggers {
 		if logger == nil || logger.GetLevel() > level {
 			continue
 		}
 		switch level {
 		case types.DebugLevel:
-			logger.Debug(msg)
+			logger.Debug(msg, keysAndValues...)
 		case types.InfoLevel:
-			logger.Info(msg)
+			logger.Info(msg, keysAndValues...)
 		case types.WarnLevel:
-			logger.Warn(msg)
+			logger.Warn(msg, keysAndValues...)
 		case types.ErrorLevel:
-			logger.Error(msg)
+			logger.Error(msg, keysAndValues...)
 		case types.DPanicLevel:
-			logger.DPanic(msg)
+			logger.DPanic(msg, keysAndValues...)
 		case types.PanicLevel:
-			logger.Panic(msg)
+			logger.Panic(msg, keysAndValues...)
 		case types.FatalLevel:
-			logger.Fatal(msg)
+			logger.Fatal(msg, keysAndValues...)
 		}
 	}
 }

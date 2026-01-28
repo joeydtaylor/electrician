@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -22,18 +21,26 @@ type Feedback struct {
 }
 
 const (
-	AES256KeyHex = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
+	relayAddr         = "localhost:50072"
+	logLevel          = "info"
+	aes256KeyHex      = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
+	oauthIssuer       = "auth-service"
+	oauthJWKSURL      = "https://localhost:3000/api/auth/oauth/jwks.json"
+	oauthJWKSCacheSec = 300
+	staticTenant      = "local"
+	tlsCert           = "../tls/server.crt"
+	tlsKey            = "../tls/server.key"
+	tlsCA             = "../tls/ca.crt"
+	tlsSAN            = "localhost"
 )
 
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
+var (
+	oauthAudiences = []string{"your-api"}
+	oauthScopes    = []string{"write:data"}
+)
 
 func mustAES() string {
-	raw, err := hex.DecodeString(AES256KeyHex)
+	raw, err := hex.DecodeString(aes256KeyHex)
 	if err != nil || len(raw) != 32 {
 		log.Fatalf("bad AES key: %v", err)
 	}
@@ -44,7 +51,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
+	logger := builder.NewLogger(
+		builder.LoggerWithDevelopment(true),
+		builder.LoggerWithLevel(logLevel),
+	)
 
 	wire := builder.NewWire[Feedback](
 		ctx,
@@ -56,37 +66,47 @@ func main() {
 
 	tlsCfg := builder.NewTlsServerConfig(
 		true,
-		envOr("TLS_CERT", "../tls/server.crt"),
-		envOr("TLS_KEY", "../tls/server.key"),
-		envOr("TLS_CA", "../tls/ca.crt"),
-		"localhost",
-		tls.VersionTLS13, tls.VersionTLS13,
+		tlsCert,
+		tlsKey,
+		tlsCA,
+		tlsSAN,
+		tls.VersionTLS13,
+		tls.VersionTLS13,
 	)
 
-	decKey := mustAES()
-
-	introspectionURL := envOr("OAUTH_INTROSPECTION_URL", "https://localhost:3000/api/auth/oauth/introspect")
-	oauth := builder.NewQuicReceivingRelayOAuth2IntrospectionOptions(
-		introspectionURL,
-		envOr("OAUTH_INTROSPECTION_AUTH_TYPE", "none"),
-		envOr("OAUTH_INTROSPECTION_CLIENT_ID", ""),
-		envOr("OAUTH_INTROSPECTION_CLIENT_SECRET", ""),
-		envOr("OAUTH_INTROSPECTION_BEARER_TOKEN", ""),
-		300,
+	jwtOpts := builder.NewQuicReceivingRelayOAuth2JWTOptions(
+		oauthIssuer,
+		oauthJWKSURL,
+		oauthAudiences,
+		oauthScopes,
+		oauthJWKSCacheSec,
 	)
+	authOpts := builder.NewQuicReceivingRelayAuthenticationOptionsOAuth2(jwtOpts)
 
-	authOpts := builder.NewQuicReceivingRelayAuthenticationOptionsOAuth2(oauth)
+	staticHeaders := map[string]string{"x-tenant": staticTenant}
 
 	recv := builder.NewQuicReceivingRelay[Feedback](
 		ctx,
-		builder.QuicReceivingRelayWithAddress[Feedback](envOr("RX_ADDR", "localhost:50072")),
+		builder.QuicReceivingRelayWithAddress[Feedback](relayAddr),
 		builder.QuicReceivingRelayWithLogger[Feedback](logger),
 		builder.QuicReceivingRelayWithOutput[Feedback](wire),
 		builder.QuicReceivingRelayWithTLSConfig[Feedback](tlsCfg),
-		builder.QuicReceivingRelayWithDecryptionKey[Feedback](decKey),
+		builder.QuicReceivingRelayWithDecryptionKey[Feedback](mustAES()),
 		builder.QuicReceivingRelayWithAuthenticationOptions[Feedback](authOpts),
-		builder.QuicReceivingRelayWithStaticHeaders[Feedback](map[string]string{"x-tenant": "local"}),
+		builder.QuicReceivingRelayWithStaticHeaders[Feedback](staticHeaders),
 		builder.QuicReceivingRelayWithAuthRequired[Feedback](true),
+	)
+
+	logger.Info("QUIC receiver starting",
+		"event", "Start",
+		"result", "SUCCESS",
+		"address", relayAddr,
+		"auth_required", true,
+		"static_headers", staticHeaders,
+		"issuer", oauthIssuer,
+		"jwks_url", oauthJWKSURL,
+		"required_audience", oauthAudiences,
+		"required_scopes", oauthScopes,
 	)
 
 	if err := recv.Start(ctx); err != nil {
@@ -96,6 +116,11 @@ func main() {
 	fmt.Println("Secure QUIC receiver up. Ctrl+C to stop.")
 	<-ctx.Done()
 	fmt.Println("Shutting down...")
+
+	logger.Info("QUIC receiver shutting down",
+		"event", "Stop",
+		"result", "SUCCESS",
+	)
 
 	recv.Stop()
 

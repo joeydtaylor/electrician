@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -49,11 +48,15 @@ func main() {
 	count := envOrInt("RELAY_COUNT", 100)
 	interval := envOrDuration("RELAY_INTERVAL", 50*time.Millisecond)
 	addr := envOr("RELAY_ADDR", "localhost:50071")
+	logLevel := envOr("LOG_LEVEL", "info")
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(count)*interval+2*time.Second)
 	defer cancel()
 
-	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
+	logger := builder.NewLogger(
+		builder.LoggerWithDevelopment(true),
+		builder.LoggerWithLevel(logLevel),
+	)
 	defer func() {
 		_ = logger.Flush()
 	}()
@@ -74,6 +77,14 @@ func main() {
 		builder.QuicForwardRelayWithTLSConfig[Feedback](tlsCfg),
 	)
 
+	logger.Info("QUIC sender starting",
+		"event", "Start",
+		"result", "SUCCESS",
+		"target", addr,
+		"count", count,
+		"interval", interval.String(),
+	)
+
 	start := time.Now()
 	for i := 0; i < count; i++ {
 		fb := Feedback{
@@ -84,10 +95,20 @@ func main() {
 			Tags:       []string{"quic", "basic"},
 		}
 		if err := fr.Submit(ctx, fb); err != nil {
-			log.Printf("submit error: %v", err)
+			logger.Error("Submit failed",
+				"event", "Submit",
+				"result", "FAILURE",
+				"error", err,
+				"seq", i,
+			)
 		}
 		time.Sleep(interval)
 	}
 
-	log.Printf("sent %d in %s", count, time.Since(start))
+	logger.Info("Send complete",
+		"event", "SendComplete",
+		"result", "SUCCESS",
+		"count", count,
+		"elapsed", time.Since(start).String(),
+	)
 }

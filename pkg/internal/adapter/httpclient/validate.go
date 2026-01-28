@@ -13,7 +13,13 @@ func (hp *HTTPClientAdapter[T]) validateHeaderValue(value string) error {
 	if headerValuePattern.MatchString(value) {
 		err := fmt.Errorf("header contains unsupported character")
 		hp.notifyHTTPClientError(err)
-		hp.NotifyLoggers(types.ErrorLevel, "httpclient invalid header value: %v", err)
+		hp.NotifyLoggers(
+			types.ErrorLevel,
+			"httpclient invalid header value",
+			"component", hp.GetComponentMetadata(),
+			"event", "ValidateHeader",
+			"error", err,
+		)
 		return err
 	}
 	return nil

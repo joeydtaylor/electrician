@@ -23,7 +23,11 @@ func (fr *ForwardRelay[T]) ConnectInput(inputs ...types.Receiver[T]) {
 	}
 	fr.Input = append(fr.Input, out...)
 	for _, input := range out {
-		fr.NotifyLoggers(types.DebugLevel, "ConnectInput: added %s", input.GetComponentMetadata())
+		fr.logKV(types.DebugLevel, "Input connected",
+			"event", "ConnectInput",
+			"result", "SUCCESS",
+			"input", input.GetComponentMetadata(),
+		)
 	}
 }
 

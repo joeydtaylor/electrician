@@ -6,14 +6,21 @@ func (fr *ForwardRelay[T]) readFromInput(input types.Receiver[T]) {
 	for {
 		select {
 		case <-fr.ctx.Done():
-			fr.NotifyLoggers(types.InfoLevel, "readFromInput: context canceled")
+			fr.logKV(types.InfoLevel, "Input read stopped",
+				"event", "ReadInput",
+				"result", "CANCELLED",
+			)
 			return
 		case data, ok := <-input.GetOutputChannel():
 			if !ok {
 				return
 			}
 			if err := fr.Submit(fr.ctx, data); err != nil {
-				fr.NotifyLoggers(types.ErrorLevel, "readFromInput: submit failed: %v", err)
+				fr.logKV(types.ErrorLevel, "Input submit failed",
+					"event", "ReadInput",
+					"result", "FAILURE",
+					"error", err,
+				)
 			}
 		}
 	}

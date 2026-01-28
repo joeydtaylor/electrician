@@ -77,7 +77,13 @@ func (p *Plug[T]) ConnectSensor(sensors ...types.Sensor[T]) {
 
 	p.sensors = append(p.sensors, sensors...)
 	for _, s := range sensors {
-		p.NotifyLoggers(types.DebugLevel, "ConnectSensor: connected sensor %s", s.GetComponentMetadata())
+		p.NotifyLoggers(
+			types.DebugLevel,
+			"ConnectSensor",
+			"component", p.componentMetadata,
+			"event", "ConnectSensor",
+			"sensor", s.GetComponentMetadata(),
+		)
 	}
 }
 

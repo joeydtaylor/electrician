@@ -31,7 +31,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
+	logLevel := envOr("LOG_LEVEL", "info")
+	logger := builder.NewLogger(
+		builder.LoggerWithDevelopment(true),
+		builder.LoggerWithLevel(logLevel),
+	)
 
 	wire := builder.NewWire[Feedback](
 		ctx,
@@ -58,6 +62,12 @@ func main() {
 		builder.QuicReceivingRelayWithTLSConfig[Feedback](tlsCfg),
 	)
 
+	logger.Info("QUIC receiver starting",
+		"event", "Start",
+		"result", "SUCCESS",
+		"address", envOr("RX_ADDR", "localhost:50071"),
+	)
+
 	if err := recv.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
@@ -65,6 +75,11 @@ func main() {
 	fmt.Println("QUIC receiver up. Ctrl+C to stop.")
 	<-ctx.Done()
 	fmt.Println("Shutting down...")
+
+	logger.Info("QUIC receiver shutting down",
+		"event", "Stop",
+		"result", "SUCCESS",
+	)
 
 	recv.Stop()
 

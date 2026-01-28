@@ -19,7 +19,10 @@ func (rr *ReceivingRelay[T]) Start(ctx context.Context) error {
 	atomic.StoreInt32(&rr.configFrozen, 1)
 	rr.startOutputFanout()
 
-	rr.NotifyLoggers(types.InfoLevel, "Start: starting QUIC receiving relay")
+	rr.logKV(types.InfoLevel, "QUIC receiving relay starting",
+		"event", "Start",
+		"result", "SUCCESS",
+	)
 	for _, output := range rr.Outputs {
 		if !output.IsStarted() {
 			output.Start(ctx)
@@ -33,7 +36,10 @@ func (rr *ReceivingRelay[T]) Start(ctx context.Context) error {
 
 // Stop halts relay operations and closes resources.
 func (rr *ReceivingRelay[T]) Stop() {
-	rr.NotifyLoggers(types.InfoLevel, "Stop: stopping QUIC receiving relay")
+	rr.logKV(types.InfoLevel, "QUIC receiving relay stopping",
+		"event", "Stop",
+		"result", "SUCCESS",
+	)
 
 	rr.cancel()
 	rr.shutdownListener()
@@ -78,17 +84,31 @@ func (rr *ReceivingRelay[T]) Listen(listenForever bool, retryInSeconds int) erro
 	for {
 		listener, err := quic.ListenAddr(rr.Address, tlsCfg, &quic.Config{})
 		if err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "Listen: bind failed %s: %v", rr.Address, err)
+			rr.logKV(types.ErrorLevel, "QUIC listen failed",
+				"event", "Listen",
+				"result", "FAILURE",
+				"addr", rr.Address,
+				"error", err,
+			)
 			if !listenForever {
 				return err
 			}
-			rr.NotifyLoggers(types.WarnLevel, "Listen: retrying in %d seconds", retryInSeconds)
+			rr.logKV(types.WarnLevel, "QUIC listen retrying",
+				"event", "ListenRetry",
+				"result", "RETRY",
+				"addr", rr.Address,
+				"retry_seconds", retryInSeconds,
+			)
 			time.Sleep(time.Duration(retryInSeconds) * time.Second)
 			continue
 		}
 
 		rr.setListener(listener)
-		rr.NotifyLoggers(types.InfoLevel, "Listen: QUIC listener started on %s", rr.Address)
+		rr.logKV(types.InfoLevel, "QUIC listener started",
+			"event", "Listen",
+			"result", "SUCCESS",
+			"addr", rr.Address,
+		)
 
 		rr.acceptLoop(listener)
 
@@ -104,6 +124,11 @@ func (rr *ReceivingRelay[T]) acceptLoop(listener *quic.Listener) {
 		if err != nil {
 			return
 		}
+		rr.logKV(types.DebugLevel, "QUIC connection accepted",
+			"event", "AcceptConn",
+			"result", "SUCCESS",
+			"remote_addr", conn.RemoteAddr().String(),
+		)
 		go rr.handleConn(conn)
 	}
 }
@@ -114,6 +139,11 @@ func (rr *ReceivingRelay[T]) handleConn(conn quic.Connection) {
 		if err != nil {
 			return
 		}
+		rr.logKV(types.DebugLevel, "QUIC stream accepted",
+			"event", "AcceptStream",
+			"result", "SUCCESS",
+			"remote_addr", conn.RemoteAddr().String(),
+		)
 		go rr.handleStream(stream)
 	}
 }

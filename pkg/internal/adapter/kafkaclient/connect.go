@@ -25,8 +25,13 @@ func (a *KafkaClient[T]) ConnectSensor(sensors ...types.Sensor[T]) {
 	a.sensorLock.Unlock()
 
 	for _, s := range sensors {
-		a.NotifyLoggers(types.DebugLevel, "%s => level: DEBUG, event: ConnectSensor, target: %v",
-			a.componentMetadata, s.GetComponentMetadata())
+		a.NotifyLoggers(
+			types.DebugLevel,
+			"ConnectSensor",
+			"component", a.componentMetadata,
+			"event", "ConnectSensor",
+			"sensor", s.GetComponentMetadata(),
+		)
 	}
 }
 
@@ -53,8 +58,13 @@ func (a *KafkaClient[T]) ConnectLogger(loggers ...types.Logger) {
 	total := len(a.loggers)
 	a.loggersLock.Unlock()
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConnectLogger, total_loggers: %d",
-		a.componentMetadata, total)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"ConnectLogger",
+		"component", a.componentMetadata,
+		"event", "ConnectLogger",
+		"total_loggers", total,
+	)
 }
 
 // ConnectInput registers wire outputs as inputs to the Kafka writer.
@@ -76,6 +86,12 @@ func (a *KafkaClient[T]) ConnectInput(ws ...types.Wire[T]) {
 	ws = ws[:n]
 
 	a.inputWires = append(a.inputWires, ws...)
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConnectInput, wires_added: %d, total_wires: %d",
-		a.componentMetadata, len(ws), len(a.inputWires))
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"ConnectInput",
+		"component", a.componentMetadata,
+		"event", "ConnectInput",
+		"wires_added", len(ws),
+		"total_wires", len(a.inputWires),
+	)
 }

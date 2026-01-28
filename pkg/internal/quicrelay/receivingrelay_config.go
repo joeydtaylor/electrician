@@ -44,7 +44,11 @@ func (rr *ReceivingRelay[T]) ConnectOutput(outputs ...types.Submitter[T]) {
 	}
 	rr.Outputs = append(rr.Outputs, out...)
 	for _, output := range out {
-		rr.NotifyLoggers(types.DebugLevel, "ConnectOutput: added %s", output.GetComponentMetadata())
+		rr.logKV(types.DebugLevel, "Output connected",
+			"event", "ConnectOutput",
+			"result", "SUCCESS",
+			"output", output.GetComponentMetadata(),
+		)
 	}
 }
 

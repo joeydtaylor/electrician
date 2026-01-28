@@ -57,10 +57,26 @@ func (s *serverAdapter[T]) Serve(ctx context.Context, submit func(context.Contex
 	go func() {
 		var err error
 		if cfg.tlsConfig != nil {
-			s.NotifyLoggers(types.InfoLevel, "Serve: starting WebSocket server (TLS) on %s %s", cfg.address, cfg.endpoint)
+			s.NotifyLoggers(
+				types.InfoLevel,
+				"Serve: starting WebSocket server",
+				"component", s.componentMetadata,
+				"event", "ServeStart",
+				"tls", true,
+				"address", cfg.address,
+				"endpoint", cfg.endpoint,
+			)
 			err = s.server.ListenAndServeTLS("", "")
 		} else {
-			s.NotifyLoggers(types.InfoLevel, "Serve: starting WebSocket server on %s %s", cfg.address, cfg.endpoint)
+			s.NotifyLoggers(
+				types.InfoLevel,
+				"Serve: starting WebSocket server",
+				"component", s.componentMetadata,
+				"event", "ServeStart",
+				"tls", false,
+				"address", cfg.address,
+				"endpoint", cfg.endpoint,
+			)
 			err = s.server.ListenAndServe()
 		}
 		errCh <- err
@@ -74,14 +90,26 @@ func (s *serverAdapter[T]) Serve(ctx context.Context, submit func(context.Contex
 
 	select {
 	case <-ctx.Done():
-		s.NotifyLoggers(types.WarnLevel, "Serve: context canceled, shutting down")
+		s.NotifyLoggers(
+			types.WarnLevel,
+			"Serve: context canceled, shutting down",
+			"component", s.componentMetadata,
+			"event", "ServeStop",
+			"result", "CANCELLED",
+		)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.server.Shutdown(shutdownCtx)
 		return ctx.Err()
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
-			s.NotifyLoggers(types.ErrorLevel, "Serve: server error: %v", err)
+			s.NotifyLoggers(
+				types.ErrorLevel,
+				"Serve: server error",
+				"component", s.componentMetadata,
+				"event", "ServeError",
+				"error", err,
+			)
 			return err
 		}
 		return nil
@@ -133,7 +161,13 @@ func (s *serverAdapter[T]) buildHandler(baseCtx context.Context, cfg serverConfi
 		}
 
 		if err := s.authorizeRequest(r.Context(), r, cfg); err != nil {
-			s.NotifyLoggers(types.WarnLevel, "Auth: request rejected: %v", err)
+			s.NotifyLoggers(
+				types.WarnLevel,
+				"Auth: request rejected",
+				"component", s.componentMetadata,
+				"event", "AuthReject",
+				"error", err,
+			)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -149,7 +183,13 @@ func (s *serverAdapter[T]) buildHandler(baseCtx context.Context, cfg serverConfi
 
 		conn, err := websocket.Accept(w, r, acceptOptions)
 		if err != nil {
-			s.NotifyLoggers(types.ErrorLevel, "Accept: error: %v", err)
+			s.NotifyLoggers(
+				types.ErrorLevel,
+				"Accept: error",
+				"component", s.componentMetadata,
+				"event", "AcceptError",
+				"error", err,
+			)
 			return
 		}
 
@@ -160,11 +200,23 @@ func (s *serverAdapter[T]) buildHandler(baseCtx context.Context, cfg serverConfi
 		wsConn, err := s.addConn(conn, cfg)
 		if err != nil {
 			_ = conn.Close(websocket.StatusPolicyViolation, err.Error())
-			s.NotifyLoggers(types.WarnLevel, "Accept: rejected connection: %v", err)
+			s.NotifyLoggers(
+				types.WarnLevel,
+				"Accept: rejected connection",
+				"component", s.componentMetadata,
+				"event", "AcceptReject",
+				"error", err,
+			)
 			return
 		}
 
-		s.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConnectionAccepted, remote: %s", s.componentMetadata, r.RemoteAddr)
+		s.NotifyLoggers(
+			types.InfoLevel,
+			"Connection accepted",
+			"component", s.componentMetadata,
+			"event", "ConnectionAccepted",
+			"remote", r.RemoteAddr,
+		)
 
 		go s.runConn(baseCtx, cfg, wsConn, submit, r.RemoteAddr)
 	})
@@ -180,16 +232,34 @@ func (s *serverAdapter[T]) runConn(ctx context.Context, cfg serverConfig, conn *
 
 	go func() {
 		if err := s.writeLoop(connCtx, cfg, conn); err != nil {
-			s.NotifyLoggers(types.WarnLevel, "WriteLoop: %v", err)
+			s.NotifyLoggers(
+				types.WarnLevel,
+				"WriteLoop error",
+				"component", s.componentMetadata,
+				"event", "WriteLoop",
+				"error", err,
+			)
 		}
 	}()
 
 	if err := s.readLoop(connCtx, cfg, conn, submit); err != nil {
-		s.NotifyLoggers(types.WarnLevel, "ReadLoop: %v", err)
+		s.NotifyLoggers(
+			types.WarnLevel,
+			"ReadLoop error",
+			"component", s.componentMetadata,
+			"event", "ReadLoop",
+			"error", err,
+		)
 	}
 
 	conn.close(websocket.StatusNormalClosure, "connection closed")
-	s.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConnectionClosed, remote: %s", s.componentMetadata, remote)
+	s.NotifyLoggers(
+		types.InfoLevel,
+		"Connection closed",
+		"component", s.componentMetadata,
+		"event", "ConnectionClosed",
+		"remote", remote,
+	)
 }
 
 func (s *serverAdapter[T]) readLoop(ctx context.Context, cfg serverConfig, conn *wsConn, submit func(context.Context, T) error) error {
@@ -208,20 +278,46 @@ func (s *serverAdapter[T]) readLoop(ctx context.Context, cfg serverConfig, conn 
 		}
 
 		if msgType == websocket.MessageBinary && (cfg.format == types.WebSocketFormatText || cfg.format == types.WebSocketFormatJSON) {
-			s.NotifyLoggers(types.DebugLevel, "ReadLoop: received binary payload for text/json format")
+			s.NotifyLoggers(
+				types.DebugLevel,
+				"ReadLoop: received binary payload for text/json format",
+				"component", s.componentMetadata,
+				"event", "ReadLoopFormatMismatch",
+				"message_type", "binary",
+				"expected_format", cfg.format,
+			)
 		}
 		if msgType == websocket.MessageText && (cfg.format == types.WebSocketFormatBinary || cfg.format == types.WebSocketFormatProto) {
-			s.NotifyLoggers(types.DebugLevel, "ReadLoop: received text payload for binary/proto format")
+			s.NotifyLoggers(
+				types.DebugLevel,
+				"ReadLoop: received text payload for binary/proto format",
+				"component", s.componentMetadata,
+				"event", "ReadLoopFormatMismatch",
+				"message_type", "text",
+				"expected_format", cfg.format,
+			)
 		}
 
 		msg, err := decodeMessage[T](cfg.format, payload)
 		if err != nil {
-			s.NotifyLoggers(types.WarnLevel, "ReadLoop: decode error: %v", err)
+			s.NotifyLoggers(
+				types.WarnLevel,
+				"ReadLoop: decode error",
+				"component", s.componentMetadata,
+				"event", "Decode",
+				"error", err,
+			)
 			continue
 		}
 
 		if err := submit(ctx, msg); err != nil {
-			s.NotifyLoggers(types.WarnLevel, "ReadLoop: submit error: %v", err)
+			s.NotifyLoggers(
+				types.WarnLevel,
+				"ReadLoop: submit error",
+				"component", s.componentMetadata,
+				"event", "Submit",
+				"error", err,
+			)
 		}
 	}
 }

@@ -43,60 +43,76 @@ func (rr *ReceivingRelay[T]) requireNotFrozen(action string) {
 	}
 }
 
-func (fr *ForwardRelay[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
+func (fr *ForwardRelay[T]) NotifyLoggers(level types.LogLevel, msg string, keysAndValues ...interface{}) {
 	loggers := fr.snapshotLoggers()
 	if len(loggers) == 0 {
 		return
 	}
-	msg := fmt.Sprintf(format, args...)
+	type levelChecker interface {
+		IsLevelEnabled(types.LogLevel) bool
+	}
 	for _, logger := range loggers {
-		if logger == nil || logger.GetLevel() > level {
+		if logger == nil {
+			continue
+		}
+		if lc, ok := logger.(levelChecker); ok && !lc.IsLevelEnabled(level) {
+			continue
+		}
+		if logger.GetLevel() > level {
 			continue
 		}
 		switch level {
 		case types.DebugLevel:
-			logger.Debug(msg)
+			logger.Debug(msg, keysAndValues...)
 		case types.InfoLevel:
-			logger.Info(msg)
+			logger.Info(msg, keysAndValues...)
 		case types.WarnLevel:
-			logger.Warn(msg)
+			logger.Warn(msg, keysAndValues...)
 		case types.ErrorLevel:
-			logger.Error(msg)
+			logger.Error(msg, keysAndValues...)
 		case types.DPanicLevel:
-			logger.DPanic(msg)
+			logger.DPanic(msg, keysAndValues...)
 		case types.PanicLevel:
-			logger.Panic(msg)
+			logger.Panic(msg, keysAndValues...)
 		case types.FatalLevel:
-			logger.Fatal(msg)
+			logger.Fatal(msg, keysAndValues...)
 		}
 	}
 }
 
-func (rr *ReceivingRelay[T]) NotifyLoggers(level types.LogLevel, format string, args ...interface{}) {
+func (rr *ReceivingRelay[T]) NotifyLoggers(level types.LogLevel, msg string, keysAndValues ...interface{}) {
 	loggers := rr.snapshotLoggers()
 	if len(loggers) == 0 {
 		return
 	}
-	msg := fmt.Sprintf(format, args...)
+	type levelChecker interface {
+		IsLevelEnabled(types.LogLevel) bool
+	}
 	for _, logger := range loggers {
-		if logger == nil || logger.GetLevel() > level {
+		if logger == nil {
+			continue
+		}
+		if lc, ok := logger.(levelChecker); ok && !lc.IsLevelEnabled(level) {
+			continue
+		}
+		if logger.GetLevel() > level {
 			continue
 		}
 		switch level {
 		case types.DebugLevel:
-			logger.Debug(msg)
+			logger.Debug(msg, keysAndValues...)
 		case types.InfoLevel:
-			logger.Info(msg)
+			logger.Info(msg, keysAndValues...)
 		case types.WarnLevel:
-			logger.Warn(msg)
+			logger.Warn(msg, keysAndValues...)
 		case types.ErrorLevel:
-			logger.Error(msg)
+			logger.Error(msg, keysAndValues...)
 		case types.DPanicLevel:
-			logger.DPanic(msg)
+			logger.DPanic(msg, keysAndValues...)
 		case types.PanicLevel:
-			logger.Panic(msg)
+			logger.Panic(msg, keysAndValues...)
 		case types.FatalLevel:
-			logger.Fatal(msg)
+			logger.Fatal(msg, keysAndValues...)
 		}
 	}
 }
@@ -121,4 +137,18 @@ func (rr *ReceivingRelay[T]) snapshotLoggers() []types.Logger {
 	loggers := make([]types.Logger, len(rr.Loggers))
 	copy(loggers, rr.Loggers)
 	return loggers
+}
+
+func (fr *ForwardRelay[T]) logKV(level types.LogLevel, msg string, keysAndValues ...interface{}) {
+	fields := make([]interface{}, 0, len(keysAndValues)+2)
+	fields = append(fields, "component", fr.componentMetadata)
+	fields = append(fields, keysAndValues...)
+	fr.NotifyLoggers(level, msg, fields...)
+}
+
+func (rr *ReceivingRelay[T]) logKV(level types.LogLevel, msg string, keysAndValues ...interface{}) {
+	fields := make([]interface{}, 0, len(keysAndValues)+2)
+	fields = append(fields, "component", rr.componentMetadata)
+	fields = append(fields, keysAndValues...)
+	rr.NotifyLoggers(level, msg, fields...)
 }

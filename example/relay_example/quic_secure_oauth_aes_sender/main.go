@@ -6,8 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"os"
-	"strconv"
+	"net/http"
 	"time"
 
 	"github.com/joeydtaylor/electrician/pkg/builder"
@@ -22,86 +21,135 @@ type Feedback struct {
 }
 
 const (
-	AES256KeyHex = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
+	relayAddr          = "localhost:50072"
+	sendCount          = 100
+	sendInterval       = 50 * time.Millisecond
+	logLevel           = "info"
+	aes256KeyHex       = "ea8ccb51eefcdd058b0110c4adebaf351acbf43db2ad250fdc0d4131c959dfec"
+	authBaseURL        = "https://localhost:3000"
+	oauthIssuer        = "auth-service"
+	oauthJWKSURL       = "https://localhost:3000/api/auth/oauth/jwks.json"
+	oauthClientID      = "steeze-local-cli"
+	oauthClientSecret  = "local-secret"
+	tlsClientCert      = "../tls/client.crt"
+	tlsClientKey       = "../tls/client.key"
+	tlsCA              = "../tls/ca.crt"
+	oauthTokenLeeway   = 20 * time.Second
+	oauthJWKSCacheSecs = 300
+	staticTenantHeader = "local"
 )
 
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func envOrInt(k string, def int) int {
-	if v := os.Getenv(k); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
-func envOrDuration(k string, def time.Duration) time.Duration {
-	if v := os.Getenv(k); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return def
-}
+var (
+	oauthAudiences = []string{"your-api"}
+	oauthScopes    = []string{"write:data"}
+)
 
 func mustAES() string {
-	raw, err := hex.DecodeString(AES256KeyHex)
+	raw, err := hex.DecodeString(aes256KeyHex)
 	if err != nil || len(raw) != 32 {
 		log.Fatalf("bad AES key: %v", err)
 	}
 	return string(raw)
 }
 
-func main() {
-	count := envOrInt("RELAY_COUNT", 100)
-	interval := envOrDuration("RELAY_INTERVAL", 50*time.Millisecond)
-	addr := envOr("RELAY_ADDR", "localhost:50072")
+func httpClientTLSInsecure() *http.Client {
+	return &http.Client{
+		Timeout: 6 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				MaxVersion:         tls.VersionTLS13,
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(count)*interval+2*time.Second)
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(sendCount)*sendInterval+2*time.Second)
 	defer cancel()
 
-	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
+	logger := builder.NewLogger(
+		builder.LoggerWithDevelopment(true),
+		builder.LoggerWithLevel(logLevel),
+	)
 	defer func() {
 		_ = logger.Flush()
 	}()
 
 	tlsCfg := builder.NewTlsClientConfig(
 		true,
-		envOr("TLS_CERT", "../tls/client.crt"),
-		envOr("TLS_KEY", "../tls/client.key"),
-		envOr("TLS_CA", "../tls/ca.crt"),
+		tlsClientCert,
+		tlsClientKey,
+		tlsCA,
 		tls.VersionTLS13,
 		tls.VersionTLS13,
 	)
 
 	sec := builder.NewSecurityOptions(true, builder.ENCRYPTION_AES_GCM)
+	staticHeaders := map[string]string{"x-tenant": staticTenantHeader}
+	dynamicHeaders := func(ctx context.Context) map[string]string {
+		return map[string]string{"x-trace-id": fmt.Sprintf("t-%d", time.Now().UnixNano())}
+	}
 
-	token := envOr("RELAY_BEARER_TOKEN", "")
-	tokenEnv := envOr("RELAY_BEARER_TOKEN_ENV", "")
+	oauthHints := builder.NewForwardRelayOAuth2JWTOptions(
+		oauthIssuer,
+		oauthJWKSURL,
+		oauthAudiences,
+		oauthScopes,
+		oauthJWKSCacheSecs,
+	)
+	authOpts := builder.NewForwardRelayAuthenticationOptionsOAuth2(oauthHints)
+	tokenSource := builder.NewQuicForwardRelayRefreshingClientCredentialsSource(
+		authBaseURL,
+		oauthClientID,
+		oauthClientSecret,
+		oauthScopes,
+		oauthTokenLeeway,
+		httpClientTLSInsecure(),
+	)
+	if tok, err := tokenSource.AccessToken(ctx); err != nil {
+		logger.Warn("Auth token prefetch failed",
+			"event", "AuthToken",
+			"result", "FAILURE",
+			"error", err,
+		)
+	} else {
+		logger.Debug("Auth token prefetched",
+			"event", "AuthToken",
+			"result", "SUCCESS",
+			"token", tok,
+		)
+	}
+
+	logger.Info("QUIC sender starting",
+		"event", "Start",
+		"result", "SUCCESS",
+		"target", relayAddr,
+		"count", sendCount,
+		"interval", sendInterval.String(),
+		"auth_required", true,
+		"static_headers", staticHeaders,
+		"issuer", oauthIssuer,
+		"auth_base_url", authBaseURL,
+		"jwks_url", oauthJWKSURL,
+	)
 
 	fr := builder.NewQuicForwardRelay[Feedback](
 		ctx,
-		builder.QuicForwardRelayWithTarget[Feedback](addr),
+		builder.QuicForwardRelayWithTarget[Feedback](relayAddr),
 		builder.QuicForwardRelayWithLogger[Feedback](logger),
 		builder.QuicForwardRelayWithTLSConfig[Feedback](tlsCfg),
 		builder.QuicForwardRelayWithSecurityOptions[Feedback](sec, mustAES()),
-		builder.QuicForwardRelayWithStaticHeaders[Feedback](map[string]string{"x-tenant": "local"}),
+		builder.QuicForwardRelayWithAuthenticationOptions[Feedback](authOpts),
+		builder.QuicForwardRelayWithOAuthBearer[Feedback](tokenSource),
+		builder.QuicForwardRelayWithStaticHeaders[Feedback](staticHeaders),
+		builder.QuicForwardRelayWithDynamicHeaders[Feedback](dynamicHeaders),
 		builder.QuicForwardRelayWithAuthRequired[Feedback](true),
 	)
-	if token != "" {
-		fr.SetOAuth2(builder.NewQuicForwardRelayStaticBearerTokenSource(token))
-	} else if tokenEnv != "" {
-		fr.SetOAuth2(builder.NewQuicForwardRelayEnvBearerTokenSource(tokenEnv))
-	}
 
 	start := time.Now()
-	for i := 0; i < count; i++ {
+	for i := 0; i < sendCount; i++ {
 		fb := Feedback{
 			CustomerID: fmt.Sprintf("cust-%03d", i%100),
 			Content:    "Secure QUIC payload",
@@ -110,10 +158,20 @@ func main() {
 			Tags:       []string{"quic", "secure"},
 		}
 		if err := fr.Submit(ctx, fb); err != nil {
-			log.Printf("submit error: %v", err)
+			logger.Error("Submit failed",
+				"event", "Submit",
+				"result", "FAILURE",
+				"error", err,
+				"seq", i,
+			)
 		}
-		time.Sleep(interval)
+		time.Sleep(sendInterval)
 	}
 
-	log.Printf("sent %d in %s", count, time.Since(start))
+	logger.Info("Send complete",
+		"event", "SendComplete",
+		"result", "SUCCESS",
+		"count", sendCount,
+		"elapsed", time.Since(start).String(),
+	)
 }

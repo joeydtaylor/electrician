@@ -70,10 +70,25 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 			code := status.Code(err)
 			if code == codes.Canceled || code == codes.DeadlineExceeded || ctx.Err() != nil {
 				flushBatch("context done")
-				rr.NotifyLoggers(types.DebugLevel, "StreamReceive: ended code=%v err=%v ctx_err=%v", code, err, ctx.Err())
+				rr.logKV(
+					types.DebugLevel,
+					"Stream receive ended",
+					"event", "StreamReceiveEnd",
+					"result", "END",
+					"code", code,
+					"error", err,
+					"ctx_err", ctx.Err(),
+				)
 				return nil
 			}
-			rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: recv failed: %v", err)
+			rr.logKV(
+				types.ErrorLevel,
+				"Stream receive failed",
+				"event", "StreamReceiveRecv",
+				"result", "FAILURE",
+				"code", code,
+				"error", err,
+			)
 			return err
 		}
 
@@ -95,7 +110,17 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 				ackEveryN = 0
 			}
 
-			rr.NotifyLoggers(types.InfoLevel, "StreamReceive: open stream_id=%s ack_mode=%v ack_every_n=%d", streamID, ackMode, ackEveryN)
+			rr.logKV(
+				types.InfoLevel,
+				"Stream opened",
+				"event", "StreamOpen",
+				"result", "SUCCESS",
+				"stream_id", streamID,
+				"ack_mode", ackMode,
+				"ack_every_n", ackEveryN,
+				"max_in_flight", open.GetMaxInFlight(),
+				"omit_payload_metadata", open.GetOmitPayloadMetadata(),
+			)
 
 			if ackMode != relay.AckMode_ACK_NONE {
 				if err := sendAck(&relay.StreamAcknowledgment{
@@ -111,7 +136,14 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 		}
 
 		if closeMsg := env.GetClose(); closeMsg != nil {
-			rr.NotifyLoggers(types.InfoLevel, "StreamReceive: close stream_id=%s reason=%s", streamID, closeMsg.GetReason())
+			rr.logKV(
+				types.InfoLevel,
+				"Stream closed",
+				"event", "StreamClose",
+				"result", "SUCCESS",
+				"stream_id", streamID,
+				"reason", closeMsg.GetReason(),
+			)
 			flushBatch("Stream closed")
 			return nil
 		}
@@ -150,7 +182,17 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 			var err error
 			data, err = rr.asPassthroughItem(wp)
 			if err != nil {
-				rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: passthrough failed trace_id=%s id=%s seq=%d err=%v", traceID, wp.GetId(), seq, err)
+				rr.logKV(
+					types.ErrorLevel,
+					"Passthrough failed",
+					"event", "StreamPayload",
+					"result", "FAILURE",
+					"trace_id", traceID,
+					"stream_id", streamID,
+					"id", wp.GetId(),
+					"seq", seq,
+					"error", err,
+				)
 
 				switch ackMode {
 				case relay.AckMode_ACK_PER_MESSAGE:
@@ -176,7 +218,17 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 				continue
 			}
 		} else if err := UnwrapPayload(wp, rr.DecryptionKey, &data); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: unwrap failed trace_id=%s id=%s seq=%d err=%v", traceID, wp.GetId(), seq, err)
+			rr.logKV(
+				types.ErrorLevel,
+				"Unwrap failed",
+				"event", "StreamPayload",
+				"result", "FAILURE",
+				"trace_id", traceID,
+				"stream_id", streamID,
+				"id", wp.GetId(),
+				"seq", seq,
+				"error", err,
+			)
 
 			switch ackMode {
 			case relay.AckMode_ACK_PER_MESSAGE:
@@ -203,6 +255,19 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 		}
 
 		rr.DataCh <- data
+		rr.logKV(
+			types.DebugLevel,
+			"Payload received",
+			"event", "StreamPayload",
+			"result", "SUCCESS",
+			"trace_id", traceID,
+			"stream_id", streamID,
+			"id", wp.GetId(),
+			"seq", seq,
+			"payload_type", wp.GetPayloadType(),
+			"payload_encoding", wp.GetPayloadEncoding(),
+			"payload_bytes", len(wp.GetPayload()),
+		)
 
 		switch ackMode {
 		case relay.AckMode_ACK_PER_MESSAGE:

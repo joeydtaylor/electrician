@@ -19,8 +19,14 @@ func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) erro
 	}
 	defer atomic.StoreInt32(&a.isServing, 0)
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeWriterRaw, bucket: %s, prefixTpl: %s",
-		a.componentMetadata, a.bucket, a.prefixTemplate)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"ServeWriterRaw",
+		"component", a.componentMetadata,
+		"event", "ServeWriterRaw",
+		"bucket", a.bucket,
+		"prefix_template", a.prefixTemplate,
+	)
 
 	for {
 		select {

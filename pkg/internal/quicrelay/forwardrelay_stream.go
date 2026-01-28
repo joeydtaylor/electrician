@@ -126,7 +126,16 @@ func (fr *ForwardRelay[T]) openStreamSession(ctx context.Context, address string
 	go fr.streamSendLoop(s)
 	go fr.streamAckLoop(s)
 
-	fr.NotifyLoggers(types.InfoLevel, "stream: opened QUIC stream to %s stream_id=%s", address, open.StreamId)
+	fr.logKV(types.InfoLevel, "QUIC stream opened",
+		"event", "StreamOpen",
+		"result", "SUCCESS",
+		"target", address,
+		"stream_id", open.StreamId,
+		"ack_mode", open.AckMode,
+		"ack_every_n", open.AckEveryN,
+		"max_in_flight", open.MaxInFlight,
+		"omit_payload_metadata", open.OmitPayloadMetadata,
+	)
 	return s, nil
 }
 
@@ -135,7 +144,12 @@ func (fr *ForwardRelay[T]) streamSendLoop(s *streamSession) {
 
 	for env := range s.sendCh {
 		if err := writeProtoFrame(s.stream, env); err != nil {
-			fr.NotifyLoggers(types.ErrorLevel, "stream: send failed target=%s err=%v", s.target, err)
+			fr.logKV(types.ErrorLevel, "QUIC stream send failed",
+				"event", "StreamSend",
+				"result", "FAILURE",
+				"target", s.target,
+				"error", err,
+			)
 			_ = s.stream.Close()
 			_ = s.conn.CloseWithError(0, "send failed")
 			return
@@ -154,11 +168,25 @@ func (fr *ForwardRelay[T]) streamAckLoop(s *streamSession) {
 			return
 		}
 		if err != nil {
-			fr.NotifyLoggers(types.DebugLevel, "stream: ack recv ended target=%s err=%v", s.target, err)
+			fr.logKV(types.DebugLevel, "QUIC ack receive ended",
+				"event", "StreamAck",
+				"result", "END",
+				"target", s.target,
+				"error", err,
+			)
 			return
 		}
-		fr.NotifyLoggers(types.DebugLevel, "stream: ack target=%s stream_id=%s last_seq=%d ok=%d err=%d msg=%s",
-			s.target, ack.GetStreamId(), ack.GetLastSeq(), ack.GetOkCount(), ack.GetErrCount(), ack.GetMessage())
+		fr.logKV(types.DebugLevel, "QUIC ack received",
+			"event", "StreamAck",
+			"result", "SUCCESS",
+			"target", s.target,
+			"stream_id", ack.GetStreamId(),
+			"last_seq", ack.GetLastSeq(),
+			"ok_count", ack.GetOkCount(),
+			"err_count", ack.GetErrCount(),
+			"message", ack.GetMessage(),
+			"code", ack.GetCode(),
+		)
 	}
 }
 

@@ -107,8 +107,16 @@ func (a *S3Client[T]) putWithRetry(
 		}
 
 		lastErr = err
-		a.NotifyLoggers(types.WarnLevel, "%s => level: WARN, event: PutObject, attempt: %d/%d, key: %s, err: %v",
-			a.componentMetadata, attempt, defaultMaxAttempts, key, err)
+		a.NotifyLoggers(
+			types.WarnLevel,
+			"PutObject retry",
+			"component", a.componentMetadata,
+			"event", "PutObject",
+			"attempt", attempt,
+			"max_attempts", defaultMaxAttempts,
+			"key", key,
+			"error", err,
+		)
 
 		if !isRetryable(err) || attempt == defaultMaxAttempts || ctx.Err() != nil {
 			for _, sensor := range a.snapshotSensors() {
@@ -211,8 +219,15 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		return err
 	}
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Flush, key: %s, records: %d, bytes: %d",
-		a.componentMetadata, key, a.count, len(payload))
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"Flush",
+		"component", a.componentMetadata,
+		"event", "Flush",
+		"key", key,
+		"records", a.count,
+		"bytes", len(payload),
+	)
 
 	a.buf.Reset()
 	a.count = 0
@@ -276,8 +291,15 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 		return err
 	}
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: FlushRaw, key: %s, chunks: %d, bytes: %d",
-		a.componentMetadata, key, a.count, len(payload))
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"FlushRaw",
+		"component", a.componentMetadata,
+		"event", "FlushRaw",
+		"key", key,
+		"chunks", a.count,
+		"bytes", len(payload),
+	)
 
 	a.buf.Reset()
 	a.count = 0

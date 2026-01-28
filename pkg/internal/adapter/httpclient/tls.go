@@ -19,7 +19,14 @@ func (hp *HTTPClientAdapter[T]) SetTlsPinnedCertificate(certPath string) {
 	cert, err := loadCertificate(certPath)
 	if err != nil {
 		hp.notifyHTTPClientError(err)
-		hp.NotifyLoggers(types.ErrorLevel, "httpclient tls pinning failed: %v", err)
+		hp.NotifyLoggers(
+			types.ErrorLevel,
+			"httpclient tls pinning failed",
+			"component", hp.GetComponentMetadata(),
+			"event", "TLSPinning",
+			"cert_path", certPath,
+			"error", err,
+		)
 		return
 	}
 

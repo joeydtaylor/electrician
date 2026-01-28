@@ -32,16 +32,34 @@ func (hp *HTTPClientAdapter[T]) Serve(ctx context.Context, submitFunc func(conte
 	ticker := time.NewTicker(cfg.interval)
 	defer ticker.Stop()
 
-	hp.NotifyLoggers(types.InfoLevel, "httpclient serve started")
+	hp.NotifyLoggers(
+		types.InfoLevel,
+		"httpclient serve started",
+		"component", hp.GetComponentMetadata(),
+		"event", "ServeStart",
+		"interval", cfg.interval,
+	)
 
 	for {
 		select {
 		case <-ctx.Done():
-			hp.NotifyLoggers(types.WarnLevel, "httpclient serve canceled")
+			hp.NotifyLoggers(
+				types.WarnLevel,
+				"httpclient serve canceled",
+				"component", hp.GetComponentMetadata(),
+				"event", "ServeStop",
+				"result", "CANCELLED",
+			)
 			return nil
 		case <-ticker.C:
 			if err := hp.attemptFetchAndSubmit(ctx, submitFunc, cfg.maxRetries); err != nil {
-				hp.NotifyLoggers(types.ErrorLevel, "httpclient serve failed: %v", err)
+				hp.NotifyLoggers(
+					types.ErrorLevel,
+					"httpclient serve failed",
+					"component", hp.GetComponentMetadata(),
+					"event", "ServeError",
+					"error", err,
+				)
 				return err
 			}
 		}

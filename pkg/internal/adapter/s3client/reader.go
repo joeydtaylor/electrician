@@ -155,23 +155,46 @@ func (a *S3Client[T]) Serve(ctx context.Context, submit func(context.Context, T)
 	tick := time.NewTicker(a.listPollInterval)
 	defer tick.Stop()
 
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ServeReader, prefix: %s",
-		a.componentMetadata, a.listPrefix)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"ServeReader",
+		"component", a.componentMetadata,
+		"event", "ServeReader",
+		"prefix", a.listPrefix,
+	)
 
 	for {
 		select {
 		case <-ctx.Done():
-			a.NotifyLoggers(types.WarnLevel, "%s => level: WARN, event: Cancel => reader stopped", a.componentMetadata)
+			a.NotifyLoggers(
+				types.WarnLevel,
+				"ServeReader cancelled",
+				"component", a.componentMetadata,
+				"event", "ServeReaderStop",
+				"result", "CANCELLED",
+			)
 			return nil
 		case <-tick.C:
 			resp, err := a.Fetch()
 			if err != nil {
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Fetch, err: %v", a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"Fetch failed",
+					"component", a.componentMetadata,
+					"event", "Fetch",
+					"error", err,
+				)
 				continue
 			}
 			for _, v := range resp.Body {
 				if err := submit(ctx, v); err != nil {
-					a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Submit, err: %v", a.componentMetadata, err)
+					a.NotifyLoggers(
+						types.ErrorLevel,
+						"Submit failed",
+						"component", a.componentMetadata,
+						"event", "Submit",
+						"error", err,
+					)
 					return err
 				}
 			}

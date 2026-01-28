@@ -11,7 +11,7 @@ type Plug[T any] interface {
 	GetAdapterFuncs() []AdapterFunc[T]
 	ConnectSensor(...Sensor[T])
 	ConnectLogger(...Logger)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	ConnectAdapter(pc ...Adapter[T])
 	GetComponentMetadata() ComponentMetadata
 

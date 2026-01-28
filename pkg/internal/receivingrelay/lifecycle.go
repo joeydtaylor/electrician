@@ -17,7 +17,13 @@ func (rr *ReceivingRelay[T]) Start(ctx context.Context) error {
 	atomic.StoreInt32(&rr.configFrozen, 1)
 	rr.startOutputFanout()
 
-	rr.NotifyLoggers(types.InfoLevel, "Start: starting receiving relay")
+	rr.logKV(
+		types.InfoLevel,
+		"Receiving relay starting",
+		"event", "Start",
+		"result", "SUCCESS",
+		"outputs", len(rr.Outputs),
+	)
 	for _, output := range rr.Outputs {
 		if !output.IsStarted() {
 			output.Start(ctx)
@@ -31,7 +37,12 @@ func (rr *ReceivingRelay[T]) Start(ctx context.Context) error {
 
 // Stop halts relay operations and closes resources.
 func (rr *ReceivingRelay[T]) Stop() {
-	rr.NotifyLoggers(types.InfoLevel, "Stop: stopping receiving relay")
+	rr.logKV(
+		types.InfoLevel,
+		"Receiving relay stopping",
+		"event", "Stop",
+		"result", "SUCCESS",
+	)
 
 	rr.cancel()
 	rr.shutdownGRPCWebServer()

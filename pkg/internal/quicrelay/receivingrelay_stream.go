@@ -18,9 +18,9 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 	rr.ensureDefaultAuthValidator()
 
 	var (
-		streamID string
-		defaults *relay.MessageMetadata
-		ackMode  relay.AckMode = relay.AckMode_ACK_PER_MESSAGE
+		streamID  string
+		defaults  *relay.MessageMetadata
+		ackMode   relay.AckMode = relay.AckMode_ACK_PER_MESSAGE
 		ackEveryN uint64
 	)
 
@@ -63,7 +63,11 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 			return
 		}
 		if err != nil {
-			rr.NotifyLoggers(types.DebugLevel, "StreamReceive: recv failed: %v", err)
+			rr.logKV(types.DebugLevel, "Stream receive failed",
+				"event", "StreamReceive",
+				"result", "FAILURE",
+				"error", err,
+			)
 			flushBatch("recv error")
 			return
 		}
@@ -88,6 +92,13 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 				if err == errMissingHeaders {
 					validated = false
 				} else if rr.authRequired {
+					rr.logKV(types.ErrorLevel, "Auth failed on stream open",
+						"event", "Auth",
+						"result", "FAILURE",
+						"stream_id", streamID,
+						"error", err,
+						"headers", headers,
+					)
 					_ = sendAck(&relay.StreamAcknowledgment{
 						Success:  false,
 						Message:  "auth failed: " + err.Error(),
@@ -96,13 +107,27 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 					})
 					return
 				} else {
-					rr.NotifyLoggers(types.WarnLevel, "Auth: soft-failing policy error: %v", err)
+					rr.logKV(types.WarnLevel, "Auth policy soft-failed on stream open",
+						"event", "Auth",
+						"result", "SOFT_FAIL",
+						"stream_id", streamID,
+						"error", err,
+						"headers", headers,
+					)
 				}
 			} else {
 				validated = true
 			}
 
-			rr.NotifyLoggers(types.InfoLevel, "StreamReceive: open stream_id=%s ack_mode=%v ack_every_n=%d", streamID, ackMode, ackEveryN)
+			rr.logKV(types.InfoLevel, "Stream opened",
+				"event", "StreamOpen",
+				"result", "SUCCESS",
+				"stream_id", streamID,
+				"ack_mode", ackMode,
+				"ack_every_n", ackEveryN,
+				"max_in_flight", open.GetMaxInFlight(),
+				"omit_payload_metadata", open.GetOmitPayloadMetadata(),
+			)
 
 			if ackMode != relay.AckMode_ACK_NONE {
 				if err := sendAck(&relay.StreamAcknowledgment{Success: true, Message: "Stream open accepted", StreamId: streamID, Code: 0}); err != nil {
@@ -113,7 +138,12 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 		}
 
 		if closeMsg := env.GetClose(); closeMsg != nil {
-			rr.NotifyLoggers(types.InfoLevel, "StreamReceive: close stream_id=%s reason=%s", streamID, closeMsg.GetReason())
+			rr.logKV(types.InfoLevel, "Stream closed",
+				"event", "StreamClose",
+				"result", "SUCCESS",
+				"stream_id", streamID,
+				"reason", closeMsg.GetReason(),
+			)
 			flushBatch("Stream closed")
 			return
 		}
@@ -132,10 +162,27 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 			headers := headersFromMetadata(effectiveMeta)
 			if err := rr.validateHeaders(rr.ctx, headers); err != nil {
 				if rr.authRequired {
+					rr.logKV(types.ErrorLevel, "Auth failed on payload",
+						"event", "Auth",
+						"result", "FAILURE",
+						"stream_id", streamID,
+						"id", payload.GetId(),
+						"seq", payload.GetSeq(),
+						"error", err,
+						"headers", headers,
+					)
 					_ = sendAck(&relay.StreamAcknowledgment{Success: false, Message: "auth failed: " + err.Error(), StreamId: streamID, Id: payload.GetId(), Seq: payload.GetSeq(), Code: 401})
 					return
 				}
-				rr.NotifyLoggers(types.WarnLevel, "Auth: soft-failing policy error: %v", err)
+				rr.logKV(types.WarnLevel, "Auth policy soft-failed on payload",
+					"event", "Auth",
+					"result", "SOFT_FAIL",
+					"stream_id", streamID,
+					"id", payload.GetId(),
+					"seq", payload.GetSeq(),
+					"error", err,
+					"headers", headers,
+				)
 			} else {
 				validated = true
 			}
@@ -160,7 +207,14 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 			var err error
 			data, err = rr.asPassthroughItem(wp)
 			if err != nil {
-				rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: passthrough failed id=%s seq=%d err=%v", wp.GetId(), seq, err)
+				rr.logKV(types.ErrorLevel, "Passthrough failed",
+					"event", "Passthrough",
+					"result", "FAILURE",
+					"stream_id", streamID,
+					"id", wp.GetId(),
+					"seq", seq,
+					"error", err,
+				)
 				switch ackMode {
 				case relay.AckMode_ACK_PER_MESSAGE:
 					_ = sendAck(&relay.StreamAcknowledgment{Success: false, Message: "passthrough failed: " + err.Error(), StreamId: streamID, Id: wp.GetId(), Seq: seq, Code: 1, Retryable: false})
@@ -174,7 +228,14 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 				continue
 			}
 		} else if err := receivingrelay.UnwrapPayload(wp, rr.DecryptionKey, &data); err != nil {
-			rr.NotifyLoggers(types.ErrorLevel, "StreamReceive: unwrap failed id=%s seq=%d err=%v", wp.GetId(), seq, err)
+			rr.logKV(types.ErrorLevel, "Unwrap failed",
+				"event", "Unwrap",
+				"result", "FAILURE",
+				"stream_id", streamID,
+				"id", wp.GetId(),
+				"seq", seq,
+				"error", err,
+			)
 			switch ackMode {
 			case relay.AckMode_ACK_PER_MESSAGE:
 				_ = sendAck(&relay.StreamAcknowledgment{Success: false, Message: "unwrap failed: " + err.Error(), StreamId: streamID, Id: wp.GetId(), Seq: seq, Code: 1, Retryable: false})
@@ -189,6 +250,17 @@ func (rr *ReceivingRelay[T]) handleStream(stream quic.Stream) {
 		}
 
 		rr.DataCh <- data
+		rr.logKV(types.DebugLevel, "Payload received",
+			"event", "Receive",
+			"result", "SUCCESS",
+			"stream_id", streamID,
+			"id", wp.GetId(),
+			"seq", seq,
+			"payload_type", wp.GetPayloadType(),
+			"payload_encoding", wp.GetPayloadEncoding(),
+			"payload_bytes", len(wp.GetPayload()),
+			"trace_id", effectiveMeta.GetTraceId(),
+		)
 
 		switch ackMode {
 		case relay.AckMode_ACK_PER_MESSAGE:

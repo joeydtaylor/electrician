@@ -107,7 +107,7 @@ type S3WriterAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	Name() string
 }
 
@@ -127,7 +127,7 @@ type S3ReaderAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	Name() string
 }
 
@@ -160,7 +160,7 @@ type S3ClientAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	Name() string
 }
 

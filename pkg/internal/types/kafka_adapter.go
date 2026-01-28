@@ -139,7 +139,7 @@ type KafkaWriterAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	Name() string
 }
 
@@ -159,7 +159,7 @@ type KafkaReaderAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	Name() string
 }
 
@@ -189,7 +189,7 @@ type KafkaClientAdapter[T any] interface {
 	ConnectSensor(...Sensor[T])
 	GetComponentMetadata() ComponentMetadata
 	SetComponentMetadata(name, id string)
-	NotifyLoggers(level LogLevel, format string, args ...interface{})
+	NotifyLoggers(level LogLevel, msg string, keysAndValues ...interface{})
 	Name() string
 }
 

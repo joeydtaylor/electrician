@@ -29,8 +29,14 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 	}
 	if created {
 		defer func() { _ = r.Close() }()
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ReaderCreated, group: %s, topics: %v",
-			a.componentMetadata, a.rGroupID, a.rTopics)
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Kafka reader created",
+			"component", a.componentMetadata,
+			"event", "ReaderCreated",
+			"group", a.rGroupID,
+			"topics", a.rTopics,
+		)
 	}
 
 	policy := strings.ToLower(strings.TrimSpace(a.rCommitPolicy))
@@ -48,8 +54,16 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 		}
 		sensor.InvokeOnKafkaConsumerStart(a.componentMetadata, a.rGroupID, append([]string(nil), a.rTopics...), a.rStartAt)
 	}
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConsumerStart, group: %s, topics: %v, start_at: %s",
-		a.componentMetadata, a.rGroupID, a.rTopics, a.rStartAt)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"Kafka consumer started",
+		"component", a.componentMetadata,
+		"event", "ConsumerStart",
+		"result", "SUCCESS",
+		"group", a.rGroupID,
+		"topics", a.rTopics,
+		"start_at", a.rStartAt,
+	)
 	defer func() {
 		for _, sensor := range a.snapshotSensors() {
 			if sensor == nil {
@@ -57,7 +71,13 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 			}
 			sensor.InvokeOnKafkaConsumerStop(a.componentMetadata)
 		}
-		a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: ConsumerStop", a.componentMetadata)
+		a.NotifyLoggers(
+			types.InfoLevel,
+			"Kafka consumer stopped",
+			"component", a.componentMetadata,
+			"event", "ConsumerStop",
+			"result", "SUCCESS",
+		)
 	}()
 
 	maxPollRecs := a.rMaxPollRecs
@@ -94,7 +114,13 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 					break inner
 				}
-				a.NotifyLoggers(types.WarnLevel, "%s => level: WARN, event: FetchMessage, err: %v", a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.WarnLevel,
+					"FetchMessage warning",
+					"component", a.componentMetadata,
+					"event", "FetchMessage",
+					"error", err,
+				)
 				break inner
 			}
 
@@ -104,26 +130,55 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 				}
 				sensor.InvokeOnKafkaMessage(a.componentMetadata, msg.Topic, msg.Partition, msg.Offset, len(msg.Key), len(msg.Value))
 			}
-			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Message, topic: %s, partition: %d, offset: %d, key_bytes: %d, val_bytes: %d",
-				a.componentMetadata, msg.Topic, msg.Partition, msg.Offset, len(msg.Key), len(msg.Value))
+			a.NotifyLoggers(
+				types.InfoLevel,
+				"Kafka message",
+				"component", a.componentMetadata,
+				"event", "Message",
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+				"key_bytes", len(msg.Key),
+				"val_bytes", len(msg.Value),
+			)
 
 			var v T
 			switch strings.ToLower(strings.TrimSpace(a.rFormat)) {
 			case "ndjson", "", "json":
 				if err := json.Unmarshal(msg.Value, &v); err != nil {
-					a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Decode, topic: %s, err: %v", a.componentMetadata, msg.Topic, err)
+					a.NotifyLoggers(
+						types.ErrorLevel,
+						"Kafka decode failed",
+						"component", a.componentMetadata,
+						"event", "Decode",
+						"topic", msg.Topic,
+						"error", err,
+					)
 					continue
 				}
 			default:
 				if err := json.Unmarshal(msg.Value, &v); err != nil {
-					a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Decode, topic: %s, err: %v", a.componentMetadata, msg.Topic, err)
+					a.NotifyLoggers(
+						types.ErrorLevel,
+						"Kafka decode failed",
+						"component", a.componentMetadata,
+						"event", "Decode",
+						"topic", msg.Topic,
+						"error", err,
+					)
 					continue
 				}
 			}
 			decodedByTopic[msg.Topic]++
 
 			if err := submit(ctx, v); err != nil {
-				a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Submit, err: %v", a.componentMetadata, err)
+				a.NotifyLoggers(
+					types.ErrorLevel,
+					"Kafka submit failed",
+					"component", a.componentMetadata,
+					"event", "Submit",
+					"error", err,
+				)
 				continue
 			}
 
@@ -138,7 +193,18 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 							}
 							sensor.InvokeOnKafkaCommitError(a.componentMetadata, a.rGroupID, err)
 						}
-						a.NotifyLoggers(types.ErrorLevel, "%s => level: ERROR, event: Commit(after-each), err: %v", a.componentMetadata, err)
+						a.NotifyLoggers(
+							types.ErrorLevel,
+							"Kafka commit failed",
+							"component", a.componentMetadata,
+							"event", "CommitAfterEach",
+							"result", "FAILURE",
+							"group", a.rGroupID,
+							"topic", msg.Topic,
+							"partition", msg.Partition,
+							"offset", msg.Offset,
+							"error", err,
+						)
 					} else {
 						key := fmt.Sprintf("%s:%d", msg.Topic, msg.Partition)
 						for _, sensor := range a.snapshotSensors() {
@@ -147,8 +213,15 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 							}
 							sensor.InvokeOnKafkaCommitSuccess(a.componentMetadata, a.rGroupID, map[string]int64{key: msg.Offset + 1})
 						}
-						a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: CommitSuccess(after-each), group: %s, offsets: %s=%d",
-							a.componentMetadata, a.rGroupID, key, msg.Offset+1)
+						a.NotifyLoggers(
+							types.InfoLevel,
+							"Kafka commit success",
+							"component", a.componentMetadata,
+							"event", "CommitAfterEach",
+							"result", "SUCCESS",
+							"group", a.rGroupID,
+							"offsets", map[string]int64{key: msg.Offset + 1},
+						)
 					}
 				case "after-batch", "time", "":
 					key := fmt.Sprintf("%s:%d", msg.Topic, msg.Partition)
@@ -174,14 +247,29 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 					}
 					sensor.InvokeOnKafkaDecode(a.componentMetadata, t, n, a.rFormat)
 				}
-				a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Decode, topic: %s, rows: %d, format: %s",
-					a.componentMetadata, t, n, a.rFormat)
+				a.NotifyLoggers(
+					types.InfoLevel,
+					"Kafka decode",
+					"component", a.componentMetadata,
+					"event", "Decode",
+					"result", "SUCCESS",
+					"topic", t,
+					"rows", n,
+					"format", a.rFormat,
+				)
 			}
 		}
 
 		if mode == "manual" && policy == "after-batch" && len(latestByTP) > 0 {
-			a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Commit(after-batch), partitions: %d",
-				a.componentMetadata, len(latestByTP))
+			a.NotifyLoggers(
+				types.InfoLevel,
+				"Kafka commit after batch",
+				"component", a.componentMetadata,
+				"event", "CommitAfterBatch",
+				"result", "SUCCESS",
+				"group", a.rGroupID,
+				"partitions", len(latestByTP),
+			)
 			a.commitLatest(ctx, r, latestByTP, a.rGroupID)
 			latestByTP = make(map[string]kafka.Message)
 		}
@@ -190,8 +278,16 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 			select {
 			case <-commitTicker.C:
 				if len(latestByTP) > 0 {
-					a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Commit(time), partitions: %d, every: %s",
-						a.componentMetadata, len(latestByTP), a.rCommitEvery)
+					a.NotifyLoggers(
+						types.InfoLevel,
+						"Kafka commit on interval",
+						"component", a.componentMetadata,
+						"event", "CommitInterval",
+						"result", "SUCCESS",
+						"group", a.rGroupID,
+						"partitions", len(latestByTP),
+						"every", a.rCommitEvery,
+					)
 					a.commitLatest(ctx, r, latestByTP, a.rGroupID)
 					latestByTP = make(map[string]kafka.Message)
 				}
@@ -202,8 +298,15 @@ func (a *KafkaClient[T]) Serve(ctx context.Context, submit func(context.Context,
 		select {
 		case <-ctx.Done():
 			if mode == "manual" && len(latestByTP) > 0 {
-				a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Commit(final), partitions: %d",
-					a.componentMetadata, len(latestByTP))
+				a.NotifyLoggers(
+					types.InfoLevel,
+					"Kafka commit on shutdown",
+					"component", a.componentMetadata,
+					"event", "CommitFinal",
+					"result", "SUCCESS",
+					"group", a.rGroupID,
+					"partitions", len(latestByTP),
+				)
 				a.commitLatest(context.Background(), r, latestByTP, a.rGroupID)
 			}
 			return nil

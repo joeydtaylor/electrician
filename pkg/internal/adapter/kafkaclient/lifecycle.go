@@ -11,6 +11,12 @@ func (a *KafkaClient[T]) Stop() {
 		sensor.InvokeOnKafkaWriterStop(a.componentMetadata)
 		sensor.InvokeOnKafkaConsumerStop(a.componentMetadata)
 	}
-	a.NotifyLoggers(types.InfoLevel, "%s => level: INFO, event: Stop", a.componentMetadata)
+	a.NotifyLoggers(
+		types.InfoLevel,
+		"Stop",
+		"component", a.componentMetadata,
+		"event", "Stop",
+		"result", "SUCCESS",
+	)
 	a.cancel()
 }

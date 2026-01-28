@@ -26,13 +26,24 @@ func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credenti
 
 	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel, "loadTLSCredentials: load keypair failed: %v", err)
+		fr.logKV(types.ErrorLevel, "TLS load keypair failed",
+			"event", "TLSLoad",
+			"result", "FAILURE",
+			"cert", config.CertFile,
+			"key", config.KeyFile,
+			"error", err,
+		)
 		return nil, err
 	}
 	certPool := x509.NewCertPool()
 	ca, err := os.ReadFile(config.CAFile)
 	if err != nil {
-		fr.NotifyLoggers(types.ErrorLevel, "loadTLSCredentials: read CA failed: %v", err)
+		fr.logKV(types.ErrorLevel, "TLS read CA failed",
+			"event", "TLSLoad",
+			"result", "FAILURE",
+			"ca", config.CAFile,
+			"error", err,
+		)
 		return nil, err
 	}
 	if !certPool.AppendCertsFromPEM(ca) {
@@ -56,6 +67,12 @@ func (fr *ForwardRelay[T]) loadTLSCredentials(config *types.TLSConfig) (credenti
 		MaxVersion:   maxTLSVersion,
 	})
 	fr.tlsCredentials.Store(newCreds)
-	fr.NotifyLoggers(types.DebugLevel, "loadTLSCredentials: loaded")
+	fr.logKV(types.DebugLevel, "TLS credentials loaded",
+		"event", "TLSLoad",
+		"result", "SUCCESS",
+		"server_name", config.SubjectAlternativeName,
+		"min_tls_version", minTLSVersion,
+		"max_tls_version", maxTLSVersion,
+	)
 	return newCreds, nil
 }
