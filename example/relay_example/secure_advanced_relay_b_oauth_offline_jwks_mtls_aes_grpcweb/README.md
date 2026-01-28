@@ -3,6 +3,9 @@
 This example runs a gRPC-Web-compatible receiving relay on `https://localhost:50051`.
 Use it to send encrypted or plaintext payloads from a browser client (Connect).
 
+Source of truth for gRPC-web alignment:
+- `docs/relay-grpcweb-alignment.md`
+
 ## 60-second quickstart (copy/paste)
 
 1) Start the mock OAuth server (dev):

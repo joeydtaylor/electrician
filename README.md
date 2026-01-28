@@ -113,8 +113,10 @@ Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These liv
 - Mock OAuth server (dev only): `example/relay_example/mock_oauth_server/README.md`
 - Onboarding: `docs/ONBOARDING.md`
 - Relay gRPC-Web / Connect: `docs/relay-grpc-connect.md`
+- Relay gRPC-Web alignment (source of truth): `docs/relay-grpcweb-alignment.md`
 - Relay CORS: `docs/relay-grpcweb-cors.md`
 - JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
+- Relay native clients (Rust/Python): `docs/relay-client-native.md`
 - Steeze UI system (if UI is added here): `docs/steeze-ui-system.md`
 - Workbench (local codegen playground): `docs/WORKBENCH.md`
 - Legal: `docs/LEGAL.md`
