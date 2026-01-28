@@ -13,7 +13,7 @@ type fallbackPayload struct {
 	ID   int
 }
 
-func TestUnwrapPayloadFallbackDecryptMissingSecurity(t *testing.T) {
+func TestUnwrapPayloadRequiresEncryptionWhenKeySet(t *testing.T) {
 	key := "0123456789abcdef0123456789abcdef"
 
 	var buf bytes.Buffer
@@ -21,18 +21,14 @@ func TestUnwrapPayloadFallbackDecryptMissingSecurity(t *testing.T) {
 		t.Fatalf("gob encode: %v", err)
 	}
 
-	ciphertext := encryptAESGCM(t, key, buf.Bytes())
 	wp := &relay.WrappedPayload{
-		Payload:         ciphertext,
+		Payload:         buf.Bytes(),
 		PayloadEncoding: relay.PayloadEncoding_PAYLOAD_ENCODING_GOB,
 		Metadata:        &relay.MessageMetadata{},
 	}
 
 	var out fallbackPayload
-	if err := UnwrapPayload(wp, key, &out); err != nil {
-		t.Fatalf("unwrap failed: %v", err)
-	}
-	if out.Name != "alpha" || out.ID != 7 {
-		t.Fatalf("unexpected output: %+v", out)
+	if err := UnwrapPayload(wp, key, &out); err == nil {
+		t.Fatalf("expected encryption required error")
 	}
 }

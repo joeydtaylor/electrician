@@ -8,6 +8,9 @@ This guide explains how the frontend should integrate with Electrician relay:
 If you only ship a browser UI, implement **gRPC-Web** now. QUIC is for native/desktop/mobile
 clients or a proxy service that speaks QUIC on behalf of the browser.
 
+Source of truth for gRPC-web alignment:
+- `docs/relay-grpcweb-alignment.md`
+
 ---
 
 ## 60-second sanity path (browser)
@@ -53,7 +56,8 @@ Check the receiver log line **Auth JWT validator installed** for the exact issue
   - For QUIC, this lives in `StreamOpen.defaults.headers`.
 
 **Security (AES-GCM)**
-- If encryption is enabled, encrypt the payload bytes and set:
+- If the server is configured with a decryption key (secure examples), encryption is required.
+  Encrypt the payload bytes and set:
   - `metadata.security.enabled = true`
   - `metadata.security.suite = ENCRYPTION_AES_GCM`
 - Payload format: `IV (12 bytes) || ciphertext+tag`.
@@ -77,6 +81,10 @@ Check the receiver log line **Auth JWT validator installed** for the exact issue
 ### Required headers
 - `authorization: Bearer <token>`
 - `x-tenant: local`
+
+### Browser payload rule (JSON only)
+- Do not send GOB from the browser.
+- Always set `content_type = application/json`.
 
 ### Minimal TypeScript (Connect)
 

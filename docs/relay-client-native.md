@@ -6,6 +6,7 @@ examples.
 
 If you are building a browser client, use:
 `example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`
+or `docs/relay-grpcweb-alignment.md`.
 
 ---
 

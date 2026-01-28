@@ -64,9 +64,10 @@ Recommended:
 - `payload_encoding = PAYLOAD_ENCODING_UNSPECIFIED`
 - `content_type = application/json`
 
-## Encryption and compression (optional)
+## Encryption and compression (required in this example)
 
-The receiver will only decrypt/decompress when the metadata says to do so:
+This receiver is configured with a decryption key, so **encryption is required**.
+If `metadata.security` is missing or disabled, the payload will be rejected.
 
 - Encryption:
   - Set `metadata.security.enabled = true`
@@ -78,7 +79,7 @@ The receiver will only decrypt/decompress when the metadata says to do so:
   - Set `metadata.performance.compression_algorithm`
   - Compress the plaintext before encrypting.
 
-If you skip these options, send plaintext JSON bytes and the receiver will accept it.
+If you skip these options, the receiver will reject the payload.
 
 ## Browser client outline
 

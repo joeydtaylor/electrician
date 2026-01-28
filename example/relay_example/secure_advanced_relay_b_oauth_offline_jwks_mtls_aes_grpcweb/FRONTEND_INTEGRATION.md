@@ -6,6 +6,9 @@ This guide is for the frontend team. It targets the most secure relay example in
 If you want a single doc that covers gRPC-web + QUIC side-by-side, use:
 `example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`.
 
+Source of truth for strict gRPC-web alignment:
+- `docs/relay-grpcweb-alignment.md`
+
 It assumes the browser uses Connect (gRPC-web compatible) to call
 `electrician.RelayService/Receive` from `proto/electrician_relay.proto`.
 
@@ -72,7 +75,7 @@ If you need different values, set these env vars before running:
 3. Send gRPC metadata headers:
    - `authorization: Bearer <token>`
    - `x-tenant: local`
-4. If encryption is enabled, AES-GCM encrypt the payload and set metadata:
+4. Encryption is required in this example. AES-GCM encrypt the payload and set metadata:
    - `metadata.security.enabled = true`
    - `metadata.security.suite = ENCRYPTION_AES_GCM`
 
@@ -120,7 +123,7 @@ If the server expects the Feedback shape, JSON should look like:
 }
 ```
 
-## AES-GCM encryption details
+## AES-GCM encryption details (required)
 
 The receiver expects the payload to be encrypted as:
 

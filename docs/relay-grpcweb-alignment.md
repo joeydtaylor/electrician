@@ -26,7 +26,7 @@ It is intentionally strict so frontend and backend stay aligned.
 - `payload_encoding`: `PAYLOAD_ENCODING_UNSPECIFIED`
 - `payload_type`: `electrician.Feedback` (optional)
 
-**Encryption (if enabled)**
+**Encryption (required when server has a key)**
 - AES-GCM with 12-byte IV prefix
 - `metadata.security.enabled = true`
 - `metadata.security.suite = ENCRYPTION_AES_GCM`

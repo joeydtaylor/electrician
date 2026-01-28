@@ -28,6 +28,7 @@ go run ./example/relay_example/mock_oauth_server
 
 ## Common docs
 - Relay gRPC-Web / Connect: `docs/relay-grpc-connect.md`
+- Relay gRPC-Web alignment: `docs/relay-grpcweb-alignment.md`
 - Relay CORS: `docs/relay-grpcweb-cors.md`
 - JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
 - Relay examples index: `example/relay_example/README.md`

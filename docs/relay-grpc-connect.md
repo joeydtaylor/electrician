@@ -3,6 +3,9 @@
 This guide explains how a browser client (Connect / gRPC-web) calls
 `electrician.RelayService/Receive` using the Electrician relay contract.
 
+Source of truth for strict browser alignment:
+- `docs/relay-grpcweb-alignment.md`
+
 ## Endpoint
 - Base URL: `https://localhost:50051`
 - Method: `electrician.RelayService/Receive`
@@ -32,6 +35,8 @@ Use the returned `access_token` as the Bearer token.
 - `payload_encoding`: `PAYLOAD_ENCODING_UNSPECIFIED` (0)
 - `content_type`: `application/json`
 - `payload_type`: optional (e.g. `electrician.Feedback`)
+
+Browser clients are JSON-only (no GOB).
 
 ## AES-GCM (if enabled)
 Encrypt the payload bytes and set:
