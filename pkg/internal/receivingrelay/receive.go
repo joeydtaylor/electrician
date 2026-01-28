@@ -44,6 +44,7 @@ func (rr *ReceivingRelay[T]) Receive(ctx context.Context, payload *relay.Wrapped
 	}
 
 	go func(p *relay.WrappedPayload, tid string) {
+		rr.applyGRPCWebContentTypeDefaults(p, p.GetMetadata())
 		var data T
 		if rr.passthrough {
 			var err error

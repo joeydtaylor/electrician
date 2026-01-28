@@ -2,6 +2,42 @@
 
 This folder groups all relay examples (gRPC, QUIC, secure variants) and the docs that go with them.
 
+## Quickstart (pick one path)
+
+### A) Browser gRPC-Web (fastest)
+1) Start the mock OAuth server (dev):
+   ```bash
+   go run ./example/relay_example/mock_oauth_server
+   ```
+2) Start the secure gRPC-Web receiver:
+   ```bash
+   OAUTH_ISSUER_BASE=auth-service \
+     go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
+   ```
+3) Use your browser client (Connect) and send:
+   - `authorization: Bearer <token>`
+   - `x-tenant: local`
+   - JSON payload + `content_type: application/json`
+
+If you see `issuer mismatch`, your token `iss` does not match the receiver's issuer.
+Check the receiver log line: `Auth JWT validator installed` for the exact issuer string.
+
+### B) QUIC (native clients)
+1) Start the secure QUIC receiver:
+   ```bash
+   go run ./example/relay_example/quic_secure_oauth_aes_receiver
+   ```
+2) Send with the secure QUIC sender:
+   ```bash
+   go run ./example/relay_example/quic_secure_oauth_aes_sender
+   ```
+
+### C) Basic (no auth, no encryption)
+```bash
+go run ./example/relay_example/basic_relay_a
+go run ./example/relay_example/basic_relay_b
+```
+
 ## Key docs
 
 - Frontend integration (gRPC-Web + QUIC): `example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`

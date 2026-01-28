@@ -116,6 +116,7 @@ Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These liv
 - Relay CORS: `docs/relay-grpcweb-cors.md`
 - JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
 - Steeze UI system (if UI is added here): `docs/steeze-ui-system.md`
+- Workbench (local codegen playground): `docs/WORKBENCH.md`
 - Legal: `docs/LEGAL.md`
 - Trademarks: `docs/TRADEMARKS.md`
 - Per-package READMEs under `pkg/internal/*` and `pkg/builder`

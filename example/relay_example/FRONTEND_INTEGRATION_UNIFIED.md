@@ -10,6 +10,30 @@ clients or a proxy service that speaks QUIC on behalf of the browser.
 
 ---
 
+## 60-second sanity path (browser)
+
+1) Start mock OAuth (dev):
+```bash
+go run ./example/relay_example/mock_oauth_server
+```
+
+2) Start secure gRPC-web receiver:
+```bash
+OAUTH_ISSUER_BASE=auth-service \
+  go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
+```
+
+3) Use Connect and send:
+- `authorization: Bearer <token>`
+- `x-tenant: local`
+- JSON payload, `content_type = application/json`
+- If encrypted: AES-GCM + `metadata.security.enabled = true`
+
+If you see `issuer mismatch`, the token `iss` does not match the receiver's issuer.
+Check the receiver log line **Auth JWT validator installed** for the exact issuer.
+
+---
+
 ## 0) Shared Rules (Applies to both gRPC-Web and QUIC)
 
 **Proto**
@@ -19,7 +43,7 @@ clients or a proxy service that speaks QUIC on behalf of the browser.
 **Auth**
 - Always send `authorization: Bearer <token>` as transport metadata.
 - Tokens must include:
-  - `iss` = configured issuer (example: `auth-service`)
+  - `iss` = configured issuer (check receiver log on startup)
   - `aud` includes `your-api`
   - `scope` includes `write:data`
 

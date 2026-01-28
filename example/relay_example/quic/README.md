@@ -33,10 +33,27 @@ go run ./example/relay_example/quic_basic_sender
 ## Secure flow (OAuth2 + AES-GCM)
 
 Before running, edit the constants near the top of these files to match your auth server,
-TLS paths, and AES key:
+TLS paths, and AES key (or just use the defaults to match the mock OAuth server):
 
 - `example/relay_example/quic_secure_oauth_aes_receiver/main.go`
 - `example/relay_example/quic_secure_oauth_aes_sender/main.go`
+
+### Fast path (copy/paste)
+
+1) Start mock OAuth (dev):
+```bash
+go run ./example/relay_example/mock_oauth_server
+```
+
+2) Start secure receiver:
+```bash
+go run ./example/relay_example/quic_secure_oauth_aes_receiver
+```
+
+3) Send with secure sender:
+```bash
+go run ./example/relay_example/quic_secure_oauth_aes_sender
+```
 
 Start the secure receiver:
 
@@ -56,6 +73,9 @@ Notes:
 - The receiver enforces `x-tenant: local` via StreamOpen defaults.
 - AES-GCM uses the same 32-byte key as the gRPC secure example.
 - The sender fetches a JWT using client credentials; the receiver validates via JWKS.
+- The mock OAuth server issues tokens with `iss = auth-service` (default QUIC examples match this).
+- If you see `issuer mismatch`, the token `iss` does not match the receiver's issuer.
+  Check the receiver startup log line for the expected `issuer`.
 
 ## Logging
 

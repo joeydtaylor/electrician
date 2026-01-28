@@ -5,3 +5,5 @@ example/benchmark_example/processing/bench
 .gocache/
 .gomodcache/
 .vscode/
+workbench/
+out/

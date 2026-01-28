@@ -10,6 +10,23 @@ This directory contains the protobuf definitions for Electrician relays. The gen
 
 Regenerate stubs with `protoc` when modifying the proto definition. The generated files are committed to keep consumers and internal packages in sync.
 
+## TL;DR (copy/paste)
+
+```bash
+PROTOC_INCLUDE="$(dirname "$(which protoc)")/../include"
+
+protoc \
+  -I=proto \
+  -I="$PROTOC_INCLUDE" \
+  --go_out=pkg/internal/relay \
+  --go_opt=paths=source_relative \
+  --go-grpc_out=pkg/internal/relay \
+  --go-grpc_opt=paths=source_relative \
+  proto/electrician_relay.proto
+```
+
+If you get `protoc: command not found`, run the prerequisites below first.
+
 ### 1) Prereqs (one-time)
 
 You need:

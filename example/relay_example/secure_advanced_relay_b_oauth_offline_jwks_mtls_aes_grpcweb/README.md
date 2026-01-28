@@ -1,8 +1,32 @@
 # gRPC-Web Relay Receiver (Frontend Guide)
 
-This example runs a gRPC-Web–compatible receiving relay on `https://localhost:50051`.
-Your frontend can call the `RelayService` methods from the browser and push payloads into the
-Electrician pipeline.
+This example runs a gRPC-Web-compatible receiving relay on `https://localhost:50051`.
+Use it to send encrypted or plaintext payloads from a browser client (Connect).
+
+## 60-second quickstart (copy/paste)
+
+1) Start the mock OAuth server (dev):
+
+```bash
+go run ./example/relay_example/mock_oauth_server
+```
+
+2) Start the gRPC-Web receiver (match issuer):
+
+```bash
+OAUTH_ISSUER_BASE=auth-service \
+  go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
+```
+
+3) Use your browser client to send:
+   - `authorization: Bearer <token>`
+   - `x-tenant: local`
+   - JSON payload (`content_type: application/json`)
+
+If you see `issuer mismatch`, your token `iss` does not match the receiver's issuer.
+Check the receiver log line **Auth JWT validator installed** for the exact `issuer`.
+
+---
 
 ## What the server expects
 
@@ -24,7 +48,7 @@ Notes:
 - CORS allow-all in the example only affects browser origins. It does not bypass auth or TLS.
 - TLS uses the certificates under `example/relay_example/tls/`. Browsers must trust the CA.
 
-## Minimal payload shape
+## Minimal payload shape (works every time)
 
 `WrappedPayload` must include:
 - `payload` (bytes)
@@ -32,6 +56,10 @@ Notes:
 - Optional: `payload_encoding` (`PAYLOAD_ENCODING_GOB` or `PAYLOAD_ENCODING_PROTO`)
 
 If `metadata.content_type` is JSON, the receiver will decode JSON by default.
+
+Recommended:
+- `payload_encoding = PAYLOAD_ENCODING_UNSPECIFIED`
+- `content_type = application/json`
 
 ## Encryption and compression (optional)
 
@@ -66,9 +94,10 @@ From the repo root:
 go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
 ```
 
-## Common pitfalls
+## Common pitfalls (fast fixes)
 
+- `issuer mismatch`: token `iss` must match the receiver's issuer (see log line).
 - CORS: lock down `AllowedOrigins` for production.
 - TLS: browsers will reject self-signed certs unless the CA is trusted.
-- Auth: if you need strict JWT validation, add a server-side validator (introspection is built in).
+- Auth: missing `aud` or `scope` claims will fail auth.
 - Payload encoding: JSON is easiest for browser clients; proto/gob requires extra work.

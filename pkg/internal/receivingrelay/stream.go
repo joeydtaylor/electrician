@@ -157,6 +157,10 @@ func (rr *ReceivingRelay[T]) StreamReceive(stream relay.RelayService_StreamRecei
 		if effectiveMeta == nil {
 			effectiveMeta = defaults
 		}
+		rr.applyGRPCWebContentTypeDefaults(payload, effectiveMeta)
+		if payload.GetMetadata() != nil {
+			effectiveMeta = payload.GetMetadata()
+		}
 
 		traceID := traceFallback
 		if effectiveMeta != nil && effectiveMeta.GetTraceId() != "" {

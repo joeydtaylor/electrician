@@ -31,6 +31,7 @@ go run ./example/relay_example/mock_oauth_server
 - Relay CORS: `docs/relay-grpcweb-cors.md`
 - JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
 - Relay examples index: `example/relay_example/README.md`
+- Workbench (local codegen playground): `docs/WORKBENCH.md`
 
 ## Integration tests (LocalStack + Redpanda)
 

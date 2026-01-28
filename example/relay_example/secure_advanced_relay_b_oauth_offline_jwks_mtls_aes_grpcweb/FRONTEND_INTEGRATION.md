@@ -9,6 +9,36 @@ If you want a single doc that covers gRPC-web + QUIC side-by-side, use:
 It assumes the browser uses Connect (gRPC-web compatible) to call
 `electrician.RelayService/Receive` from `proto/electrician_relay.proto`.
 
+## 90-second checklist (copy/paste)
+
+1) Start mock OAuth (dev):
+```bash
+go run ./example/relay_example/mock_oauth_server
+```
+
+2) Start receiver:
+```bash
+OAUTH_ISSUER_BASE=auth-service \
+  go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
+```
+
+3) In the browser client:
+- Base URL: `https://localhost:50051`
+- Headers (gRPC metadata):
+  - `authorization: Bearer <token>`
+  - `x-tenant: local`
+- Payload:
+  - JSON bytes
+  - `content_type = application/json`
+  - `payload_encoding = UNSPECIFIED`
+- If encrypting:
+  - AES-GCM encrypt payload (IV + ciphertext+tag)
+  - `metadata.security.enabled = true`
+  - `metadata.security.suite = ENCRYPTION_AES_GCM`
+
+If you hit `issuer mismatch`, the token `iss` does not match the receiver's issuer.
+Check the receiver log line **Auth JWT validator installed** to see the expected issuer.
+
 ## Backend: run the secure receiver
 
 From repo root:
@@ -65,6 +95,9 @@ POST {authBaseUrl}/api/auth/session/token
 ```
 
 Use the returned `access_token` as `Authorization: Bearer <token>`.
+
+Tip: the receiver logs the issuer it expects on startup:
+`Auth JWT validator installed`
 
 ## WrappedPayload expectations
 
