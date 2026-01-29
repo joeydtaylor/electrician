@@ -29,15 +29,22 @@ These examples:
 - use AES‑GCM client‑side encryption
 - require SSE headers on write
 - use Parquet with Zstd
+- default to TLS 1.2+ for Storj HTTP clients
 
-The adapters now ship a Storj-focused helper that **requires client‑side encryption** by default:
+The adapters now ship a Storj-focused helper that **requires client‑side encryption**
+and **SSE headers** by default:
 
 ```
 builder.S3ClientAdapterWithStorjSecureDefaults[YourType](clientSideKeyHex)
 ```
 
-Use `S3ClientAdapterWithSSE` + `S3ClientAdapterWithRequireSSE(true)` if your
-gateway accepts SSE headers (recommended).
+If your gateway does not accept SSE headers, you can explicitly disable it
+(this makes it less secure; not recommended unless required):
+
+```
+builder.S3ClientAdapterWithSSE[YourType]("", "")
+builder.S3ClientAdapterWithRequireSSE[YourType](false)
+```
 
 ---
 

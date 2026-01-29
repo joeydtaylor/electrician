@@ -156,6 +156,12 @@ func NewS3ClientStorj(ctx context.Context, cfg StorjS3Config) (*s3.Client, error
 	if cfg.RequireTLS != nil {
 		requireTLS = *cfg.RequireTLS
 	}
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = NewTLSHTTPClient(TLSHTTPClientConfig{
+			MinVersion: tls.VersionTLS12,
+			Timeout:    30 * time.Second,
+		})
+	}
 	return NewS3ClientStaticCompatible(ctx, S3CompatibleStaticConfig{
 		Region:         cfg.Region,
 		Endpoint:       cfg.Endpoint,

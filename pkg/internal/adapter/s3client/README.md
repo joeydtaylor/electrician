@@ -62,7 +62,7 @@ cli, err := builder.NewS3ClientStorj(ctx, builder.StorjS3Config{
 })
 ```
 
-Storj secure defaults (client‑side encryption required):
+Storj secure defaults (client‑side encryption + SSE required):
 
 ```go
 adapter := builder.NewS3ClientAdapter[Item](

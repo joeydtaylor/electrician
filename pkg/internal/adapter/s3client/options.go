@@ -128,6 +128,8 @@ func WithRequireClientSideEncryption[T any](required bool) types.S3ClientOption[
 func WithStorjSecureDefaults[T any](keyHex string) types.S3ClientOption[T] {
 	return func(adp types.S3ClientAdapter[T]) {
 		adp.SetWriterConfig(types.S3WriterConfig{
+			SSEMode:                     "AES256",
+			RequireSSE:                  true,
 			ClientSideEncryption:        "AES-GCM",
 			ClientSideKey:               keyHex,
 			RequireClientSideEncryption: true,
