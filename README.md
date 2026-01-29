@@ -120,6 +120,7 @@ Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These liv
 - Relay native clients (Rust/Python): `docs/relay-client-native.md`
 - S3-compatible storage (Storj/MinIO/LocalStack): `docs/storage-s3-compatible.md`
 - Storj secure usage (HIPAA-grade guidance): `docs/storage-storj-secure.md`
+- Postgres adapter (secure defaults): `docs/storage-postgres.md`
 - Steeze UI system (if UI is added here): `docs/steeze-ui-system.md`
 - Workbench (local codegen playground): `docs/WORKBENCH.md`
 - Legal: `docs/LEGAL.md`

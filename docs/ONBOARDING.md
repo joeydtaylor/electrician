@@ -36,6 +36,7 @@ go run ./example/relay_example/mock_oauth_server
 - Workbench (local codegen playground): `docs/WORKBENCH.md`
 - S3-compatible storage (Storj/MinIO/LocalStack): `docs/storage-s3-compatible.md`
 - Storj secure usage (HIPAA-grade guidance): `docs/storage-storj-secure.md`
+- Postgres adapter (secure defaults): `docs/storage-postgres.md`
 
 ## Integration tests (LocalStack + Redpanda)
 

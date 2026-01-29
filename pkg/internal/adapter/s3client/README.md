@@ -62,6 +62,10 @@ cli, err := builder.NewS3ClientStorj(ctx, builder.StorjS3Config{
 })
 ```
 
+The Storj helper enforces signed payload SHA‑256 by default to avoid
+`x-amz-content-sha256` mismatches, and disables automatic aws‑chunked request
+checksums that some gateways reject.
+
 Storj secure defaults (client‑side encryption + SSE required):
 
 ```go

@@ -30,6 +30,8 @@ These examples:
 - require SSE headers on write
 - use Parquet with Zstd
 - default to TLS 1.2+ for Storj HTTP clients
+- force signed payload SHA‑256 (avoids `x-amz-content-sha256` mismatches)
+- disable automatic AWS SDK request checksums (avoids aws‑chunked trailers)
 
 The adapters now ship a Storj-focused helper that **requires client‑side encryption**
 and **SSE headers** by default:

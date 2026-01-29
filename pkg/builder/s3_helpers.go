@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/middleware"
 )
 
 // LocalstackS3AssumeRoleConfig sets up defaults for LocalStack assume-role clients.
@@ -39,6 +41,11 @@ type S3CompatibleStaticConfig struct {
 	ForcePathStyle *bool
 	RequireTLS     bool
 	HTTPClient     *http.Client
+	APIOptions     []func(*middleware.Stack) error
+	// RequestChecksumCalculation controls SDK request checksum behavior.
+	RequestChecksumCalculation aws.RequestChecksumCalculation
+	// ResponseChecksumValidation controls SDK response checksum validation.
+	ResponseChecksumValidation aws.ResponseChecksumValidation
 }
 
 // TLSHTTPClientConfig sets TLS-safe defaults for S3-compatible gateways.
@@ -103,7 +110,7 @@ func NewS3ClientStaticCompatible(ctx context.Context, cfg S3CompatibleStaticConf
 	if cfg.ForcePathStyle != nil {
 		forcePathStyle = *cfg.ForcePathStyle
 	}
-	if cfg.HTTPClient == nil {
+	if cfg.HTTPClient == nil && len(cfg.APIOptions) == 0 {
 		return NewS3ClientStatic(
 			ctx,
 			cfg.Region,
@@ -122,13 +129,26 @@ func NewS3ClientStaticCompatible(ctx context.Context, cfg S3CompatibleStaticConf
 			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken),
 		),
 		config.WithEndpointResolverWithOptions(sharedResolver(cfg.Endpoint)),
-		config.WithHTTPClient(cfg.HTTPClient),
+	}
+	if cfg.RequestChecksumCalculation != aws.RequestChecksumCalculationUnset {
+		loaders = append(loaders, config.WithRequestChecksumCalculation(cfg.RequestChecksumCalculation))
+	}
+	if cfg.ResponseChecksumValidation != aws.ResponseChecksumValidationUnset {
+		loaders = append(loaders, config.WithResponseChecksumValidation(cfg.ResponseChecksumValidation))
+	}
+	if cfg.HTTPClient != nil {
+		loaders = append(loaders, config.WithHTTPClient(cfg.HTTPClient))
 	}
 	awsCfg, err := config.LoadDefaultConfig(ctx, loaders...)
 	if err != nil {
 		return nil, err
 	}
-	return s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = forcePathStyle }), nil
+	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.UsePathStyle = forcePathStyle
+		if len(cfg.APIOptions) > 0 {
+			o.APIOptions = append(o.APIOptions, cfg.APIOptions...)
+		}
+	}), nil
 }
 
 // StorjS3Config configures a Storj S3 Gateway client.
@@ -141,6 +161,10 @@ type StorjS3Config struct {
 	ForcePathStyle *bool
 	RequireTLS     *bool
 	HTTPClient     *http.Client
+	APIOptions     []func(*middleware.Stack) error
+	// ForcePayloadSigning enforces signed payload SHA256 for Storj.
+	// Defaults to true to avoid x-amz-content-sha256 mismatches.
+	ForcePayloadSigning *bool
 }
 
 // NewS3ClientStorj builds an S3 client for Storj's S3-compatible gateway.
@@ -162,6 +186,14 @@ func NewS3ClientStorj(ctx context.Context, cfg StorjS3Config) (*s3.Client, error
 			Timeout:    30 * time.Second,
 		})
 	}
+	forceSigned := true
+	if cfg.ForcePayloadSigning != nil {
+		forceSigned = *cfg.ForcePayloadSigning
+	}
+	apiOptions := append([]func(*middleware.Stack) error{}, cfg.APIOptions...)
+	if forceSigned {
+		apiOptions = append(apiOptions, s3ForceSignedPayload())
+	}
 	return NewS3ClientStaticCompatible(ctx, S3CompatibleStaticConfig{
 		Region:         cfg.Region,
 		Endpoint:       cfg.Endpoint,
@@ -171,7 +203,32 @@ func NewS3ClientStorj(ctx context.Context, cfg StorjS3Config) (*s3.Client, error
 		ForcePathStyle: cfg.ForcePathStyle,
 		RequireTLS:     requireTLS,
 		HTTPClient:     cfg.HTTPClient,
+		APIOptions:     apiOptions,
+		// Storj's gateway does not accept aws-chunked trailing checksums by default.
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 	})
+}
+
+func s3ForceSignedPayload() func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		compute := &v4.ComputePayloadSHA256{}
+		computeID := compute.ID()
+		if _, ok := stack.Finalize.Get(computeID); ok {
+			if _, err := stack.Finalize.Swap(computeID, compute); err != nil {
+				return err
+			}
+		} else if err := v4.AddComputePayloadSHA256Middleware(stack); err != nil {
+			return err
+		}
+
+		headerID := (&v4.ContentSHA256Header{}).ID()
+		if _, ok := stack.Finalize.Get(headerID); !ok {
+			if err := v4.AddContentSHA256HeaderMiddleware(stack); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // NewS3ClientAssumeRoleLocalstack builds an assume-role S3 client with LocalStack defaults.

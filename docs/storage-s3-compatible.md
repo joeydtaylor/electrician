@@ -58,6 +58,9 @@ cli, err := builder.NewS3ClientStaticCompatible(ctx, builder.S3CompatibleStaticC
 - For many gateways, **path-style addressing** is required. The helper defaults
   to path-style (compatible with LocalStack/MinIO/Storj). If you need
   virtual-hosted style, set `ForcePathStyle` to `builder.BoolPtr(false)`.
+- Storj’s gateway is sensitive to payload signing. The Storj helper enforces
+  signed payload SHA‑256 by default to avoid `x-amz-content-sha256` mismatches,
+  and disables automatic AWS SDK request checksums (aws‑chunked trailers).
 - If you are encrypting payloads at the relay layer (AES-GCM), that is independent
   of S3 storage and works with all S3-compatible providers.
 - Client-side encryption (AES‑GCM) is now supported at the S3 adapter level for
