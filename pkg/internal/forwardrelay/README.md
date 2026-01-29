@@ -28,6 +28,8 @@ Common options include:
 - Sensor and logger
 
 Configuration must be finalized before Start().
+If an encryption key is configured, AES‑GCM must be enabled; plaintext payloads
+are rejected.
 
 Passthrough mode expects the relay type parameter to be `relay.WrappedPayload` (or pointer) so
 payload bytes and metadata are forwarded without modification.

@@ -17,8 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	parquet "github.com/parquet-go/parquet-go"
 	"github.com/joeydtaylor/electrician/pkg/internal/types"
+	parquet "github.com/parquet-go/parquet-go"
 )
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -376,6 +376,8 @@ func TestS3Client_FlushRawDefaults(t *testing.T) {
 	client.prefixTemplate = "prefix"
 	client.fileNameTmpl = "file"
 	client.formatName = "parquet"
+	client.rawWriterContentType = ""
+	client.rawWriterContentType = ""
 	client.rawWriterExt = ""
 	client.rawWriterContentType = ""
 
@@ -392,6 +394,51 @@ func TestS3Client_FlushRawDefaults(t *testing.T) {
 	}
 	if got.ct != "application/parquet" {
 		t.Fatalf("expected application/parquet content-type, got %q", got.ct)
+	}
+}
+
+func TestS3Client_FlushRawWithClientSideEncryption(t *testing.T) {
+	var got struct {
+		ct      string
+		metaCSE string
+		metaCT  string
+	}
+
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		got.ct = r.Header.Get("Content-Type")
+		got.metaCSE = r.Header.Get("X-Amz-Meta-X-Electrician-Cse")
+		got.metaCT = r.Header.Get("X-Amz-Meta-X-Electrician-Content-Type")
+		return httpResponse(http.StatusOK, nil, map[string]string{}), nil
+	})
+
+	client := NewS3ClientAdapter[sampleRow](context.Background()).(*S3Client[sampleRow])
+	client.cli = newTestS3Client(rt)
+	client.bucket = "bucket"
+	client.prefixTemplate = "prefix"
+	client.fileNameTmpl = "file"
+	client.formatName = "parquet"
+	client.rawWriterContentType = ""
+	client.SetWriterConfig(types.S3WriterConfig{
+		ClientSideEncryption:        "AES-GCM",
+		ClientSideKey:               "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		RequireClientSideEncryption: true,
+	})
+
+	client.buf.Reset()
+	_, _ = client.buf.Write([]byte("blob"))
+	client.count = 1
+
+	if err := client.flushRaw(context.Background(), time.Now()); err != nil {
+		t.Fatalf("flushRaw error: %v", err)
+	}
+	if got.ct != "application/octet-stream" {
+		t.Fatalf("expected encrypted content-type to be octet-stream, got %q", got.ct)
+	}
+	if got.metaCSE != "aes-gcm" {
+		t.Fatalf("expected cse metadata, got %q", got.metaCSE)
+	}
+	if got.metaCT != "application/parquet" {
+		t.Fatalf("expected original content-type metadata, got %q", got.metaCT)
 	}
 }
 

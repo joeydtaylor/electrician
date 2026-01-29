@@ -2,6 +2,7 @@ package s3client
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -22,6 +23,9 @@ import (
 func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 	if a.cli == nil || a.bucket == "" {
 		return types.HttpResponse[[]T]{}, fmt.Errorf("s3client: Fetch requires client and bucket")
+	}
+	if err := a.validateReaderSecurityConfig(); err != nil {
+		return types.HttpResponse[[]T]{}, err
 	}
 
 	in := &s3api.ListObjectsV2Input{
@@ -55,6 +59,68 @@ func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 			})
 			if err != nil {
 				return types.HttpResponse[[]T]{}, err
+			}
+
+			meta := normalizeMeta(get.Metadata)
+			encMode := strings.ToLower(strings.TrimSpace(meta[cseMetaKey]))
+			if encMode != "" || a.requireCSE {
+				blob, err := io.ReadAll(get.Body)
+				_ = get.Body.Close()
+				if err != nil {
+					return types.HttpResponse[[]T]{}, err
+				}
+				plain, _, enc, err := a.decryptIfNeeded(meta, blob)
+				if err != nil {
+					return types.HttpResponse[[]T]{}, err
+				}
+				if ext == ".parquet" || strings.EqualFold(a.readerFormatName, "parquet") {
+					rows, err := a.parquetRowsFromBytes(plain)
+					if err != nil {
+						return types.HttpResponse[[]T]{}, err
+					}
+					out = append(out, rows...)
+					seen += len(rows)
+					continue
+				}
+
+				var r io.Reader = bytes.NewReader(plain)
+				var gz *gzip.Reader
+				if strings.EqualFold(enc, "gzip") {
+					gz, err = gzip.NewReader(r)
+					if err != nil {
+						return types.HttpResponse[[]T]{}, err
+					}
+					r = gz
+				}
+
+				sc := bufio.NewScanner(r)
+				buf := make([]byte, 0, 1<<20)
+				sc.Buffer(buf, 16<<20)
+				for sc.Scan() {
+					line := strings.TrimSpace(sc.Text())
+					if line == "" {
+						continue
+					}
+					var v T
+					if err := json.Unmarshal([]byte(line), &v); err != nil {
+						if gz != nil {
+							_ = gz.Close()
+						}
+						return types.HttpResponse[[]T]{}, err
+					}
+					out = append(out, v)
+					seen++
+				}
+				if err := sc.Err(); err != nil {
+					if gz != nil {
+						_ = gz.Close()
+					}
+					return types.HttpResponse[[]T]{}, err
+				}
+				if gz != nil {
+					_ = gz.Close()
+				}
+				continue
 			}
 
 			if ext == ".parquet" || strings.EqualFold(a.readerFormatName, "parquet") {
@@ -133,6 +199,9 @@ func (a *S3Client[T]) Fetch() (types.HttpResponse[[]T], error) {
 func (a *S3Client[T]) Serve(ctx context.Context, submit func(context.Context, T) error) error {
 	if a.cli == nil || a.bucket == "" {
 		return fmt.Errorf("s3client: Serve requires client and bucket")
+	}
+	if err := a.validateReaderSecurityConfig(); err != nil {
+		return err
 	}
 	if !atomic.CompareAndSwapInt32(&a.isServing, 0, 1) {
 		return nil

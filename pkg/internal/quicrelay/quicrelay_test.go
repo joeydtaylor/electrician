@@ -8,12 +8,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -132,6 +135,9 @@ func freeUDPAddr(t *testing.T) string {
 	t.Helper()
 	l, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("udp listen not permitted: %v", err)
+		}
 		t.Fatalf("listen udp: %v", err)
 	}
 	addr := l.LocalAddr().(*net.UDPAddr)

@@ -41,6 +41,12 @@ type S3Client[T any] struct {
 	sseMode string
 	kmsKey  string
 
+	requireSSE bool
+	cseMode    string
+	cseKey     []byte
+	requireCSE bool
+	configErr  error
+
 	batchMaxRecords int
 	batchMaxBytes   int
 	batchMaxAge     time.Duration

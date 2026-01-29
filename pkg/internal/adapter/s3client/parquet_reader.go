@@ -49,6 +49,10 @@ func (a *S3Client[T]) parquetRowsFromBody(get *s3api.GetObjectOutput) ([]T, erro
 	return a.readParquetAllFromReaderAt(bytes.NewReader(data))
 }
 
+func (a *S3Client[T]) parquetRowsFromBytes(data []byte) ([]T, error) {
+	return a.readParquetAllFromReaderAt(bytes.NewReader(data))
+}
+
 func (a *S3Client[T]) readParquetAllFromReaderAt(ra io.ReaderAt) ([]T, error) {
 	gr := parquet.NewGenericReader[T](ra)
 	defer gr.Close()

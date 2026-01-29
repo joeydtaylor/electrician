@@ -16,7 +16,7 @@ It is intentionally strict so frontend and backend stay aligned.
 - `x-tenant: local`
 
 **Token requirements**
-- `iss` matches receiver issuer
+- `iss` matches receiver issuer (defaults to `auth-service` in the secure gRPC‑web example)
 - `aud` includes `your-api`
 - `scope` includes `write:data`
 
@@ -46,6 +46,20 @@ If you see `issuer mismatch`, the token `iss` does not match the receiver’s
 expected issuer. Check the receiver startup log line:
 `Auth JWT validator installed`.
 
+### Mock OAuth server (recommended for dev)
+
+Use the built‑in mock server to avoid surprises when your real auth is down:
+
+```bash
+go run ./example/auth/mock_oauth_server
+```
+
+Defaults:
+
+- Issuer: `auth-service`
+- JWKS URL: `https://localhost:3000/api/auth/oauth/jwks.json`
+- Session token: `https://localhost:3000/api/auth/session/token`
+
 ---
 
 ## CORS (browser only)
@@ -59,6 +73,7 @@ See: `docs/relay-grpcweb-cors.md`
 
 ```bash
 OAUTH_ISSUER_BASE=auth-service \
+  OAUTH_JWKS_URL=https://localhost:3000/api/auth/oauth/jwks.json \
   go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
 ```
 

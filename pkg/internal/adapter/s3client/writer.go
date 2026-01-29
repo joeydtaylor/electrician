@@ -15,6 +15,9 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 	if a.cli == nil || a.bucket == "" {
 		return fmt.Errorf("s3client: ServeWriter requires client and bucket")
 	}
+	if err := a.validateWriterSecurityConfig(); err != nil {
+		return err
+	}
 	if !atomic.CompareAndSwapInt32(&a.isServing, 0, 1) {
 		return nil
 	}
@@ -76,6 +79,9 @@ func (a *S3Client[T]) ServeWriter(ctx context.Context, in <-chan T) error {
 func (a *S3Client[T]) StartWriter(ctx context.Context) error {
 	if a.cli == nil || a.bucket == "" {
 		return fmt.Errorf("s3client: StartWriter requires client and bucket")
+	}
+	if err := a.validateWriterSecurityConfig(); err != nil {
+		return err
 	}
 	if len(a.inputWires) == 0 {
 		return fmt.Errorf("s3client: StartWriter requires at least one connected wire; call ConnectInput(...)")

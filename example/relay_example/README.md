@@ -38,6 +38,26 @@ go run ./example/relay_example/basic_relay_a
 go run ./example/relay_example/basic_relay_b
 ```
 
+### D) WebSocket (compat browser/legacy)
+```bash
+go run ./example/relay_example/websocket_basic_receiver
+go run ./example/relay_example/websocket_basic_sender
+```
+
+### E) WebTransport (browser QUIC semantics)
+Build tag required (and `github.com/quic-go/webtransport-go` dependency):
+```bash
+go run -tags webtransport ./example/relay_example/webtransport_basic_receiver
+go run -tags webtransport ./example/relay_example/webtransport_basic_sender
+```
+
+### F) NATS (server-side fanout)
+Build tag required (and `github.com/nats-io/nats.go` dependency):
+```bash
+go run -tags nats ./example/relay_example/nats_basic_subscriber
+go run -tags nats ./example/relay_example/nats_basic_publisher
+```
+
 ## Key docs
 
 - Frontend integration (gRPC-Web + QUIC): `example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`
@@ -49,6 +69,9 @@ go run ./example/relay_example/basic_relay_b
 
 - Basic relay: `example/relay_example/basic_relay_a`, `example/relay_example/basic_relay_b`
 - QUIC relay: `example/relay_example/quic_basic_receiver`, `example/relay_example/quic_basic_sender`
+- WebSocket relay: `example/relay_example/websocket_basic_receiver`, `example/relay_example/websocket_basic_sender`
+- WebTransport relay (build tag): `example/relay_example/webtransport_basic_receiver`, `example/relay_example/webtransport_basic_sender`
+- NATS fanout (build tag): `example/relay_example/nats_basic_subscriber`, `example/relay_example/nats_basic_publisher`
 - QUIC secure (OAuth + AES):
   - Sender: `example/relay_example/quic_secure_oauth_aes_sender`
   - Receiver: `example/relay_example/quic_secure_oauth_aes_receiver`

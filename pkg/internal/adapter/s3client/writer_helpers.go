@@ -174,6 +174,7 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 
 	var payload []byte
 	var gz bytes.Buffer
+	var contentEncoding string
 
 	if a.ndjsonEncGz || strings.EqualFold(a.formatOpts["gzip"], "true") {
 		zw := gzip.NewWriter(&gz)
@@ -182,8 +183,14 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		}
 		_ = zw.Close()
 		payload = gz.Bytes()
+		contentEncoding = "gzip"
 	} else {
 		payload = a.buf.Bytes()
+	}
+
+	payload, ct, contentEncoding, meta, err := a.applyCSE(payload, ct, contentEncoding)
+	if err != nil {
+		return err
 	}
 
 	reader := bytes.NewReader(payload)
@@ -193,8 +200,11 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		Body:        reader,
 		ContentType: aws.String(ct),
 	}
-	if a.ndjsonEncGz || strings.EqualFold(a.formatOpts["gzip"], "true") {
-		put.ContentEncoding = aws.String("gzip")
+	if contentEncoding != "" {
+		put.ContentEncoding = aws.String(contentEncoding)
+	}
+	if len(meta) > 0 {
+		put.Metadata = meta
 	}
 
 	switch strings.ToLower(a.sseMode) {
@@ -214,7 +224,7 @@ func (a *S3Client[T]) flush(ctx context.Context, now time.Time) error {
 		sensor.InvokeOnS3KeyRendered(a.componentMetadata, key)
 	}
 
-	_, err := a.putWithRetry(ctx, put, key, len(payload))
+	_, err = a.putWithRetry(ctx, put, key, len(payload))
 	if err != nil {
 		return err
 	}
@@ -260,6 +270,10 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 	key := a.renderKey(now) + ext
 
 	payload := append([]byte(nil), a.buf.Bytes()...)
+	payload, ct, _, meta, err := a.applyCSE(payload, ct, "")
+	if err != nil {
+		return err
+	}
 	reader := bytes.NewReader(payload)
 
 	put := &s3api.PutObjectInput{
@@ -267,6 +281,9 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 		Key:         &key,
 		Body:        reader,
 		ContentType: aws.String(ct),
+	}
+	if len(meta) > 0 {
+		put.Metadata = meta
 	}
 
 	switch strings.ToLower(a.sseMode) {
@@ -286,7 +303,7 @@ func (a *S3Client[T]) flushRaw(ctx context.Context, now time.Time) error {
 		sensor.InvokeOnS3KeyRendered(a.componentMetadata, key)
 	}
 
-	_, err := a.putWithRetry(ctx, put, key, len(payload))
+	_, err = a.putWithRetry(ctx, put, key, len(payload))
 	if err != nil {
 		return err
 	}

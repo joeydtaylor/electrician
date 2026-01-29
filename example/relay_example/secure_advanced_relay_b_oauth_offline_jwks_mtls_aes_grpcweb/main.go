@@ -48,7 +48,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger := builder.NewLogger(builder.LoggerWithDevelopment(true))
+	logLevel := envOr("LOG_LEVEL", "info")
+	logger := builder.NewLogger(
+		builder.LoggerWithDevelopment(true),
+		builder.LoggerWithLevel(logLevel),
+	)
 	workers := runtime.GOMAXPROCS(0)
 
 	wire := builder.NewWire[Feedback](
@@ -101,6 +105,17 @@ func main() {
 		builder.ReceivingRelayWithStaticHeaders[Feedback](staticHeaders),
 		builder.ReceivingRelayWithAuthRequired[Feedback](true),
 		builder.ReceivingRelayWithGRPCWebConfig[Feedback](grpcWebCfg),
+	)
+
+	logger.Info("gRPC-Web receiver starting",
+		"event", "Start",
+		"result", "SUCCESS",
+		"address", envOr("RX_ADDR", "localhost:50051"),
+		"issuer", issuerBase,
+		"jwks_url", jwksURL,
+		"audience", []string{"your-api"},
+		"scope", []string{"write:data"},
+		"static_headers", staticHeaders,
 	)
 
 	if err := recv.StartGRPCWeb(ctx); err != nil {

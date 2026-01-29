@@ -2,9 +2,12 @@ package websocketclient
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,9 +19,24 @@ func wsTestURL(serverURL string) string {
 	return "ws" + strings.TrimPrefix(serverURL, "http")
 }
 
+func newTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("network listen not permitted: %v", err)
+		}
+		t.Fatalf("listen: %v", err)
+	}
+	ts := httptest.NewUnstartedServer(handler)
+	ts.Listener = ln
+	ts.Start()
+	return ts
+}
+
 func TestWebSocketClientAdapter_ServeWriter(t *testing.T) {
 	received := make(chan string, 1)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -58,7 +76,7 @@ func TestWebSocketClientAdapter_ServeWriter(t *testing.T) {
 }
 
 func TestWebSocketClientAdapter_Serve(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -97,7 +115,7 @@ func TestWebSocketClientAdapter_Serve(t *testing.T) {
 }
 
 func TestWebSocketClientAdapter_ServeDuplex(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return

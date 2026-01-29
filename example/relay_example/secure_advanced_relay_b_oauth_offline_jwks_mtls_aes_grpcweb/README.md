@@ -11,13 +11,14 @@ Source of truth for gRPC-web alignment:
 1) Start the mock OAuth server (dev):
 
 ```bash
-go run ./example/relay_example/mock_oauth_server
+go run ./example/auth/mock_oauth_server
 ```
 
 2) Start the gRPC-Web receiver (match issuer):
 
 ```bash
 OAUTH_ISSUER_BASE=auth-service \
+  OAUTH_JWKS_URL=https://localhost:3000/api/auth/oauth/jwks.json \
   go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb
 ```
 

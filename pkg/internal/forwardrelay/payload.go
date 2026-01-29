@@ -33,6 +33,19 @@ const (
 	ENCRYPT_AES_GCM relay.EncryptionSuite = 1
 )
 
+func validateEncryptionRequirement(secOpts *relay.SecurityOptions, key string) error {
+	if secOpts != nil && secOpts.Enabled && secOpts.Suite == ENCRYPT_AES_GCM && key == "" {
+		return fmt.Errorf("encryption enabled but encryption key is empty")
+	}
+	if key == "" {
+		return nil
+	}
+	if secOpts == nil || !secOpts.Enabled || secOpts.Suite != ENCRYPT_AES_GCM {
+		return fmt.Errorf("encryption key provided but AES-GCM is not enabled")
+	}
+	return nil
+}
+
 // WrapPayload serializes data and applies compression/encryption as configured.
 func WrapPayload[T any](
 	data T,
@@ -42,6 +55,9 @@ func WrapPayload[T any](
 ) (*relay.WrappedPayload, error) {
 	if perfOpts == nil {
 		perfOpts = &relay.PerformanceOptions{UseCompression: false, CompressionAlgorithm: COMPRESS_NONE}
+	}
+	if err := validateEncryptionRequirement(secOpts, encryptionKey); err != nil {
+		return nil, err
 	}
 
 	var buf bytes.Buffer

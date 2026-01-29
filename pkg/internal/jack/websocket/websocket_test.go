@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -18,7 +20,16 @@ func newTestServer[T any](t *testing.T, srv *serverAdapter[T], submit func(conte
 	t.Helper()
 	cfg := srv.snapshotConfig()
 	h := srv.buildHandler(context.Background(), cfg, submit)
-	ts := httptest.NewServer(h)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("network listen not permitted: %v", err)
+		}
+		t.Fatalf("listen: %v", err)
+	}
+	ts := httptest.NewUnstartedServer(h)
+	ts.Listener = ln
+	ts.Start()
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + cfg.endpoint
 	return ts, wsURL
 }

@@ -104,3 +104,17 @@ func TestWrapPayloadRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", out, in)
 	}
 }
+
+func TestWrapPayloadRequiresEncryptionWhenKeyProvided(t *testing.T) {
+	key := "0123456789abcdef0123456789abcdef"
+	if _, err := forwardrelay.WrapPayload("hi", nil, nil, key); err == nil {
+		t.Fatalf("expected error when key is provided without encryption enabled")
+	}
+}
+
+func TestWrapPayloadRequiresKeyWhenEncryptionEnabled(t *testing.T) {
+	sec := &relay.SecurityOptions{Enabled: true, Suite: forwardrelay.ENCRYPT_AES_GCM}
+	if _, err := forwardrelay.WrapPayload("hi", nil, sec, ""); err == nil {
+		t.Fatalf("expected error when encryption is enabled without a key")
+	}
+}

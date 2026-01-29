@@ -88,6 +88,58 @@ func WithSSE[T any](mode, kmsKey string) types.S3ClientOption[T] {
 	}
 }
 
+// WithRequireSSE enforces server-side encryption on writes.
+func WithRequireSSE[T any](required bool) types.S3ClientOption[T] {
+	return func(adp types.S3ClientAdapter[T]) {
+		adp.SetWriterConfig(types.S3WriterConfig{
+			RequireSSE: required,
+		})
+	}
+}
+
+// WithClientSideEncryptionAESGCM enables AES-256-GCM object encryption (hex key).
+func WithClientSideEncryptionAESGCM[T any](keyHex string) types.S3ClientOption[T] {
+	return func(adp types.S3ClientAdapter[T]) {
+		adp.SetWriterConfig(types.S3WriterConfig{
+			ClientSideEncryption: "AES-GCM",
+			ClientSideKey:        keyHex,
+		})
+		adp.SetReaderConfig(types.S3ReaderConfig{
+			ClientSideEncryption: "AES-GCM",
+			ClientSideKey:        keyHex,
+		})
+	}
+}
+
+// WithRequireClientSideEncryption enforces object-level encryption on reads/writes.
+func WithRequireClientSideEncryption[T any](required bool) types.S3ClientOption[T] {
+	return func(adp types.S3ClientAdapter[T]) {
+		adp.SetWriterConfig(types.S3WriterConfig{
+			RequireClientSideEncryption: required,
+		})
+		adp.SetReaderConfig(types.S3ReaderConfig{
+			RequireClientSideEncryption: required,
+		})
+	}
+}
+
+// WithStorjSecureDefaults enforces client-side encryption for Storj adapters by default.
+// Note: SSE is still opt-in via WithSSE/WithRequireSSE to allow compatibility with gateways.
+func WithStorjSecureDefaults[T any](keyHex string) types.S3ClientOption[T] {
+	return func(adp types.S3ClientAdapter[T]) {
+		adp.SetWriterConfig(types.S3WriterConfig{
+			ClientSideEncryption:        "AES-GCM",
+			ClientSideKey:               keyHex,
+			RequireClientSideEncryption: true,
+		})
+		adp.SetReaderConfig(types.S3ReaderConfig{
+			ClientSideEncryption:        "AES-GCM",
+			ClientSideKey:               keyHex,
+			RequireClientSideEncryption: true,
+		})
+	}
+}
+
 // WithReaderListSettings configures list/polling settings for reader mode.
 func WithReaderListSettings[T any](prefix, startAfter string, pageSize int32, pollEvery time.Duration) types.S3ClientOption[T] {
 	return func(adp types.S3ClientAdapter[T]) {

@@ -31,8 +31,11 @@ go run ./example/relay_example/mock_oauth_server
 - Relay gRPC-Web alignment: `docs/relay-grpcweb-alignment.md`
 - Relay CORS: `docs/relay-grpcweb-cors.md`
 - JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
+- Relay transports (WebSocket/WebTransport/NATS): `docs/relay-last-three.md`
 - Relay examples index: `example/relay_example/README.md`
 - Workbench (local codegen playground): `docs/WORKBENCH.md`
+- S3-compatible storage (Storj/MinIO/LocalStack): `docs/storage-s3-compatible.md`
+- Storj secure usage (HIPAA-grade guidance): `docs/storage-storj-secure.md`
 
 ## Integration tests (LocalStack + Redpanda)
 

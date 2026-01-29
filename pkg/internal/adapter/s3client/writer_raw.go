@@ -14,6 +14,9 @@ func (a *S3Client[T]) ServeWriterRaw(ctx context.Context, in <-chan []byte) erro
 	if a.cli == nil || a.bucket == "" {
 		return fmt.Errorf("s3client: ServeWriterRaw requires client and bucket")
 	}
+	if err := a.validateWriterSecurityConfig(); err != nil {
+		return err
+	}
 	if !atomic.CompareAndSwapInt32(&a.isServing, 0, 1) {
 		return nil
 	}

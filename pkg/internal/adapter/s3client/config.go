@@ -45,6 +45,27 @@ func (a *S3Client[T]) SetWriterConfig(c types.S3WriterConfig) {
 	}
 
 	a.sseMode, a.kmsKey = c.SSEMode, c.KMSKeyID
+	if c.RequireSSE {
+		a.requireSSE = true
+	}
+
+	if c.ClientSideEncryption != "" || c.ClientSideKey != "" || c.RequireClientSideEncryption {
+		a.cseMode = strings.ToLower(strings.TrimSpace(c.ClientSideEncryption))
+		if a.cseMode == "" {
+			a.cseMode = cseModeAESGCM
+		}
+		if c.ClientSideKey != "" {
+			key, err := parseAESGCMKeyHex(c.ClientSideKey)
+			if err != nil {
+				a.configErr = err
+			} else {
+				a.cseKey = key
+			}
+		}
+		if c.RequireClientSideEncryption {
+			a.requireCSE = true
+		}
+	}
 
 	if c.BatchMaxRecords > 0 {
 		a.batchMaxRecords = c.BatchMaxRecords
@@ -100,5 +121,23 @@ func (a *S3Client[T]) SetReaderConfig(c types.S3ReaderConfig) {
 			a.readerFormatOpts = map[string]string{}
 		}
 		a.readerFormatOpts["gzip"] = "true"
+	}
+
+	if c.ClientSideEncryption != "" || c.ClientSideKey != "" || c.RequireClientSideEncryption {
+		a.cseMode = strings.ToLower(strings.TrimSpace(c.ClientSideEncryption))
+		if a.cseMode == "" {
+			a.cseMode = cseModeAESGCM
+		}
+		if c.ClientSideKey != "" {
+			key, err := parseAESGCMKeyHex(c.ClientSideKey)
+			if err != nil {
+				a.configErr = err
+			} else {
+				a.cseKey = key
+			}
+		}
+		if c.RequireClientSideEncryption {
+			a.requireCSE = true
+		}
 	}
 }

@@ -57,6 +57,26 @@ func S3ClientAdapterWithSSE[T any](mode, kmsKey string) types.S3ClientOption[T] 
 	return s3ClientAdapter.WithSSE[T](mode, kmsKey)
 }
 
+// S3ClientAdapterWithRequireSSE enforces server-side encryption on writes.
+func S3ClientAdapterWithRequireSSE[T any](required bool) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithRequireSSE[T](required)
+}
+
+// S3ClientAdapterWithClientSideEncryptionAESGCM enables AES-256-GCM object encryption (hex key).
+func S3ClientAdapterWithClientSideEncryptionAESGCM[T any](keyHex string) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithClientSideEncryptionAESGCM[T](keyHex)
+}
+
+// S3ClientAdapterWithRequireClientSideEncryption enforces object-level encryption on reads/writes.
+func S3ClientAdapterWithRequireClientSideEncryption[T any](required bool) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithRequireClientSideEncryption[T](required)
+}
+
+// S3ClientAdapterWithStorjSecureDefaults enforces client-side encryption defaults for Storj.
+func S3ClientAdapterWithStorjSecureDefaults[T any](keyHex string) types.S3ClientOption[T] {
+	return s3ClientAdapter.WithStorjSecureDefaults[T](keyHex)
+}
+
 func S3ClientAdapterWithReaderListSettings[T any](prefix, startAfter string, pageSize int32, pollEvery time.Duration) types.S3ClientOption[T] {
 	return s3ClientAdapter.WithReaderListSettings[T](prefix, startAfter, pageSize, pollEvery)
 }

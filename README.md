@@ -114,9 +114,12 @@ Electrician includes adapters for HTTP, Kafka, S3, codecs, and relays. These liv
 - Onboarding: `docs/ONBOARDING.md`
 - Relay gRPC-Web / Connect: `docs/relay-grpc-connect.md`
 - Relay gRPC-Web alignment (source of truth): `docs/relay-grpcweb-alignment.md`
+- Relay transports (WebSocket/WebTransport/NATS): `docs/relay-last-three.md`
 - Relay CORS: `docs/relay-grpcweb-cors.md`
 - JWT issuer mismatch: `docs/relay-issuer-mismatch.md`
 - Relay native clients (Rust/Python): `docs/relay-client-native.md`
+- S3-compatible storage (Storj/MinIO/LocalStack): `docs/storage-s3-compatible.md`
+- Storj secure usage (HIPAA-grade guidance): `docs/storage-storj-secure.md`
 - Steeze UI system (if UI is added here): `docs/steeze-ui-system.md`
 - Workbench (local codegen playground): `docs/WORKBENCH.md`
 - Legal: `docs/LEGAL.md`

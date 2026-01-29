@@ -44,6 +44,9 @@ type S3WriterConfig struct {
 	SSEMode  string // "" | "AES256" | "aws:kms"
 	KMSKeyID string // used when SSEMode=="aws:kms"
 
+	// Enforce server-side encryption on writes.
+	RequireSSE bool
+
 	// Batching thresholds for record-oriented encoders.
 	BatchMaxRecords int           // default 50_000
 	BatchMaxBytes   int           // default 128<<20
@@ -58,6 +61,14 @@ type S3WriterConfig struct {
 	// - otherwise RawContentType = "application/octet-stream", RawExtension = ".bin"
 	RawContentType string
 	RawExtension   string
+
+	// Client-side encryption (object-level) before upload.
+	// - ClientSideEncryption: "AES-GCM" (case-insensitive) to enable AES-256-GCM.
+	// - ClientSideKey: 32-byte hex string.
+	// - RequireClientSideEncryption: fail if encryption is not configured.
+	ClientSideEncryption        string
+	ClientSideKey               string
+	RequireClientSideEncryption bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -80,6 +91,14 @@ type S3ReaderConfig struct {
 
 	// Legacy field; only used for gzip-compressed NDJSON.
 	Compression string
+
+	// Client-side decryption (object-level) before decode.
+	// - ClientSideEncryption: "AES-GCM" (case-insensitive).
+	// - ClientSideKey: 32-byte hex string.
+	// - RequireClientSideEncryption: fail if object is not encrypted.
+	ClientSideEncryption        string
+	ClientSideKey               string
+	RequireClientSideEncryption bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
