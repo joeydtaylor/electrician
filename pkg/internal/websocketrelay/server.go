@@ -71,5 +71,5 @@ func (s *wsServer[T]) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	go s.rr.handleConn(r.Context(), conn, r.Header)
+	go s.rr.handleConn(s.rr.ctx, conn, r.Header)
 }

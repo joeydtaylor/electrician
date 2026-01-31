@@ -42,7 +42,7 @@ TLS paths, and AES key (or just use the defaults to match the mock OAuth server)
 
 1) Start mock OAuth (dev):
 ```bash
-go run ./example/relay_example/mock_oauth_server
+go run ./example/auth/mock_oauth_server
 ```
 
 2) Start secure receiver:
@@ -87,4 +87,5 @@ verbose, structured logs (including auth headers and tokens).
 If you do not want to rely on a real auth server during development, use the mock OAuth
 server at:
 
-- `example/relay_example/mock_oauth_server/README.md`
+- `example/auth/mock_oauth_server/README.md` (preferred)
+- `example/relay_example/mock_oauth_server/README.md` (legacy)

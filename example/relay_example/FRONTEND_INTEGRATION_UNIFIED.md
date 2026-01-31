@@ -17,7 +17,7 @@ Source of truth for gRPC-web alignment:
 
 1) Start mock OAuth (dev):
 ```bash
-go run ./example/relay_example/mock_oauth_server
+go run ./example/auth/mock_oauth_server
 ```
 
 2) Start secure gRPC-web receiver:

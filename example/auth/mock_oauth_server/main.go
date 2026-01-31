@@ -25,21 +25,23 @@ import (
 )
 
 type config struct {
-	addr             string
-	useTLS           bool
-	tlsCert          string
-	tlsKey           string
-	issuer           string
-	audience         string
-	scope            string
-	tokenTTL         time.Duration
-	kid              string
-	subject          string
-	staticToken      string
-	introspectAuth   string
-	introspectID     string
-	introspectSecret string
-	introspectBearer string
+	addr              string
+	useTLS            bool
+	tlsCert           string
+	tlsKey            string
+	issuer            string
+	audience          string
+	scope             string
+	tokenTTL          time.Duration
+	kid               string
+	subject           string
+	staticToken       string
+	oauthClientID     string
+	oauthClientSecret string
+	introspectAuth    string
+	introspectID      string
+	introspectSecret  string
+	introspectBearer  string
 }
 
 type server struct {
@@ -148,21 +150,23 @@ func loadConfig() config {
 		tlsKey = defaultTLSAssetPath("server.key")
 	}
 	return config{
-		addr:             envOr("OAUTH_ADDR", "localhost:3000"),
-		useTLS:           useTLS,
-		tlsCert:          tlsCert,
-		tlsKey:           tlsKey,
-		issuer:           envOr("OAUTH_ISSUER_BASE", "auth-service"),
-		audience:         envOr("OAUTH_AUDIENCE", "your-api"),
-		scope:            envOr("OAUTH_SCOPE", "write:data"),
-		tokenTTL:         envOrDuration("OAUTH_TOKEN_TTL", 300*time.Second),
-		kid:              envOr("OAUTH_KID", "mock-key-1"),
-		subject:          envOr("OAUTH_SUBJECT", "user-local"),
-		staticToken:      envOr("OAUTH_STATIC_TOKEN", "token-123"),
-		introspectAuth:   strings.ToLower(envOr("INTROSPECT_AUTH", "basic")),
-		introspectID:     envOr("INTROSPECT_CLIENT_ID", "example-client"),
-		introspectSecret: envOr("INTROSPECT_CLIENT_SECRET", "example-secret"),
-		introspectBearer: envOr("INTROSPECT_BEARER_TOKEN", ""),
+		addr:              envOr("OAUTH_ADDR", "localhost:3000"),
+		useTLS:            useTLS,
+		tlsCert:           tlsCert,
+		tlsKey:            tlsKey,
+		issuer:            envOr("OAUTH_ISSUER_BASE", "auth-service"),
+		audience:          envOr("OAUTH_AUDIENCE", "your-api"),
+		scope:             envOr("OAUTH_SCOPE", "write:data"),
+		tokenTTL:          envOrDuration("OAUTH_TOKEN_TTL", 300*time.Second),
+		kid:               envOr("OAUTH_KID", "mock-key-1"),
+		subject:           envOr("OAUTH_SUBJECT", "user-local"),
+		staticToken:       envOr("OAUTH_STATIC_TOKEN", "token-123"),
+		oauthClientID:     envOr("OAUTH_CLIENT_ID", "steeze-local-cli"),
+		oauthClientSecret: envOr("OAUTH_CLIENT_SECRET", "local-secret"),
+		introspectAuth:    strings.ToLower(envOr("INTROSPECT_AUTH", "basic")),
+		introspectID:      envOr("INTROSPECT_CLIENT_ID", "steeze-local-cli"),
+		introspectSecret:  envOr("INTROSPECT_CLIENT_SECRET", "local-secret"),
+		introspectBearer:  envOr("INTROSPECT_BEARER_TOKEN", ""),
 	}
 }
 
@@ -191,6 +195,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/auth/oauth/jwks.json", s.handleJWKS)
+	mux.HandleFunc("/api/auth/oauth/token", s.handleOAuthToken)
 	mux.HandleFunc("/api/auth/session/token", s.handleSessionToken)
 	mux.HandleFunc("/api/auth/oauth/introspect", s.handleIntrospect)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -281,6 +286,42 @@ func (s *server) handleSessionToken(w http.ResponseWriter, r *http.Request) {
 		"audience", s.cfg.audience,
 		"token", token,
 	)
+	resp := tokenResponse{
+		AccessToken: token,
+		TokenType:   "Bearer",
+		ExpiresIn:   int64(s.cfg.tokenTTL.Seconds()),
+		Scope:       scope,
+	}
+	writeJSON(w, resp)
+}
+
+func (s *server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id, secret, ok := r.BasicAuth()
+	if !ok || id != s.cfg.oauthClientID || secret != s.cfg.oauthClientSecret {
+		http.Error(w, "invalid client", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if grant := strings.TrimSpace(r.FormValue("grant_type")); grant != "client_credentials" {
+		http.Error(w, "unsupported grant_type", http.StatusBadRequest)
+		return
+	}
+	scope := strings.TrimSpace(r.FormValue("scope"))
+	if scope == "" {
+		scope = s.cfg.scope
+	}
+	token, err := s.signJWT(scope)
+	if err != nil {
+		http.Error(w, "token error", http.StatusInternalServerError)
+		return
+	}
 	resp := tokenResponse{
 		AccessToken: token,
 		TokenType:   "Bearer",

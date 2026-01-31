@@ -2,9 +2,12 @@
 
 This directory contains the protobuf definitions for Electrician relays. The generated Go code lives under pkg/internal/relay and is used by the forward and receiving relay packages.
 
+If you are integrating from another language, start with `proto/CLIENT_QUICKSTART.md`.
+
 ## Contents
 
 - electrician_relay.proto: relay service definitions and message types
+- CLIENT_QUICKSTART.md: external client compatibility checklist (gRPC + QUIC + OAuth)
 
 ## Generation
 

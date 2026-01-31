@@ -20,7 +20,7 @@ Source of truth for strict browser alignment:
 ## Token requirements (JWT)
 The secure gRPC-web receiver validates JWTs with JWKS. Tokens must contain:
 - `iss`: issuer that matches the receiver config
-  - Default example: `https://localhost:3000`
+  - Default example: `auth-service`
 - `aud`: includes `your-api`
 - `scope`: includes `write:data`
 

@@ -16,19 +16,19 @@ Your token's `iss` claim does not match the receiver's configured issuer.
 `example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_aes_grpcweb`
 
 Defaults to:
-- `OAUTH_ISSUER_BASE = https://localhost:3000`
+- `OAUTH_ISSUER_BASE = auth-service`
 
 ### If your token has a different issuer
-Example: token has `iss = auth-service`
+Example: token has `iss = https://auth.example.com`
 
 ```bash
-export OAUTH_ISSUER_BASE=auth-service
+export OAUTH_ISSUER_BASE=https://auth.example.com
 ```
 
 Also ensure JWKS points to the same auth system:
 
 ```bash
-export OAUTH_JWKS_URL=https://localhost:3000/api/auth/oauth/jwks.json
+export OAUTH_JWKS_URL=https://auth.example.com/api/auth/oauth/jwks.json
 ```
 
 ## Related checks

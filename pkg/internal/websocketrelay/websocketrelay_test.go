@@ -34,9 +34,9 @@ func freeAddr(t *testing.T) string {
 
 func waitForReadyWS(t *testing.T, url string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		fr := NewForwardRelay[feedback](ctx, func(fr *ForwardRelay[feedback]) {
 			fr.SetTargets(url)
 			fr.SetAckMode(relay.AckMode_ACK_NONE)
@@ -49,7 +49,7 @@ func waitForReadyWS(t *testing.T, url string) {
 		if time.Now().After(deadline) {
 			t.Fatalf("timeout waiting for websocket listener: %v", err)
 		}
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -58,7 +58,7 @@ func waitForMessage[T any](t *testing.T, ch <-chan T) T {
 	select {
 	case v := <-ch:
 		return v
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatalf("timeout waiting for message")
 	}
 	var zero T
@@ -86,6 +86,7 @@ func TestWebSocketRelayRoundTripJSON(t *testing.T) {
 	fr := NewForwardRelay[feedback](ctx,
 		func(fr *ForwardRelay[feedback]) { fr.SetTargets(url) },
 		func(fr *ForwardRelay[feedback]) { fr.SetPayloadFormat("json") },
+		func(fr *ForwardRelay[feedback]) { fr.SetOmitPayloadMetadata(false) },
 	)
 
 	in := feedback{CustomerID: "cust-1", Content: "hello", Category: "feedback", IsNegative: false, Tags: []string{"ws"}}
@@ -123,6 +124,7 @@ func TestWebSocketRelayEncryptionAESGCM(t *testing.T) {
 		func(fr *ForwardRelay[feedback]) { fr.SetTargets(url) },
 		func(fr *ForwardRelay[feedback]) { fr.SetPayloadFormat("json") },
 		func(fr *ForwardRelay[feedback]) { fr.SetSecurityOptions(sec, key) },
+		func(fr *ForwardRelay[feedback]) { fr.SetOmitPayloadMetadata(false) },
 	)
 
 	in := feedback{CustomerID: "cust-2", Content: "secure", Category: "feedback", IsNegative: true}

@@ -1,5 +1,8 @@
 # Mock OAuth Server (Dev Only)
 
+**Note:** Prefer `example/auth/mock_oauth_server` for the relay examples. This legacy server is kept
+for compatibility only.
+
 This is a tiny local OAuth server for dev/testing so you are not blocked if the real auth
 service is down. It issues JWTs, serves JWKS, and supports introspection.
 

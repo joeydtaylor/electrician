@@ -16,7 +16,7 @@ It assumes the browser uses Connect (gRPC-web compatible) to call
 
 1) Start mock OAuth (dev):
 ```bash
-go run ./example/relay_example/mock_oauth_server
+go run ./example/auth/mock_oauth_server
 ```
 
 2) Start receiver:
@@ -54,7 +54,7 @@ Defaults:
 
 - Receiver address: `https://localhost:50051`
 - TLS certs: `example/relay_example/tls/*` (browser must trust the CA)
-- Auth issuer: `https://localhost:3000`
+- Auth issuer: `auth-service`
 - JWKS URL: `https://localhost:3000/api/auth/oauth/jwks.json`
 - Required audience: `your-api`
 - Required scope: `write:data`

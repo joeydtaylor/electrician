@@ -23,7 +23,7 @@ go run ./example/relay_example/secure_advanced_relay_b_oauth_offline_jwks_mtls_a
 Run the mock OAuth server for local tokens:
 
 ```bash
-go run ./example/relay_example/mock_oauth_server
+go run ./example/auth/mock_oauth_server
 ```
 
 ## Common docs

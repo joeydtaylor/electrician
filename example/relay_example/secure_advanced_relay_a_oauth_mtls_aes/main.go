@@ -207,8 +207,9 @@ func main() {
 	key := mustHexKey(aesHex)
 
 	// OAuth2 hints (receivers validate JWT)
-	issuerBase := envOr("OAUTH_ISSUER_BASE", "https://localhost:3000")
-	jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/oauth/jwks.json")
+	authBaseURL := envOr("OAUTH_BASE_URL", "https://localhost:3000")
+	issuerBase := envOr("OAUTH_ISSUER_BASE", "auth-service")
+	jwksURL := envOr("OAUTH_JWKS_URL", strings.TrimRight(authBaseURL, "/")+"/api/auth/oauth/jwks.json")
 	aud := []string{"your-api"}
 	scp := []string{"write:data"}
 
@@ -216,7 +217,7 @@ func main() {
 	authOpts := builder.NewForwardRelayAuthenticationOptionsOAuth2(oauthHints)
 	authHTTP := httpClientTLSInsecure()
 	ts := builder.NewForwardRelayRefreshingClientCredentialsSource(
-		issuerBase,
+		authBaseURL,
 		envOr("OAUTH_CLIENT_ID", "steeze-local-cli"),
 		envOr("OAUTH_CLIENT_SECRET", "local-secret"), // set real secret in env
 		scp,

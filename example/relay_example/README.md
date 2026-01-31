@@ -7,7 +7,7 @@ This folder groups all relay examples (gRPC, QUIC, secure variants) and the docs
 ### A) Browser gRPC-Web (fastest)
 1) Start the mock OAuth server (dev):
    ```bash
-   go run ./example/relay_example/mock_oauth_server
+   go run ./example/auth/mock_oauth_server
    ```
 2) Start the secure gRPC-Web receiver:
    ```bash
@@ -63,7 +63,7 @@ go run -tags nats ./example/relay_example/nats_basic_publisher
 - Frontend integration (gRPC-Web + QUIC): `example/relay_example/FRONTEND_INTEGRATION_UNIFIED.md`
 - QUIC relay docs (including Rust guide): `example/relay_example/quic/README.md`
 - Rust QUIC guide (standalone): `example/relay_example/quic/README_RUST.md`
-- Mock OAuth server (dev only): `example/relay_example/mock_oauth_server/README.md`
+- Mock OAuth server (dev only): `example/auth/mock_oauth_server/README.md`
 
 ## Example groups
 

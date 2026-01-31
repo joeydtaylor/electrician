@@ -89,8 +89,8 @@ func main() {
 	oauth := builder.NewReceivingRelayMergeOAuth2Options(nil, introspectOpts)
 
 	// ---- If you later want JWKS for perf (and keep introspection), uncomment this block:
-	// issuerBase := envOr("OAUTH_ISSUER_BASE", "https://localhost:3000")
-	// jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/.well-known/jwks.json")
+	// issuerBase := envOr("OAUTH_ISSUER_BASE", "auth-service")
+	// jwksURL := envOr("OAUTH_JWKS_URL", "https://localhost:3000/api/auth/oauth/jwks.json")
 	// jwtOpts := builder.NewReceivingRelayOAuth2JWTOptions(
 	// 	issuerBase,
 	// 	jwksURL,
