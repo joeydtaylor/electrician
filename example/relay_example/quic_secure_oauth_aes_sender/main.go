@@ -135,7 +135,7 @@ func main() {
 		"jwks_url", oauthJWKSURL,
 	)
 
-	fr := builder.NewQuicForwardRelay[Feedback](
+	fr := builder.NewQuicForwardRelay(
 		ctx,
 		builder.QuicForwardRelayWithTarget[Feedback](relayAddr),
 		builder.QuicForwardRelayWithLogger[Feedback](logger),

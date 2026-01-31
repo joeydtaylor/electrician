@@ -85,11 +85,11 @@ func main() {
 
 	staticHeaders := map[string]string{"x-tenant": staticTenant}
 
-	recv := builder.NewQuicReceivingRelay[Feedback](
+	recv := builder.NewQuicReceivingRelay(
 		ctx,
 		builder.QuicReceivingRelayWithAddress[Feedback](relayAddr),
 		builder.QuicReceivingRelayWithLogger[Feedback](logger),
-		builder.QuicReceivingRelayWithOutput[Feedback](wire),
+		builder.QuicReceivingRelayWithOutput(wire),
 		builder.QuicReceivingRelayWithTLSConfig[Feedback](tlsCfg),
 		builder.QuicReceivingRelayWithDecryptionKey[Feedback](mustAES()),
 		builder.QuicReceivingRelayWithAuthenticationOptions[Feedback](authOpts),

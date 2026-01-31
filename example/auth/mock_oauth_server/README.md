@@ -63,7 +63,7 @@ go run ./example/relay_example/quic_secure_oauth_aes_receiver
 
 - `OAUTH_ADDR` (default `localhost:3000`)
 - `OAUTH_TLS_DISABLE` (default `false`)
-- `TLS_CERT`, `TLS_KEY` (defaults: `../relay_example/tls/server.crt`, `../relay_example/tls/server.key`)
+- `TLS_CERT`, `TLS_KEY` (defaults: auto-detected from `example/relay_example/tls/server.crt` and `example/relay_example/tls/server.key`)
 - `OAUTH_ISSUER_BASE` (default `auth-service`)
 - `OAUTH_AUDIENCE` (default `your-api`)
 - `OAUTH_SCOPE` (default `write:data`)

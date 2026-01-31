@@ -59,12 +59,12 @@ func main() {
 	// Give them real buffers so Receive -> Wire doesn't backpressure immediately.
 	workers := runtime.GOMAXPROCS(0)
 
-	wireA := builder.NewWire[Feedback](
+	wireA := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Feedback](logger),
 		builder.WireWithConcurrencyControl[Feedback](16384, workers),
 	)
-	wireB := builder.NewWire[Feedback](
+	wireB := builder.NewWire(
 		ctx,
 		builder.WireWithLogger[Feedback](logger),
 		builder.WireWithConcurrencyControl[Feedback](16384, workers),
@@ -102,25 +102,12 @@ func main() {
 
 	staticHeaders := map[string]string{"x-tenant": "local"}
 
-	recvA := builder.NewReceivingRelay[Feedback](
+	recvA := builder.NewReceivingRelay(
 		ctx,
 		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_A", "localhost:50051")),
 		builder.ReceivingRelayWithBufferSize[Feedback](16384),
 		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput[Feedback](wireA),
-		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
-		builder.ReceivingRelayWithDecryptionKey[Feedback](decKey),
-		builder.ReceivingRelayWithAuthenticationOptions[Feedback](authOpts),
-		builder.ReceivingRelayWithStaticHeaders[Feedback](staticHeaders),
-		builder.ReceivingRelayWithAuthRequired[Feedback](true),
-	)
-
-	recvB := builder.NewReceivingRelay[Feedback](
-		ctx,
-		builder.ReceivingRelayWithAddress[Feedback](envOr("RX_B", "localhost:50052")),
-		builder.ReceivingRelayWithBufferSize[Feedback](16384),
-		builder.ReceivingRelayWithLogger[Feedback](logger),
-		builder.ReceivingRelayWithOutput[Feedback](wireB),
+		builder.ReceivingRelayWithOutput(wireA),
 		builder.ReceivingRelayWithTLSConfig[Feedback](tlsCfg),
 		builder.ReceivingRelayWithDecryptionKey[Feedback](decKey),
 		builder.ReceivingRelayWithAuthenticationOptions[Feedback](authOpts),
@@ -131,17 +118,12 @@ func main() {
 	if err := recvA.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
-	if err := recvB.Start(ctx); err != nil {
-		log.Fatal(err)
-	}
 
 	fmt.Println("Receivers up (JWKS ONLY). Ctrl+C to stop.")
 	<-ctx.Done()
 
 	// Stop relays first so nothing is still feeding wires.
 	recvA.Stop()
-	recvB.Stop()
-
 	// Now drain wires safely (LoadAsJSONArray stops + drains without hanging).
 	fmt.Println("---- Receiver A ----")
 	if b, err := wireA.LoadAsJSONArray(); err == nil {

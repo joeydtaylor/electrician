@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -97,13 +98,60 @@ func envOrBool(k string, def bool) bool {
 	return def
 }
 
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func findRepoRoot() (string, bool) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	for {
+		if fileExists(filepath.Join(dir, "go.mod")) {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+func defaultTLSAssetPath(filename string) string {
+	candidates := []string{
+		filepath.Join("example", "relay_example", "tls", filename),
+		filepath.Join("..", "relay_example", "tls", filename),
+		filepath.Join("..", "..", "relay_example", "tls", filename),
+	}
+	if root, ok := findRepoRoot(); ok {
+		candidates = append([]string{filepath.Join(root, "example", "relay_example", "tls", filename)}, candidates...)
+	}
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return filepath.Join("example", "relay_example", "tls", filename)
+}
+
 func loadConfig() config {
 	useTLS := !envOrBool("OAUTH_TLS_DISABLE", false)
+	tlsCert := envOr("TLS_CERT", "")
+	if tlsCert == "" {
+		tlsCert = defaultTLSAssetPath("server.crt")
+	}
+	tlsKey := envOr("TLS_KEY", "")
+	if tlsKey == "" {
+		tlsKey = defaultTLSAssetPath("server.key")
+	}
 	return config{
 		addr:             envOr("OAUTH_ADDR", "localhost:3000"),
 		useTLS:           useTLS,
-		tlsCert:          envOr("TLS_CERT", "../relay_example/tls/server.crt"),
-		tlsKey:           envOr("TLS_KEY", "../relay_example/tls/server.key"),
+		tlsCert:          tlsCert,
+		tlsKey:           tlsKey,
 		issuer:           envOr("OAUTH_ISSUER_BASE", "auth-service"),
 		audience:         envOr("OAUTH_AUDIENCE", "your-api"),
 		scope:            envOr("OAUTH_SCOPE", "write:data"),
